@@ -30,7 +30,7 @@ from ..util import (
 )
 from .common import UNSET, event, row_by_code
 from .relations import link_ticket
-from .tickets import get_ticket
+from .queries import get_ticket
 
 DEFAULT_LEASE_MINUTES = 30
 

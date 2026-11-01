@@ -8,6 +8,7 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
+from . import paths
 from .domain import SCHEMA_VERSION, TicketError
 from .util import AGENT_ALIASES, now
 
@@ -141,9 +142,7 @@ END;
 
 def db_path(start: str | Path | None = None) -> Path:
     """Prioridad: TAIKI_DB/TICKETS_DB > .taiki del proyecto > global."""
-    from .workspace import resolve_db
-
-    return resolve_db(start)
+    return paths.resolve_db(start)
 
 
 def connect(

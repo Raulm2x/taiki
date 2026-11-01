@@ -172,3 +172,57 @@ def run(h: Harness) -> None:
             on["action"] in ("created", "claimed", "blocked"),
             "con guard:true el guard crea o reclama el ticket",
         )
+
+    # ── El grafo de imports de ticketlib no tiene ciclos ────────────────
+    import ast
+
+    root = Path(__file__).resolve().parent.parent / "ticketlib"
+    modules = {
+        ".".join(path.relative_to(root.parent).with_suffix("").parts): path
+        for path in root.rglob("*.py")
+    }
+    graph: dict[str, set[str]] = {name: set() for name in modules}
+    for name, path in modules.items():
+        package = name.rsplit(".", 1)[0] if "." in name else name
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                base = node.module or ""
+                if node.level:
+                    parts = package.split(".")
+                    if node.level > 1:
+                        parts = parts[: -(node.level - 1)]
+                    base = ".".join([*parts, base]).strip(".")
+                if base in modules and base != name:
+                    graph[name].add(base)
+                for alias in node.names:
+                    target = f"{base}.{alias.name}" if base else alias.name
+                    if target in modules and target != name:
+                        graph[name].add(target)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name in modules and alias.name != name:
+                        graph[name].add(alias.name)
+
+    visiting: set[str] = set()
+    done: set[str] = set()
+    cycle: list[str] = []
+
+    def walk(module: str, stack: list[str]) -> bool:
+        if module in visiting:
+            cycle.extend([*stack, module])
+            return True
+        if module in done:
+            return False
+        visiting.add(module)
+        for target in graph.get(module, ()):
+            if walk(target, [*stack, module]):
+                return True
+        visiting.remove(module)
+        done.add(module)
+        return False
+
+    for module in graph:
+        if walk(module, []):
+            break
+    h.eq(cycle, [], "el grafo de imports de ticketlib no tiene ciclos")

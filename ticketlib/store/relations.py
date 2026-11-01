@@ -13,7 +13,7 @@ from ..util import check_enum, normalize_agent, now
 
 TICKET_CODE_RE = re.compile(r"\bT-\d{4,}(?:\.\d+)?\b")
 from .common import event, row_by_code
-from .tickets import get_ticket
+from .queries import get_ticket
 
 
 def comment_ticket(
