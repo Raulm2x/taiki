@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import unquote
@@ -349,25 +350,25 @@ def _handle_list(
     include_closed = bool(args.get("include_closed", False))
     if not status and not statuses and not include_closed:
         statuses = list(domain.OPEN_STATUSES)
-    filters = {
-        "status": status,
-        "statuses": statuses,
-        "kind": args.get("kind"),
-        "priority": args.get("priority"),
-        "project": args.get("project"),
-        "assignee": args.get("assignee"),
-        "query": args.get("query"),
-        "include_archived": bool(args.get("include_archived", False)),
-        "tag": args.get("tag"),
-        "tags": args.get("tags"),
-    }
-    hierarchy: dict[str, Any] = {}
+    base_filter = repo.TicketFilter(
+        status=status,
+        statuses=statuses,
+        kind=args.get("kind"),
+        priority=args.get("priority"),
+        project=args.get("project"),
+        assignee=args.get("assignee"),
+        query=args.get("query"),
+        include_archived=bool(args.get("include_archived", False)),
+        tag=args.get("tag"),
+        tags=args.get("tags"),
+    )
+    ticket_filter = base_filter
     if args.get("only_roots"):
-        hierarchy["roots_only"] = True
+        ticket_filter = replace(ticket_filter, roots_only=True)
     if args.get("leaves_only"):
-        hierarchy["leaves_only"] = True
+        ticket_filter = replace(ticket_filter, leaves_only=True)
     if args.get("parent_id"):
-        hierarchy["parent_id"] = args["parent_id"]
+        ticket_filter = replace(ticket_filter, parent_id=args["parent_id"])
     limit = args.get("limit", 20)
     offset = args.get("offset", 0)
     order = args.get("order", "code")
@@ -377,17 +378,16 @@ def _handle_list(
     )
     rows = repo.list_tickets(
         conn,
-        **filters,
-        **hierarchy,
+        filters=ticket_filter,
         limit=limit,
         offset=offset,
         order=order,
         detail=detail,
     )
-    total = repo.count_tickets(conn, **filters, **hierarchy)
+    total = repo.count_tickets(conn, filters=ticket_filter)
     hidden = 0
-    if hierarchy.get("roots_only"):
-        hidden = max(0, repo.count_tickets(conn, **filters) - total)
+    if args.get("only_roots"):
+        hidden = max(0, repo.count_tickets(conn, filters=base_filter) - total)
     return {
         "count": len(rows),
         "total": total,

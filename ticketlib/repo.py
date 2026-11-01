@@ -7,6 +7,7 @@ preservando 100% de retrocompatibilidad.
 """
 
 from .store import (
+    TicketFilter,
     activity_by_day,
     allocate_code,
     attach_tickets,
@@ -37,6 +38,7 @@ from .store import (
 )
 
 __all__ = [
+    "TicketFilter",
     "activity_by_day",
     "allocate_code",
     "attach_tickets",

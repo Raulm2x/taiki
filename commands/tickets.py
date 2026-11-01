@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from ticketlib import db, render, repo, scratch, sessions, workspace
@@ -77,24 +78,23 @@ def _json_summary(ticket: dict) -> dict:
 
 def cmd_list(args: argparse.Namespace) -> int:
     statuses = args.status or (None if args.all else list(OPEN_STATUSES))
-    filters = {
-        "statuses": statuses,
-        "kind": args.kind,
-        "priority": args.priority,
-        "project": args.project,
-        "assignee": args.assignee,
-        "query": args.query,
-        "include_archived": args.archived,
-        "tag": args.tag,
-        "include_scratch": getattr(args, "include_scratch", False),
-    }
-    hierarchy: dict = {}
+    base_filter = repo.TicketFilter(
+        statuses=statuses,
+        kind=args.kind,
+        priority=args.priority,
+        project=args.project,
+        assignee=args.assignee,
+        query=args.query,
+        include_archived=args.archived,
+        tag=args.tag,
+        include_scratch=getattr(args, "include_scratch", False),
+    )
     if args.parent:
-        hierarchy["parent_id"] = args.parent
+        ticket_filter = replace(base_filter, parent_id=args.parent)
     elif args.flat or args.tree:
-        hierarchy["roots_only"] = False
+        ticket_filter = base_filter
     else:
-        hierarchy["roots_only"] = True
+        ticket_filter = replace(base_filter, roots_only=True)
     limit, offset = args.limit, args.offset
     if args.tree:
         limit, offset = None, 0
@@ -104,21 +104,20 @@ def cmd_list(args: argparse.Namespace) -> int:
         _clean_expired(conn)
         tickets = repo.list_tickets(
             conn,
-            **filters,
-            **hierarchy,
+            filters=ticket_filter,
             limit=limit,
             offset=offset,
             order=args.sort,
             detail=bool((args.json or args.compact) and not summary),
         )
-        total = repo.count_tickets(conn, **filters, **hierarchy)
+        total = repo.count_tickets(conn, filters=ticket_filter)
         hidden = 0
         # El resumen lean no incluye hidden_children: evita un segundo COUNT
         # sobre 20k filas en la ruta caliente de los agentes.
-        if hierarchy.get("roots_only") and not summary:
+        if ticket_filter.roots_only and not summary:
             hidden = max(
                 0,
-                repo.count_tickets(conn, **filters, roots_only=False) - total,
+                repo.count_tickets(conn, filters=base_filter) - total,
             )
         if args.tree:
             tickets = _tree_rows(tickets)

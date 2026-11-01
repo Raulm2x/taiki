@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from functools import lru_cache
 from typing import Any, Iterable
 
 from .. import db
@@ -239,31 +241,69 @@ ORDER_BY_PRIORITY = (
     "t.created_at ASC, t.id ASC"
 )
 
+_TICKET_COLUMNS: tuple[str, ...] | None = None
+
+
+@lru_cache(maxsize=8)
+def _lean_columns(columns: tuple[str, ...]) -> str:
+    return ", ".join(
+        f"t.{name}" for name in columns if name not in ("body", "resolution")
+    )
+
+
+def _lean_projection(conn: sqlite3.Connection) -> str:
+    """Columnas del listado lean, sin releer el esquema en cada llamada."""
+    global _TICKET_COLUMNS
+    if _TICKET_COLUMNS is None:
+        _TICKET_COLUMNS = tuple(
+            row["name"] for row in conn.execute("PRAGMA table_info(tickets)")
+        )
+    return _lean_columns(_TICKET_COLUMNS)
+
+
+@dataclass(frozen=True)
+class TicketFilter:
+    """Filtros de list/count en un solo objeto."""
+
+    status: str | None = None
+    statuses: Iterable[str] | None = None
+    kind: str | None = None
+    priority: str | None = None
+    project: str | None = None
+    assignee: str | None = None
+    query: str | None = None
+    include_archived: bool = False
+    tag: str | None = None
+    tags: Iterable[str] | None = None
+    parent_id: Any = UNSET
+    roots_only: bool = False
+    leaves_only: bool = False
+    include_scratch: bool = False
+
+    def build(self, conn: sqlite3.Connection) -> tuple[str, list[str], list[Any]]:
+        parent_pk = UNSET
+        if self.parent_id is not UNSET:
+            parent_pk = (
+                None
+                if self.parent_id is None
+                else row_by_code(conn, self.parent_id)["id"]
+            )
+        return _build_filters(self, parent_pk)
+
 
 def _build_filters(
-    status: str | None,
-    statuses: Iterable[str] | None,
-    kind: str | None,
-    priority: str | None,
-    project: str | None,
-    assignee: str | None,
-    query: str | None,
-    include_archived: bool,
-    tag: str | None,
-    tags: Iterable[str] | None,
+    filt: TicketFilter,
     parent_pk: Any = UNSET,
-    roots_only: bool = False,
-    leaves_only: bool = False,
-    include_scratch: bool = False,
 ) -> tuple[str, list[str], list[Any]]:
     """Devuelve (join, condiciones WHERE, parámetros) para list y count."""
-    if statuses is None and status:
-        statuses = [status]
+    statuses = filt.statuses
+    if statuses is None and filt.status:
+        statuses = [filt.status]
     statuses = list(statuses) if statuses else []
     for item in statuses:
         check_enum(item, STATUSES, "estado")
-    check_enum(kind, KINDS, "tipo")
-    check_enum(priority, PRIORITIES, "prioridad")
+    check_enum(filt.kind, KINDS, "tipo")
+    check_enum(filt.priority, PRIORITIES, "prioridad")
 
     join = ""
     where: list[str] = []
@@ -272,24 +312,24 @@ def _build_filters(
     if statuses:
         where.append(f"t.status IN ({', '.join('?' for _ in statuses)})")
         params.extend(statuses)
-    if kind:
+    if filt.kind:
         where.append("t.kind = ?")
-        params.append(kind)
-    if priority:
+        params.append(filt.kind)
+    if filt.priority:
         where.append("t.priority = ?")
-        params.append(priority)
-    if project:
+        params.append(filt.priority)
+    if filt.project:
         where.append("t.project = ?")
-        params.append(project)
-    if assignee:
+        params.append(filt.project)
+    if filt.assignee:
         where.append("t.assigned_to = ?")
-        params.append(assignee)
+        params.append(filt.assignee)
 
     filter_tags: list[str] = []
-    if tag:
-        filter_tags.extend(clean_tags(tag))
-    if tags:
-        filter_tags.extend(clean_tags(tags))
+    if filt.tag:
+        filter_tags.extend(clean_tags(filt.tag))
+    if filt.tags:
+        filter_tags.extend(clean_tags(filt.tags))
     if filter_tags:
         filter_tags = list(dict.fromkeys(filter_tags))
         placeholders = ", ".join("?" for _ in filter_tags)
@@ -299,8 +339,8 @@ def _build_filters(
         )
         params.extend(filter_tags)
 
-    if query:
-        match = fts_match(query)
+    if filt.query:
+        match = fts_match(filt.query)
         if match:
             join = " JOIN tickets_fts ON tickets_fts.rowid = t.id"
             where.append("tickets_fts MATCH ?")
@@ -311,16 +351,16 @@ def _build_filters(
         else:
             where.append("t.parent_id = ?")
             params.append(parent_pk)
-    elif roots_only:
+    elif filt.roots_only:
         where.append("t.parent_id IS NULL")
-    if leaves_only:
+    if filt.leaves_only:
         where.append(
             "NOT EXISTS (SELECT 1 FROM tickets ch "
             "WHERE ch.parent_id = t.id AND ch.archived = 0)"
         )
-    if not include_archived:
+    if not filt.include_archived:
         where.append("t.archived = 0")
-    if not include_scratch:
+    if not filt.include_scratch:
         where.append(
             "NOT EXISTS (SELECT 1 FROM tags st WHERE st.ticket_id = t.id "
             "AND st.tag = '_scratch')"
@@ -349,6 +389,7 @@ def list_tickets(
     leaves_only: bool = False,
     include_scratch: bool = False,
     detail: bool = False,
+    filters: TicketFilter | None = None,
 ) -> list[dict[str, Any]]:
     """Lista tickets con filtros, paginación, orden y jerarquía.
 
@@ -359,36 +400,28 @@ def list_tickets(
     se leen ``body`` ni ``resolution``: el listado no los necesita.
     """
     check_enum(order, ORDER_MODES, "orden")
-    parent_pk = UNSET
-    if parent_id is not UNSET:
-        parent_pk = (
-            None if parent_id is None else row_by_code(conn, parent_id)["id"]
-        )
-    join, where, params = _build_filters(
-        status,
-        statuses,
-        kind,
-        priority,
-        project,
-        assignee,
-        query,
-        include_archived,
-        tag,
-        tags,
-        parent_pk,
-        roots_only,
-        leaves_only,
-        include_scratch,
+    filt = filters or TicketFilter(
+        status=status,
+        statuses=statuses,
+        kind=kind,
+        priority=priority,
+        project=project,
+        assignee=assignee,
+        query=query,
+        include_archived=include_archived,
+        tag=tag,
+        tags=tags,
+        parent_id=parent_id,
+        roots_only=roots_only,
+        leaves_only=leaves_only,
+        include_scratch=include_scratch,
     )
+    join, where, params = filt.build(conn)
 
     if detail:
         columns = "t.*"
     else:
-        columns = ", ".join(
-            f"t.{row['name']}"
-            for row in conn.execute("PRAGMA table_info(tickets)")
-            if row["name"] not in ("body", "resolution")
-        )
+        columns = _lean_projection(conn)
     sql = (
         f"SELECT {columns}, "
         "(SELECT group_concat(tag, ',') FROM tags WHERE ticket_id = t.id) AS tags_csv "
@@ -435,29 +468,26 @@ def count_tickets(
     roots_only: bool = False,
     leaves_only: bool = False,
     include_scratch: bool = False,
+    filters: TicketFilter | None = None,
 ) -> int:
     """Cuenta tickets con los mismos filtros que ``list_tickets``."""
-    parent_pk = UNSET
-    if parent_id is not UNSET:
-        parent_pk = (
-            None if parent_id is None else row_by_code(conn, parent_id)["id"]
-        )
-    join, where, params = _build_filters(
-        status,
-        statuses,
-        kind,
-        priority,
-        project,
-        assignee,
-        query,
-        include_archived,
-        tag,
-        tags,
-        parent_pk,
-        roots_only,
-        leaves_only,
-        include_scratch,
+    filt = filters or TicketFilter(
+        status=status,
+        statuses=statuses,
+        kind=kind,
+        priority=priority,
+        project=project,
+        assignee=assignee,
+        query=query,
+        include_archived=include_archived,
+        tag=tag,
+        tags=tags,
+        parent_id=parent_id,
+        roots_only=roots_only,
+        leaves_only=leaves_only,
+        include_scratch=include_scratch,
     )
+    join, where, params = filt.build(conn)
     sql = "SELECT COUNT(*) FROM tickets t" + join
     if where:
         sql += " WHERE " + " AND ".join(where)
@@ -620,11 +650,13 @@ def next_ticket(
     for statuses in (["pendiente"], ["nuevo"]):
         rows = list_tickets(
             conn,
-            statuses=statuses,
-            project=project,
+            filters=TicketFilter(
+                statuses=statuses,
+                project=project,
+                leaves_only=True,
+            ),
             limit=1,
             order="priority",
-            leaves_only=True,
         )
         if rows:
             return get_ticket(conn, rows[0]["code"])

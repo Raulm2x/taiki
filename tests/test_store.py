@@ -6,7 +6,7 @@ import threading
 import time
 
 from ticketlib import db, domain, render, repo
-from ticketlib.store import relations, workflow
+from ticketlib.store import queries, relations, workflow
 from tests.support import Harness
 
 
@@ -175,6 +175,22 @@ def run(h: Harness) -> None:
             link["kind"] == "commit" for link in closed_slow.get("links", [])
         ),
         "complete enlaza el commit resuelto",
+    )
+
+    # ── TicketFilter comparte WHERE y la proyección cachea columnas ─────
+    filt = repo.TicketFilter(statuses=["nuevo"])
+    h.eq(
+        len(repo.list_tickets(conn, filters=filt, limit=None)),
+        repo.count_tickets(conn, filters=filt),
+        "list y count comparten el mismo TicketFilter",
+    )
+    queries._TICKET_COLUMNS = None
+    repo.list_tickets(conn, limit=1)
+    cached = queries._TICKET_COLUMNS
+    repo.list_tickets(conn, limit=1)
+    h.ok(
+        cached is not None and queries._TICKET_COLUMNS is cached,
+        "la proyección lean cachea las columnas",
     )
 
     # Atomicidad en claim_ticket

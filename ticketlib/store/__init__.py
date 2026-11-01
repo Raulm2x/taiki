@@ -12,6 +12,7 @@ from .mutations import (
     update_ticket,
 )
 from .queries import (
+    TicketFilter,
     activity_by_day,
     count_tickets,
     get_ticket,
@@ -32,6 +33,7 @@ from .workflow import (
 )
 
 __all__ = [
+    "TicketFilter",
     "activity_by_day",
     "allocate_code",
     "attach_tickets",
