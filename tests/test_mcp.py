@@ -144,6 +144,30 @@ def run(h: Harness) -> None:
     mcp_got = handlers.call_tool("get", {"code": mcp_created["code"]})
     h.ok(mcp_got["code"] == mcp_created["code"], "call_tool('get') recupera el ticket exacto")
 
+    # ── Contexto: list resumido, get acotado y next resumido ────────────
+    lean = handlers.call_tool("list", {"tag": "mcp-suite"})
+    lean_row = next(
+        item for item in lean["tickets"] if item["code"] == mcp_created["code"]
+    )
+    h.ok(
+        "body" not in lean_row and "title" in lean_row,
+        "list devuelve un resumen sin body",
+    )
+    full_list = handlers.call_tool(
+        "list", {"tag": "mcp-suite", "detail": True}
+    )
+    h.ok(
+        "body" in full_list["tickets"][0],
+        "list con detail devuelve el registro completo",
+    )
+    projected = handlers.call_tool(
+        "list", {"tag": "mcp-suite", "fields": ["code", "status"]}
+    )
+    h.ok(
+        set(projected["tickets"][0]) == {"code", "status"},
+        "list con fields devuelve solo los campos pedidos",
+    )
+
     # call_tool('claim') con el mismo agente y una sesión nueva
     mcp_claimed = handlers.call_tool(
         "claim",
@@ -174,6 +198,40 @@ def run(h: Harness) -> None:
     )
     h.ok(len(mcp_linked["links"]) == 1, "call_tool('link') registra enlace")
 
+    for index in range(5):
+        handlers.call_tool(
+            "comment",
+            {"code": mcp_created["code"], "body": f"nota {index}"},
+            meta={"sessionId": "session-claim-111"},
+        )
+    trimmed = handlers.call_tool(
+        "get", {"code": mcp_created["code"], "history_limit": 2}
+    )
+    h.eq(
+        len(trimmed["comments"]),
+        2,
+        "get con history_limit recorta los comentarios",
+    )
+    h.eq(
+        trimmed["comments_total"],
+        6,
+        "get informa del total de comentarios truncados",
+    )
+    only_comments = handlers.call_tool(
+        "get",
+        {
+            "code": mcp_created["code"],
+            "include": ["comments"],
+            "history_limit": 0,
+        },
+    )
+    h.ok(
+        "events" not in only_comments
+        and "links" not in only_comments
+        and len(only_comments["comments"]) == 6,
+        "get con include omite el resto de secciones",
+    )
+
     # call_tool('complete'): otra sesión no puede cerrar el ticket
     h.raises(
         domain.PermissionDenied,
@@ -197,6 +255,62 @@ def run(h: Harness) -> None:
         meta={"sessionId": "session-claim-111"},
     )
     h.ok(mcp_completed["status"] == "completado", "call_tool('complete') pasa estado a completado")
+
+    open_only = handlers.call_tool("list", {"limit": 200})
+    h.ok(
+        mcp_created["code"]
+        not in {item["code"] for item in open_only["tickets"]},
+        "list oculta los tickets cerrados por defecto",
+    )
+    with_closed = handlers.call_tool(
+        "list", {"limit": 200, "include_closed": True}
+    )
+    h.ok(
+        any(
+            item["code"] == mcp_created["code"]
+            for item in with_closed["tickets"]
+        ),
+        "list con include_closed muestra los cerrados",
+    )
+
+    pending = repo.create_ticket(
+        conn,
+        title="Siguiente MCP",
+        body="x" * 300,
+        project="mcp-next",
+    )
+    nxt = handlers.call_tool("next", {"project": "mcp-next"})
+    h.ok(
+        nxt["ticket"]["code"] == pending["code"]
+        and "body" not in nxt["ticket"]
+        and nxt["ticket"]["body_preview"].endswith("…"),
+        "next devuelve un resumen con avance del body",
+    )
+    nxt_full = handlers.call_tool(
+        "next", {"project": "mcp-next", "detail": True}
+    )
+    h.ok(
+        "body" in nxt_full["ticket"],
+        "next con detail devuelve el ticket completo",
+    )
+
+    parent = repo.create_ticket(
+        conn, title="Épica MCP", project="mcp-leaves"
+    )
+    child = repo.create_ticket(
+        conn,
+        title="Tarea MCP",
+        project="mcp-leaves",
+        parent_id=parent["code"],
+    )
+    leaves = handlers.call_tool(
+        "list", {"project": "mcp-leaves", "leaves_only": True}
+    )
+    h.eq(
+        [item["code"] for item in leaves["tickets"]],
+        [child["code"]],
+        "list con leaves_only excluye la épica",
+    )
 
     # call_tool('stats') y call_tool('next')
     mcp_stats = handlers.call_tool("stats")

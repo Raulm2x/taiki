@@ -115,10 +115,11 @@ TOOLS = [
     ),
     _tool(
         "list",
-        "Lista tickets con filtros y paginación. Sin filtros devuelve los no "
-        "archivados, del código más reciente al más antiguo (order='priority' "
-        "ordena por prioridad y antigüedad). Devuelve 'total' para paginar con "
-        "'offset'.",
+        "Lista tickets con filtros y paginación. Sin filtros devuelve solo los "
+        "tickets abiertos y un resumen (sin body/resolution), del código más "
+        "reciente al más antiguo. Usa include_closed=true para ver también "
+        "cerrados, detail=true para el registro completo y get para un ticket "
+        "concreto. Devuelve 'total' para paginar con 'offset'.",
         {
             "status": STATUS,
             "statuses": {
@@ -134,6 +135,11 @@ TOOLS = [
                 "type": "boolean",
                 "default": False,
                 "description": "Solo épicas y tickets sin padre",
+            },
+            "leaves_only": {
+                "type": "boolean",
+                "default": False,
+                "description": "Excluye épicas que ya tienen tareas",
             },
             "parent_id": {
                 "type": "string",
@@ -153,6 +159,21 @@ TOOLS = [
                 "description": "Búsqueda de texto completo en título y descripción",
             },
             "include_archived": {"type": "boolean", "default": False},
+            "include_closed": {
+                "type": "boolean",
+                "default": False,
+                "description": "Incluye confirmados y cancelados; por defecto solo abiertos",
+            },
+            "detail": {
+                "type": "boolean",
+                "default": False,
+                "description": "Devuelve el registro completo en vez del resumen",
+            },
+            "fields": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Lista explícita de campos a devolver (incluye body si se pide)",
+            },
             "limit": {
                 "type": "integer",
                 "minimum": 1,
@@ -175,8 +196,34 @@ TOOLS = [
     ),
     _tool(
         "get",
-        "Obtiene un ticket completo: datos, etiquetas, comentarios, enlaces e historial.",
-        {"code": CODE},
+        "Obtiene un ticket completo: datos, etiquetas, comentarios, enlaces e "
+        "historial. Usa include para pedir solo algunas secciones y "
+        "history_limit para acotar eventos/comentarios.",
+        {
+            "code": CODE,
+            "include": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": [
+                        "events",
+                        "comments",
+                        "links",
+                        "subtasks",
+                        "commits",
+                        "committed",
+                    ],
+                },
+                "description": "Secciones a incluir; si se omite, se incluyen todas",
+            },
+            "history_limit": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 500,
+                "default": 50,
+                "description": "Máximo de eventos y comentarios (0 = sin límite)",
+            },
+        },
         ("code",),
     ),
     _tool(
@@ -300,8 +347,17 @@ TOOLS = [
     ),
     _tool(
         "next",
-        "Devuelve el siguiente ticket pendiente (o nuevo) por prioridad y antigüedad.",
-        {"project": {"type": "string", "description": "Filtrar por proyecto"}},
+        "Devuelve el siguiente ticket pendiente (o nuevo) por prioridad y "
+        "antigüedad, como resumen con un avance del body. Usa detail=true para "
+        "el registro completo.",
+        {
+            "project": {"type": "string", "description": "Filtrar por proyecto"},
+            "detail": {
+                "type": "boolean",
+                "default": False,
+                "description": "Devuelve el ticket completo en vez del resumen",
+            },
+        },
     ),
 ]
 

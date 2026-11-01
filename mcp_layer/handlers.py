@@ -77,6 +77,76 @@ def _actor(args: dict[str, Any]) -> str:
     return normalize_agent(str(args.get("agent") or "agente"))
 
 
+# Campos que un agente necesita para elegir trabajo sin arrastrar el cuerpo
+# completo de cada ticket. ``get`` sigue devolviendo el detalle.
+SUMMARY_FIELDS = (
+    "code",
+    "title",
+    "status",
+    "priority",
+    "kind",
+    "project",
+    "assigned_to",
+    "owner_session",
+    "parent_id",
+    "paths",
+    "tags",
+    "progress",
+    "created_at",
+    "updated_at",
+)
+DETAIL_SECTIONS = (
+    "events",
+    "comments",
+    "links",
+    "subtasks",
+    "commits",
+    "committed",
+)
+PREVIEW_CHARS = 240
+
+
+def _summary(ticket: dict[str, Any], *, preview: bool = False) -> dict[str, Any]:
+    data = {key: ticket[key] for key in SUMMARY_FIELDS if key in ticket}
+    if preview:
+        body = str(ticket.get("body") or "").strip()
+        data["body_preview"] = (
+            body[:PREVIEW_CHARS] + ("…" if len(body) > PREVIEW_CHARS else "")
+        )
+    return data
+
+
+def _project_rows(
+    rows: list[dict[str, Any]],
+    *,
+    detail: bool,
+    fields: Any = None,
+) -> list[dict[str, Any]]:
+    if fields:
+        wanted = [str(name) for name in fields if str(name).strip()]
+        return [
+            {key: row[key] for key in wanted if key in row}
+            for row in rows
+        ]
+    if detail:
+        return rows
+    return [_summary(row) for row in rows]
+
+
+def _limit_history(ticket: dict[str, Any], limit: Any) -> None:
+    try:
+        maximum = int(limit)
+    except (TypeError, ValueError):
+        maximum = 50
+    if maximum <= 0:
+        return
+    for key in ("events", "comments"):
+        items = ticket.get(key)
+        if isinstance(items, list) and len(items) > maximum:
+            ticket[f"{key}_total"] = len(items)
+            ticket[key] = items[-maximum:]
+
+
 # ---------------------------------------------------------------------------
 # Manejadores Individuales de Herramientas (11 herramientas MCP)
 # ---------------------------------------------------------------------------
@@ -123,9 +193,14 @@ def _handle_list(
     session: str | None = None,
     actor: str = "agente",
 ) -> dict[str, Any]:
+    status = args.get("status")
+    statuses = args.get("statuses")
+    include_closed = bool(args.get("include_closed", False))
+    if not status and not statuses and not include_closed:
+        statuses = list(domain.OPEN_STATUSES)
     filters = {
-        "status": args.get("status"),
-        "statuses": args.get("statuses"),
+        "status": status,
+        "statuses": statuses,
         "kind": args.get("kind"),
         "priority": args.get("priority"),
         "project": args.get("project"),
@@ -138,6 +213,8 @@ def _handle_list(
     hierarchy: dict[str, Any] = {}
     if args.get("only_roots"):
         hierarchy["roots_only"] = True
+    if args.get("leaves_only"):
+        hierarchy["leaves_only"] = True
     if args.get("parent_id"):
         hierarchy["parent_id"] = args["parent_id"]
     limit = args.get("limit", 50)
@@ -161,8 +238,13 @@ def _handle_list(
         "offset": offset,
         "limit": limit,
         "order": order,
+        "detail": bool(args.get("detail", False)),
         "hidden_children": hidden,
-        "tickets": rows,
+        "tickets": _project_rows(
+            rows,
+            detail=bool(args.get("detail", False)),
+            fields=args.get("fields"),
+        ),
     }
 
 
@@ -175,7 +257,15 @@ def _handle_get(
     code = args.get("code")
     if not code:
         raise domain.ValidationError("El parámetro 'code' es obligatorio")
-    return repo.get_ticket(conn, code)
+    ticket = repo.get_ticket(conn, code)
+    include = args.get("include")
+    if include is not None:
+        keep = {str(name) for name in include}
+        for section in DETAIL_SECTIONS:
+            if section not in keep:
+                ticket.pop(section, None)
+    _limit_history(ticket, args.get("history_limit", 50))
+    return ticket
 
 
 def _handle_claim(
@@ -350,7 +440,12 @@ def _handle_next(
     session: str | None = None,
     actor: str = "agente",
 ) -> dict[str, Any]:
-    return {"ticket": repo.next_ticket(conn, project=args.get("project"))}
+    ticket = repo.next_ticket(conn, project=args.get("project"))
+    if ticket is None:
+        return {"ticket": None}
+    if args.get("detail"):
+        return {"ticket": ticket}
+    return {"ticket": _summary(ticket, preview=True)}
 
 
 # ---------------------------------------------------------------------------

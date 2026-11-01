@@ -331,10 +331,20 @@ def run(h: Harness) -> None:
         "un orden desconocido debe fallar",
     )
 
+    open_total = repo.count_tickets(
+        conn, statuses=list(domain.OPEN_STATUSES)
+    )
     mcp_page = handlers.call_tool("list", {"limit": 2, "offset": 1})
     h.ok(
-        mcp_page["total"] == total_open
+        mcp_page["total"] == open_total
         and mcp_page["offset"] == 1
         and mcp_page["count"] == 2,
-        "call_tool('list') devuelve total y respeta offset",
+        "call_tool('list') devuelve total abierto y respeta offset",
+    )
+    mcp_all = handlers.call_tool(
+        "list", {"limit": 2, "offset": 1, "include_closed": True}
+    )
+    h.ok(
+        mcp_all["total"] == total_open,
+        "call_tool('list') con include_closed cuenta todos",
     )
