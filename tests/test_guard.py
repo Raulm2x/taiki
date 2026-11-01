@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import cli
 from ticketlib import audit as audit_lib, db, guard, repo, scratch
+from ticketlib.guard import policy as guard_policy
 from tests.support import Harness
 
 
@@ -801,3 +802,31 @@ def run(h: Harness) -> None:
             )
         finally:
             pconn.close()
+
+    # ── Mensajes del guard compactos y con nombres de herramienta ───────
+    messages = [
+        guard_policy._message("created", "S-0001", "titulo", None, True),
+        guard_policy._message(
+            "created",
+            "T-0099",
+            "titulo",
+            {"code": "T-0016", "title": "Epica"},
+            False,
+        ),
+        guard_policy._message("claimed", "T-0099", "titulo"),
+        guard_policy._message("blocked", "", ""),
+        guard_policy._parallel_message(
+            "git add -A", [{"code": "T-0001"}]
+        ),
+        guard_policy._worktree_message(
+            {"code": "T-0002"}, [{"code": "T-0001"}]
+        ),
+    ]
+    h.ok(
+        all(len(message) < 180 for message in messages),
+        "los mensajes del guard ocupan menos de 180 caracteres",
+    )
+    h.ok(
+        not any("taiki_" in message for message in messages),
+        "los mensajes usan los nombres reales de las herramientas",
+    )

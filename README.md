@@ -840,14 +840,29 @@ Resolución de sesiones automática compatible con `sessionId`, `session_id`, `A
 
 ## Flujo recomendado para agentes
 
-1. Al empezar: `taiki_list` con `status="pendiente"` o `taiki_next`.
-2. Antes de tocar código: `taiki_claim`. Si no hay ticket, créalo primero: el
-   guard (cuando el proyecto lo tiene activado) bloquea la primera escritura y
-   deja un ticket automático reclamado.
-3. Trabajo nuevo descubierto: `taiki_create` **pasando siempre `agent`**; el
-   ticket queda asignado a ese agente desde su creación.
-4. Al terminar: `taiki_complete` con resolución y commit.
+1. Al empezar: `list` con `statuses=["pendiente"]` o `next`.
+2. Antes de tocar código: `claim`. Si no hay ticket, créalo primero: el guard
+   (cuando el proyecto lo tiene activado) bloquea la primera escritura y deja
+   un ticket automático reclamado.
+3. Trabajo nuevo descubierto: `create` **pasando `agent`**; el ticket queda
+   asignado desde su creación.
+4. Al terminar: `complete` con resolución y commit.
 5. Nunca `confirmado`: eso lo hace el usuario con `taiki confirm`.
+
+En clientes que prefijan el servidor verás `taiki_list`, `taiki_claim`, etc.;
+el nombre real de la herramienta es el que aparece en `tools/list`.
+
+### Coste de contexto
+
+- `list` devuelve 20 abiertos en resumen; usa `limit`/`offset`, `fields` o
+  `detail` solo si necesitas más.
+- `get` acota historial (15), enlaces (20) y subtareas (20); `events_detail`
+  y los límites a `0` son para el detalle completo.
+- `create`, `claim`, `update`, `transition`, `complete`, `comment` y `link`
+  devuelven un recibo; `detail=true` recupera el ticket completo.
+- En CLI, prefiere `taiki list --json-summary --compact --limit 20` y
+  `taiki show T-XXXX --json --compact`; evita `list --json` completo.
+- `taiki://inbox` devuelve como máximo 20 tickets en resumen.
 
 ## Datos y respaldo
 

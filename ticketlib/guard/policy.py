@@ -136,39 +136,29 @@ def _message(
     parent: dict[str, Any] | None = None,
     temporary: bool = False,
 ) -> str:
+    short = (title or "")[:60]
     if action == "created":
         if temporary:
             return (
-                f"Sin ticket activo: creé {code} como ticket temporal (oculto) "
-                "y lo activé.\n"
-                "El código S-#### es su propio espacio: no consume números "
-                "T-XXXX ni deja huecos en la tabla.\n"
-                f"Si el trabajo es real, promuévelo con "
-                f"`taiki scratch --promote {code}` (recibirá un T-XXXX) o crea "
-                "el ticket adecuado; si no, ignóralo (caduca solo y no aparece "
-                "en la tabla)."
+                f"Sin ticket: activé {code} (scratch oculto). Si es real, "
+                f"usa promote({code}) o crea el ticket con create; si no, "
+                "ignóralo."
             )
-        head = f"Sin ticket activo: creé y activé {code} «{title}»."
+        head = f"Sin ticket: activé {code} «{short}»."
         if parent is not None:
-            head += (
-                f"\nLo colgué como tarea de la épica {parent['code']} "
-                f"«{parent['title']}», que todavía no está confirmada."
+            head = (
+                f"Sin ticket: activé {code} «{short}» bajo "
+                f"{parent['code']}."
             )
-    elif action == "claimed":
-        head = (
-            f"Sin ticket activo: activé {code} «{title}», "
-            "que ya estaba pendiente en esta sesión."
-        )
-    else:
+        return f"{head} Revisa el título y usa complete {code} al terminar."
+    if action == "claimed":
         return (
-            "Sin ticket activo y no se pudo crear uno automáticamente. "
-            "Crea el ticket con taiki_create, reclámalo con taiki_claim "
-            "y repite la acción."
+            f"Sin ticket: activé {code} «{short}», pendiente de esta sesión. "
+            f"Usa complete {code} al terminar."
         )
     return (
-        f"{head}\n"
-        "Revisa el título y el cuerpo con taiki_update si hace falta, "
-        f"sigue con el trabajo y al terminar usa taiki_complete {code}."
+        "Sin ticket activo y no pude crear uno. Usa create, luego claim "
+        "y repite la acción."
     )
 
 
@@ -176,10 +166,8 @@ def _parallel_message(action: str, others: list[dict[str, Any]]) -> str:
     codes = ", ".join(item["code"] for item in others[:5])
     extra = "" if len(others) <= 5 else f" y {len(others) - 5} más"
     return (
-        f"Operación compartida bloqueada: `{action}` afecta a todo el índice o "
-        f"árbol y hay otras sesiones con tickets en progreso ({codes}{extra}).\n"
-        "Trabaja en tu worktree o stagea rutas concretas (`git add <ruta>`); "
-        "si no hay conflicto real, usa TAIKI_GUARD=off."
+        f"Bloqueado: `{action}` afecta a todo el árbol y hay otras sesiones "
+        f"activas ({codes}{extra}). Usa un worktree o stagea rutas concretas."
     )
 
 
@@ -236,9 +224,7 @@ def _worktree_message(
     extra = "" if len(others) <= 5 else f" y {len(others) - 5} más"
     return (
         f"Hay otra sesión activa ({codes}{extra}) y {active['code']} no tiene "
-        "worktree.\n"
-        f"Crea uno con `taiki worktree create {active['code']}` y trabaja allí; "
-        "si de verdad compartís árbol, define TAIKI_SHARED_TREE=1."
+        f"worktree. Usa worktree_create {active['code']} o TAIKI_SHARED_TREE=1."
     )
 
 
