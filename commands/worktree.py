@@ -247,9 +247,10 @@ def cmd_worktree_merge(args: argparse.Namespace) -> int:
                 (code,),
             )
             conn.commit()
+    failed_removal = bool(result.get("remove_error"))
     if args.json:
         print(render.to_json(result))
-        return 0
+        return 1 if failed_removal else 0
     print(
         f"Merge ff-only: {result['branch']} → "
         f"{result.get('integration_branch') or result['main_branch']}"
@@ -258,6 +259,13 @@ def cmd_worktree_merge(args: argparse.Namespace) -> int:
         print("Tests: OK")
     if result.get("removed"):
         print(f"Worktree retirado: {result['path']}")
+    if failed_removal:
+        print(
+            f"Error: el merge se aplicó pero el worktree sigue en {result['path']}",
+            file=sys.stderr,
+        )
+        print(f"Limpieza manual: {result['cleanup']}", file=sys.stderr)
+        return 1
     return 0
 
 

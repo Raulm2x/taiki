@@ -283,9 +283,11 @@ def run(h: Harness) -> None:
             0,
             "confirm responde tras limpiar el worktree",
         )
-    h.ok(not tree_path.exists(), "confirm retira el worktree mergeado")
     remaining = _git(root, "branch", "--format=%(refname:short)").split()
-    h.ok(branch not in remaining, "confirm elimina la rama del worktree")
+    h.ok(
+        not tree_path.exists() and branch not in remaining,
+        "confirm retira el worktree mergeado y su rama",
+    )
 
     # Worktree sucio: se conserva y se avisa
     with h.env(TAIKI_DB=str(info["db"])), contextlib.chdir(root), \
@@ -355,14 +357,81 @@ def run(h: Harness) -> None:
     )
     _git(root, "checkout", "--", "src/app.py")
     merged = worktree.merge(root, merge_path, delete=True)
+    registered = [
+        Path(item["path"]).resolve() for item in worktree.list_worktrees(root)
+    ]
     h.ok(
-        (root / "merge.txt").is_file() and not merge_path.exists(),
-        "merge ff-only integra el cambio y retira el worktree",
+        (root / "merge.txt").is_file()
+        and not merge_path.exists()
+        and merge_path.resolve() not in registered
+        and merged.get("removed") is True,
+        "merge ff-only integra el cambio y retira el worktree (dir y registro)",
     )
     h.ok(
         merged["branch"] not in _git(root, "branch", "--format=%(refname:short)").split(),
         "merge --delete elimina la rama",
     )
+
+    # ── merge --delete: si la retirada falla, no se miente ───────────────
+    with h.env(TAIKI_DB=str(info["db"])):
+        setup = db.connect()
+        try:
+            stuck_ticket = repo.create_ticket(
+                conn=setup, title="Worktree que no se retira", project="proyecto"
+            )
+            created_stuck = worktree.create(
+                root, stuck_ticket["code"], title=stuck_ticket["title"]
+            )
+            repo.claim_ticket(
+                setup, stuck_ticket["code"], agent="opencode"
+            )
+            repo.complete_ticket(
+                setup,
+                stuck_ticket["code"],
+                resolution="listo",
+                actor="opencode",
+                actor_type="agente",
+            )
+            repo.transition(
+                setup,
+                stuck_ticket["code"],
+                "confirmado",
+                actor="usuario",
+                actor_type="usuario",
+            )
+        finally:
+            setup.close()
+    stuck_path = Path(created_stuck["path"])
+    (stuck_path / "stuck.txt").write_text("x\n", encoding="utf-8")
+    _git(stuck_path, "add", "stuck.txt")
+    _git(stuck_path, "commit", "-m", f"stuck {stuck_ticket['code']}")
+    _git(root, "worktree", "lock", str(stuck_path))
+    stuck_out = io.StringIO()
+    stuck_err = io.StringIO()
+    with h.env(TAIKI_DB=str(info["db"])), contextlib.chdir(root), \
+            contextlib.redirect_stdout(stuck_out), \
+            contextlib.redirect_stderr(stuck_err):
+        stuck_rc = cmd_worktree_merge(
+            argparse.Namespace(
+                code=stuck_ticket["code"],
+                path=None,
+                delete=True,
+                no_tests=True,
+                json=False,
+                force=False,
+            )
+        )
+    h.eq(stuck_rc, 1, "merge --delete falla si el worktree no se retira")
+    h.ok(
+        "Worktree retirado" not in stuck_out.getvalue(),
+        "merge --delete no imprime 'Worktree retirado' si la ruta sigue",
+    )
+    h.ok(
+        "git worktree remove --force" in stuck_err.getvalue(),
+        "merge --delete avisa del comando de limpieza manual",
+    )
+    _git(root, "worktree", "unlock", str(stuck_path))
+    worktree.remove(root, stuck_path, force=True, delete_branch=True)
 
     # ── merge exige ticket confirmado ──────────────────────────────────
     with h.env(TAIKI_DB=str(info["db"])), contextlib.chdir(root):

@@ -354,6 +354,14 @@ def cleanup(
     return {"removed": removed, "kept": kept}
 
 
+def _still_registered(main: Path, path: Path) -> bool:
+    """¿Sigue la ruta en ``git worktree list``?"""
+    for item in list_worktrees(main):
+        if Path(item.get("path", "")).resolve() == path:
+            return True
+    return False
+
+
 def remove(
     main: Path,
     target: str | Path,
@@ -361,7 +369,12 @@ def remove(
     force: bool = False,
     delete_branch: bool = False,
 ) -> dict[str, Any]:
-    """Retira un worktree y, opcionalmente, su rama."""
+    """Retira un worktree y, opcionalmente, su rama.
+
+    Verifica que el directorio y el registro de Git desaparecieron de verdad;
+    si alguno sigue ahí, lanza ``TicketError`` en vez de dar la retirada por
+    hecha. ``removed`` solo es ``True`` cuando la comprobación pasa.
+    """
     main = Path(main).expanduser().resolve()
     path = Path(target).expanduser().resolve()
     state = status(path)
@@ -369,11 +382,28 @@ def remove(
     if force:
         args.append("--force")
     args.append(str(path))
-    _git(main, *args)
+    try:
+        _git(main, *args)
+    except TicketError:
+        # Un directorio borrado a mano deja un registro obsoleto: prune lo limpia.
+        if path.exists():
+            raise
+        _git(main, "worktree", "prune")
+        if _still_registered(main, path):
+            raise
+    if path.exists() or _still_registered(main, path):
+        _git(main, "worktree", "prune")
+        if path.exists() or _still_registered(main, path):
+            raise TicketError(
+                f"El worktree {path} sigue presente tras `git worktree remove`; "
+                "revisa procesos que lo usen y retíralo a mano con "
+                f"`git worktree remove --force {path}`."
+            )
     removed: dict[str, Any] = {
         "path": str(path),
         "branch": state.get("branch"),
         "was_dirty": state.get("dirty"),
+        "removed": True,
     }
     if delete_branch and state.get("branch"):
         _git(main, "branch", "-D", str(state["branch"]))
@@ -461,8 +491,17 @@ def merge(
         "tests": tested,
     }
     if delete:
-        remove(main, path, delete_branch=True)
-        summary["removed"] = True
+        try:
+            removal = remove(main, path, delete_branch=True)
+        except TicketError as exc:
+            # El merge ya está aplicado: se informa de la limpieza pendiente
+            # en vez de fingir que el worktree desapareció.
+            summary["removed"] = False
+            summary["remove_error"] = str(exc)
+            summary["cleanup"] = f"git worktree remove --force {path}"
+        else:
+            summary["removed"] = True
+            summary["branch_deleted"] = removal.get("branch_deleted")
     return summary
 
 
