@@ -61,6 +61,11 @@ def run(h: Harness) -> None:
         "config.json trae defaults razonables",
     )
     h.eq(config.get("guard"), False, "el guard es opt-in por defecto")
+    h.eq(
+        config.get("guard_auto"),
+        "scratch",
+        "el guard solo crea temporales por defecto",
+    )
     config["defaults"]["priority"] = "alta"
     workspace.save_config(config, folder)
     h.eq(

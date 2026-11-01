@@ -16,6 +16,7 @@ from .hook import is_mutating
 DISABLED_VALUES = {"0", "off", "false", "no", "disabled"}
 AUTO_ENV = "GUARD_AUTO"
 AUTO_MODES = {"off", "scratch", "ticket", "auto"}
+DEFAULT_AUTO = "scratch"
 
 
 def disabled(environ: dict[str, str] | None = None) -> bool:
@@ -48,17 +49,29 @@ def _blocked(
     }
 
 
-def auto_mode(environ: dict[str, str] | None = None) -> str:
-    """Política de creación automática (``auto`` por defecto).
+def auto_mode(
+    environ: dict[str, str] | None = None,
+    config: dict[str, Any] | None = None,
+) -> str:
+    """Política de creación automática (``scratch`` por defecto).
 
+    Orden de precedencia: ``TAIKI_GUARD_AUTO`` → ``guard_auto`` del
+    ``config.json`` del proyecto → ``scratch``.
+
+    - ``scratch``: siempre temporal y oculto (``S-####``). Por defecto: el
+      guard nunca fabrica tickets visibles que puedan acabar cancelados.
     - ``auto``: scratch si no hay épica abierta; tarea visible si la hay.
-    - ``scratch``: siempre temporal y oculto.
-    - ``ticket``: siempre visible (comportamiento anterior).
+    - ``ticket``: siempre visible, colgado de la épica si existe.
     - ``off``: no crea nada; solo bloquea con instrucciones.
     """
     env_vars = os.environ if environ is None else environ
-    value = str(env.get(AUTO_ENV, "", env_vars)).strip().lower()
-    return value if value in AUTO_MODES else "auto"
+    value = str(env.get(AUTO_ENV, "", env_vars) or "").strip().lower()
+    if value in AUTO_MODES:
+        return value
+    configured = str((config or {}).get("guard_auto", "") or "").strip().lower()
+    if configured in AUTO_MODES:
+        return configured
+    return DEFAULT_AUTO
 
 
 def _create_and_claim(
@@ -226,7 +239,7 @@ def evaluate(
                 claimed["code"],
             )
 
-        mode = auto_mode(environ)
+        mode = auto_mode(environ, config)
         if not auto or mode == "off":
             return _blocked("blocked", session, _message("blocked", "", ""))
 

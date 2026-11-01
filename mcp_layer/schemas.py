@@ -8,7 +8,7 @@ INSTRUCTIONS = """\
 Sistema de tickets local compartido entre agentes y el usuario.
 
 Flujo de trabajo:
-1. Ningún cambio sin ticket. Antes de editar o ejecutar algo que escriba, comprueba que tienes un ticket en "en_progreso": si no, créalo con taiki_create y reclámalo con taiki_claim. El guard de OpenCode bloquea la primera escritura y deja un ticket automático reclamado; ajústalo con taiki_update si el título no encaja.
+1. Ningún cambio sin ticket. Antes de editar o ejecutar algo que escriba, comprueba que tienes un ticket en "en_progreso": si no, créalo con taiki_create y reclámalo con taiki_claim. El guard de OpenCode bloquea la primera escritura y deja un ticket temporal S-#### reclamado (oculto, no consume números T-); si el trabajo es real, promuévelo con `taiki scratch --promote` o crea el ticket adecuado.
 2. Al empezar, consulta taiki_list con status="pendiente" (o usa taiki_next) y revisa también "en_progreso" para no duplicar trabajo.
 3. Si descubres trabajo nuevo, regístralo con taiki_create; no lo dejes solo en el chat. Para objetivos con varias tareas, crea una épica y las tareas con parent_id (T-0014.01, T-0014.02…).
 4. Al terminar, usa taiki_complete con una resolución concreta y el commit o los archivos tocados.

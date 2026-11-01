@@ -40,6 +40,7 @@ La base de datos se resuelve, por orden:
   "project": "mi-proyecto",
   "name": "Mi proyecto",
   "guard": false,
+  "guard_auto": "scratch",
   "defaults": {"kind": "otro", "priority": "media"},
   "ui": {"scope": "atencion", "refresh": 2.0}
 }
@@ -47,6 +48,10 @@ La base de datos se resuelve, por orden:
 
 - `guard` es opt-in: `taiki mcp install` lo activa; `taiki mcp uninstall` lo
   desactiva.
+- `guard_auto` decide qué ticket crea el guard: `scratch` (por defecto, solo
+  temporales `S-####`), `auto` (tarea visible si la sesión tiene épica abierta),
+  `ticket` (siempre visible) u `off` (bloquear sin crear). `TAIKI_GUARD_AUTO`
+  tiene prioridad sobre este valor.
 - `local.json` permite sobrescribir ajustes que no deben viajar en Git.
 
 ## Estados
@@ -572,22 +577,27 @@ Las instrucciones se las puede saltar un agente; el guard las hace cumplir.
   caso de un subagente), pasa.
 - Si la sesión creó un ticket `nuevo`/`pendiente`, lo reclama y **bloquea una
   vez** para que el agente lo revise, sin crear duplicados.
-- Si no hay nada, crea un ticket y lo reclama. **Si la sesión tiene una épica
-  abierta, el ticket nace como tarea suya** (`T-XXXX.NN`) en vez de como raíz.
-  Una épica solo se considera cerrada cuando se **confirma**: mientras esté
-  `en_progreso` o `completado` sigue admitiendo trabajo derivado. Se exige que
-  la épica ya tenga tareas y sea del mismo proyecto (o sin proyecto).
+- Si no hay nada, crea un **ticket temporal** (`S-0001`, oculto) y lo reclama.
+  **Por defecto el guard no crea nunca tickets visibles**: no aparece en
+  `list`/`stats`/`next`/TUI ni consume números `T-XXXX`. Si el trabajo es real,
+  `taiki scratch --promote S-0001` (recibe un `T-XXXX`); si no, caduca solo
+  (TTL 120 min).
 
-Así, completar una épica y seguir trabajando en la misma sesión no genera
-tickets sueltos: el trabajo nuevo queda donde corresponde y la confirmación del
-padre seguirá esperando a que la tarea nueva termine.
+La política se elige con `guard_auto` en `.taiki/config.json` (o
+`TAIKI_GUARD_AUTO`, que gana):
 
-**Sin épica, el ticket automático es un scratch oculto** (TTL 120 min): el
-guard desbloquea igual, pero no aparece en `list`/`stats`/`next`/TUI. Usa un
-código propio `S-0001` para no consumir números `T-XXXX`. Si el trabajo es
-real, `taiki scratch --promote S-0001` (recibe un `T-XXXX`); si no, caduca solo.
-`TAIKI_GUARD_AUTO` cambia la política: `scratch` (siempre oculto), `ticket`
-(siempre visible) u `off` (bloquear sin crear nada).
+| valor | qué crea el guard |
+|---|---|
+| `scratch` (defecto) | siempre `S-####`, oculto; nunca toca la tabla |
+| `auto` | si la sesión tiene una épica abierta, una tarea visible `T-XXXX.NN` suya; si no, scratch |
+| `ticket` | siempre visible; raíz si no hay épica |
+| `off` | bloquea sin crear nada |
+
+Con `auto` o `ticket`, una épica solo se considera cerrada cuando se
+**confirma**: mientras esté `en_progreso` o `completado` sigue admitiendo
+trabajo derivado. Se exige que ya tenga tareas y sea del mismo proyecto (o sin
+proyecto). Así, completar una épica y seguir trabajando en la misma sesión no
+genera tickets sueltos.
 
 El segundo intento ya pasa: el agente nunca se queda atascado, pero no puede
 escribir sin que exista un ticket. Lecturas, rutas fuera del HOME (`/tmp`,

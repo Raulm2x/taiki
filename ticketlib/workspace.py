@@ -146,6 +146,7 @@ def default_config(root: Path, name: str | None = None) -> dict[str, Any]:
         "project": root.name,
         "name": name or root.name,
         "guard": False,
+        "guard_auto": "scratch",
         "defaults": {"kind": "otro", "priority": "media"},
         "ui": {"scope": "atencion", "refresh": 2.0},
     }

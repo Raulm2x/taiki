@@ -137,11 +137,59 @@ def run(h: Harness) -> None:
         (epic["id"],),
     )
     conn.commit()
+
+    # Por defecto la épica NO atrae trabajo visible: el guard crea scratch.
+    counter_before = db.meta_get(conn, "next_ticket_number")
+    default_with_epic = guard.evaluate(
+        tool="write",
+        session="ses_guard_epic",
+        agent="opencode",
+        path=str(Path.home() / ".config/x"),
+    )
+    default_ticket = repo.get_ticket(conn, default_with_epic["ticket"])
+    h.ok(
+        default_with_epic["action"] == "created"
+        and scratch.is_scratch(default_ticket)
+        and scratch.CODE_PREFIX in default_ticket["code"],
+        "por defecto el guard crea un scratch aunque haya épica abierta",
+    )
+    h.eq(
+        db.meta_get(conn, "next_ticket_number"),
+        counter_before,
+        "el ticket por defecto no consume números T-XXXX",
+    )
+    scratch.drop(conn, default_ticket["code"])
+
+    h.eq(
+        guard.auto_mode(environ={}),
+        "scratch",
+        "sin variable ni config la política es scratch",
+    )
+    h.eq(
+        guard.auto_mode(environ={}, config={"guard_auto": "auto"}),
+        "auto",
+        "config.json guard_auto fija la política",
+    )
+    h.eq(
+        guard.auto_mode(
+            environ={"TAIKI_GUARD_AUTO": "ticket"},
+            config={"guard_auto": "auto"},
+        ),
+        "ticket",
+        "la variable de entorno gana a la config",
+    )
+    h.eq(
+        guard.auto_mode(environ={}, config={"guard_auto": "inventado"}),
+        "scratch",
+        "un guard_auto inválido cae al default seguro",
+    )
+
     nested = guard.evaluate(
         tool="write",
         session="ses_guard_epic",
         agent="opencode",
         path=str(Path.home() / ".config/x"),
+        environ={"TAIKI_GUARD_AUTO": "auto"},
     )
     h.ok(
         not nested["allow"]

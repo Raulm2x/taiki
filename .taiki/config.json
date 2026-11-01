@@ -10,5 +10,6 @@
     "scope": "atencion",
     "refresh": 2.0
   },
-  "guard": true
+  "guard": true,
+  "guard_auto": "scratch"
 }
