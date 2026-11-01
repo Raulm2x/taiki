@@ -34,6 +34,42 @@ def run(h: Harness) -> None:
     h.ok(db.meta_get(conn, "rollback_outer") is None, "excepción en tx anidada hace rollback de outer")
     h.ok(db.meta_get(conn, "rollback_inner") is None, "excepción en tx anidada hace rollback de inner")
 
+    # ── El trigger FTS solo reindexa title/body/code ─────────────────────
+    fts_ticket = repo.create_ticket(conn, title="índice viejo", body="cuerpo base")
+    traced: list[str] = []
+    conn.set_trace_callback(traced.append)
+    try:
+        conn.execute(
+            "UPDATE tickets SET heartbeat_at = ?, updated_at = ? WHERE code = ?",
+            (
+                "2026-01-01T00:00:00-05:00",
+                "2026-01-01T00:00:00-05:00",
+                fts_ticket["code"],
+            ),
+        )
+        heartbeat_trace = list(traced)
+        traced.clear()
+        conn.execute(
+            "UPDATE tickets SET title = ? WHERE code = ?",
+            ("índice nuevo", fts_ticket["code"]),
+        )
+        title_trace = list(traced)
+    finally:
+        conn.set_trace_callback(None)
+    h.ok(
+        not any("tickets_fts" in stmt for stmt in heartbeat_trace),
+        "un update de heartbeat/updated_at no dispara FTS",
+    )
+    h.ok(
+        any("tickets_fts" in stmt for stmt in title_trace),
+        "un update de title sí reindexa FTS",
+    )
+    h.ok(
+        fts_ticket["code"] in repo.search_codes(conn, "nuevo")
+        and fts_ticket["code"] not in repo.search_codes(conn, "viejo"),
+        "la búsqueda ve el título nuevo y deja de ver el viejo",
+    )
+
     # Atomicidad en claim_ticket
     t_atomic = repo.create_ticket(conn, title="Ticket para prueba atómica de claim")
     h.ok(t_atomic["status"] == "nuevo", "ticket inicia en estado nuevo")

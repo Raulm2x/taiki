@@ -125,7 +125,9 @@ CREATE TRIGGER IF NOT EXISTS tickets_fts_ad AFTER DELETE ON tickets BEGIN
     VALUES ('delete', old.id, old.title, old.body, old.code);
 END;
 
-CREATE TRIGGER IF NOT EXISTS tickets_fts_au AFTER UPDATE ON tickets BEGIN
+DROP TRIGGER IF EXISTS tickets_fts_au;
+CREATE TRIGGER tickets_fts_au
+AFTER UPDATE OF title, body, code ON tickets BEGIN
     INSERT INTO tickets_fts(tickets_fts, rowid, title, body, code)
     VALUES ('delete', old.id, old.title, old.body, old.code);
     INSERT INTO tickets_fts(rowid, title, body, code)
