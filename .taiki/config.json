@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "project": "taiki",
+  "name": "Taiki",
+  "defaults": {
+    "kind": "otro",
+    "priority": "media"
+  },
+  "ui": {
+    "scope": "atencion",
+    "refresh": 2.0
+  },
+  "guard": true
+}

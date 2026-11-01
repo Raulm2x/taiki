@@ -1,0 +1,10 @@
+# Cuarentena de módulos inestables o lentos.
+#
+# El módulo se sigue ejecutando, pero un fallo no bloquea la suite mientras la
+# entrada esté vigente. Al caducar `expires`, la suite falla y obliga a decidir:
+# arreglar, reescribir o eliminar con justificación. Nunca se borra solo.
+#
+# [modules.test_ejemplo]
+# reason = "motivo concreto y comprobable"
+# owner = "opencode"
+# expires = "2026-12-01"

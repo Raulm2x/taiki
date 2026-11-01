@@ -1,0 +1,4 @@
+#!/bin/sh
+# Resuelve el propio enlace (por ejemplo ~/.local/bin/ticket) hasta el repo.
+self=$(readlink -f "$0")
+exec python3 "$(dirname "$self")/../cli.py" "$@"

@@ -1,0 +1,185 @@
+"""Instalación opt-in del MCP de Taiki en un proyecto.
+
+Taiki no registra un servidor MCP global: cada proyecto decide si lo quiere.
+``ticket mcp install`` escribe la configuración del cliente en la raíz del
+proyecto y activa el guard en ``.taiki/config.json``. ``uninstall`` deshace
+ambos cambios.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+from ticketlib import workspace
+from ticketlib.domain import TicketError
+
+MCP_NAME = "tickets"
+SERVER = Path(__file__).resolve().parent.parent / "server.py"
+
+
+def server_command() -> list[str]:
+    """Comando absoluto y estable para arrancar el servidor MCP."""
+    return ["python3", str(SERVER)]
+
+
+def _opencode_config(root: Path) -> Path:
+    """Fichero donde escribir si no está disponible el CLI de OpenCode."""
+    nested = root / ".opencode" / "opencode.json"
+    if (root / ".opencode").is_dir():
+        return nested
+    return root / "opencode.json"
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise TicketError(
+            f"No se pudo leer {path}: {exc}. Usa `opencode mcp add` a mano."
+        ) from exc
+    return data if isinstance(data, dict) else {}
+
+
+def _write_json(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _install_with_cli(root: Path) -> str | None:
+    """Usa el CLI oficial de OpenCode si está disponible (preserva el resto)."""
+    binary = shutil.which("opencode")
+    if not binary:
+        return None
+    try:
+        result = subprocess.run(
+            [binary, "mcp", "add", MCP_NAME, "--", *server_command()],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return (result.stdout or "").strip() or None
+
+
+def install_opencode(root: Path) -> dict[str, Any]:
+    """Registra el MCP solo para este proyecto."""
+    output = _install_with_cli(root)
+    if output is not None:
+        return {"client": "opencode", "method": "cli", "detail": output}
+
+    path = _opencode_config(root)
+    data = _read_json(path)
+    servers = data.setdefault("mcp", {}).setdefault("servers", {})
+    servers[MCP_NAME] = {"type": "local", "command": server_command()}
+    _write_json(path, data)
+    return {"client": "opencode", "method": "file", "detail": str(path)}
+
+
+def uninstall_opencode(root: Path) -> Path | None:
+    """Quita el MCP del proyecto sin tocar el resto de su configuración."""
+    candidates = [
+        root / "opencode.json",
+        root / ".opencode" / "opencode.json",
+    ]
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        servers = (data.get("mcp") or {}).get("servers") or {}
+        if MCP_NAME not in servers:
+            continue
+        servers.pop(MCP_NAME, None)
+        _write_json(path, data)
+        return path
+    return None
+
+
+def install_antigravity() -> dict[str, Any]:
+    """Antigravity solo ofrece configuración global: se pide expresamente."""
+    binary = shutil.which("agy")
+    if not binary:
+        raise TicketError("No se encontró el CLI `agy`")
+    result = subprocess.run(
+        [binary, "mcp", "add", MCP_NAME, *server_command()],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise TicketError(
+            (result.stderr or result.stdout or "agy mcp add falló").strip()
+        )
+    return {"client": "antigravity", "method": "cli", "detail": "global"}
+
+
+def _workspace_or_create() -> tuple[Path, Path]:
+    """Devuelve ``(raíz, .taiki)``, creando el workspace si aún no existe."""
+    info = workspace.resolve()
+    if info["workspace"] is not None:
+        return info["workspace"].parent, info["workspace"]
+    root = workspace.project_root()
+    created = workspace.init_workspace(root)
+    return root, created["workspace"]
+
+
+def cmd_mcp_install(args: argparse.Namespace) -> int:
+    root, folder = _workspace_or_create()
+    config = workspace.load_config(folder)
+    config["guard"] = True
+    workspace.save_config(config, folder)
+
+    result = install_opencode(root)
+    print(f"OpenCode: MCP `{MCP_NAME}` instalado en {result['detail']}")
+    if getattr(args, "antigravity", False):
+        install_antigravity()
+        print(
+            "Antigravity: MCP instalado en la configuración global "
+            "(ese cliente no admite alcance por proyecto)."
+        )
+    print(f"Guard activado en {folder / workspace.CONFIG_NAME}")
+    return 0
+
+
+def cmd_mcp_uninstall(args: argparse.Namespace) -> int:
+    info = workspace.resolve()
+    if info["workspace"] is None:
+        print(workspace.MISSING, file=sys.stderr)
+        return 1
+    config = workspace.load_config(info["workspace"])
+    config["guard"] = False
+    workspace.save_config(config, info["workspace"])
+    removed = uninstall_opencode(info["workspace"].parent)
+    if removed is not None:
+        print(f"OpenCode: MCP `{MCP_NAME}` retirado de {removed}")
+    else:
+        print("OpenCode: no había un MCP de Taiki en este proyecto")
+    if getattr(args, "antigravity", False):
+        binary = shutil.which("agy")
+        if binary:
+            subprocess.run(
+                [binary, "mcp", "remove", MCP_NAME],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            print("Antigravity: MCP retirado de la configuración global")
+    print(f"Guard desactivado en {info['workspace']}")
+    return 0

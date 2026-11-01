@@ -1,0 +1,6 @@
+# Base de datos y estado local de Taiki
+taiki.db
+taiki.db-wal
+taiki.db-shm
+local.json
+backups/
