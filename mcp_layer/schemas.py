@@ -21,9 +21,6 @@ También existen "bloqueado" y "cancelado".
 """
 
 
-OUTPUT_SCHEMA = {"type": "object"}
-
-
 def _tool(
     name: str,
     description: str,
@@ -44,7 +41,6 @@ def _tool(
             "required": list(required),
             "additionalProperties": False,
         },
-        "outputSchema": OUTPUT_SCHEMA,
         "annotations": {
             "readOnlyHint": read_only,
             "destructiveHint": destructive,

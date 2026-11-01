@@ -164,8 +164,11 @@ def run(h: Harness) -> None:
     )
     by_name = {tool["name"]: tool for tool in schemas.TOOLS}
     h.ok(
-        all("annotations" in tool and "outputSchema" in tool for tool in schemas.TOOLS),
-        "todas las herramientas declaran anotaciones y outputSchema",
+        all(
+            "annotations" in tool and "outputSchema" not in tool
+            for tool in schemas.TOOLS
+        ),
+        "las herramientas declaran anotaciones sin outputSchema genérico",
     )
     h.ok(
         by_name["get"]["annotations"]["readOnlyHint"]
