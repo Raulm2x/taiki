@@ -21,6 +21,8 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    `taiki new -t "..." -k mantenimiento -p alta` y `taiki claim T-0001 --agent opencode`.
 3. Al terminar: `taiki complete T-0001 -r "qué se hizo y cómo se verificó" --commit <hash>`.
 4. La confirmación es del usuario: `taiki confirm T-0001`. Nunca la ejecutes tú.
+   Quien revisa puede marcar `verificado` antes con evidencia
+   (`taiki transition T-0001 verificado --note "tests/CI/revisión"`).
 5. El asunto del commit debe incluir `T-XXXX`; el hook `commit-msg` lo exige.
 
 ## Agentes en paralelo

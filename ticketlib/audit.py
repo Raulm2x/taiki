@@ -124,7 +124,7 @@ def unresolved(conn: Any) -> list[dict[str, Any]]:
     """Tickets cerrados sin resolución escrita."""
     rows = conn.execute(
         "SELECT code, title, status FROM tickets "
-        "WHERE status IN ('completado', 'confirmado') "
+        "WHERE status IN ('completado', 'verificado', 'confirmado') "
         "AND (resolution IS NULL OR TRIM(resolution) = '') "
         "ORDER BY code DESC"
     ).fetchall()
@@ -132,10 +132,11 @@ def unresolved(conn: Any) -> list[dict[str, Any]]:
 
 
 def uncommitted(conn: Any) -> list[dict[str, Any]]:
-    """Confirmados o completados sin ningún commit enlazado."""
+    """Confirmados, completados o verificados sin ningún commit enlazado."""
     rows = conn.execute(
         "SELECT t.code, t.title, t.status FROM tickets t "
-        "WHERE t.archived = 0 AND t.status IN ('completado', 'confirmado') "
+        "WHERE t.archived = 0 "
+        "AND t.status IN ('completado', 'verificado', 'confirmado') "
         "AND NOT EXISTS (SELECT 1 FROM links l "
         "WHERE l.ticket_id = t.id AND l.kind = 'commit') "
         "ORDER BY t.code DESC"

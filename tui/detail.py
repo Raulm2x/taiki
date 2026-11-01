@@ -172,7 +172,7 @@ def detail_lines(
         if len(commits) > 1:
             value += f" +{len(commits) - 1}"
         lines.append(_field("Commit", value, "value", inner))
-    elif ticket.get("status") in ("completado", "confirmado"):
+    elif ticket.get("status") in ("completado", "verificado", "confirmado"):
         lines.append(_field("Commit", "sin commit", "dim", inner))
 
     lines.append(_field("Creado", short_ts(ticket.get("created_at")), "dim", inner))
@@ -216,7 +216,11 @@ def detail_lines(
         lines.append(Line(""))
         lines.append(Line(f"Subtareas ({len(subtasks)})", "label"))
         for sub in subtasks[:6]:
-            mark = "✓" if sub["status"] in ("completado", "confirmado") else "·"
+            mark = (
+                "✓"
+                if sub["status"] in ("completado", "verificado", "confirmado")
+                else "·"
+            )
             text = f"  {mark} {sub['code']}  {sub['status']:<11} {sub['title']}"
             lines.append(Line(text[:inner], "dim" if mark == "·" else "value"))
         if len(subtasks) > 6:

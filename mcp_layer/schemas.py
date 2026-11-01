@@ -18,7 +18,9 @@ Flujo de trabajo:
 6. Nunca muevas un ticket a "confirmado": esa transición la hace el usuario con el CLI.
 7. Usa comment para decisiones o bloqueos y link para commits, archivos y URLs. Incluye el código T-XXXX en el asunto del commit: el hook commit-msg lo exige.
 
-Estados: nuevo → pendiente → en_progreso → completado → confirmado.
+Estados: nuevo → pendiente → en_progreso → completado → verificado → confirmado.
+"verificado" lo marca el conductor con evidencia (tests/CI/revisión) y sigue
+pendiente de la confirmación del usuario; "confirmado" es exclusivo del usuario.
 También existen "bloqueado" y "cancelado".
 """
 
@@ -404,6 +406,7 @@ TOOL_SPECS = [
     ToolSpec(
         "transition",
         "Cambia el estado de un ticket validando la máquina de estados. "
+        "Pasar a 'verificado' exige evidencia en note. "
         "No permite pasar a 'confirmado' (reservado al usuario).",
         {
             "code": CODE,
@@ -642,7 +645,7 @@ PROMPTS = [
     },
     {
         "name": "review",
-        "description": "Lista tickets completados pendientes de confirmación del usuario",
+        "description": "Lista tickets completados o verificados pendientes de confirmación del usuario",
         "arguments": [],
     },
 ]

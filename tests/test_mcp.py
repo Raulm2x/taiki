@@ -375,6 +375,25 @@ def run(h: Harness) -> None:
         meta={"sessionId": "session-claim-111"},
     )
     h.ok(mcp_completed["status"] == "completado", "call_tool('complete') pasa estado a completado")
+    mcp_verified = handlers.call_tool(
+        "transition",
+        {
+            "code": mcp_created["code"],
+            "status": "verificado",
+            "note": "gates MCP verdes",
+        },
+        meta={"sessionId": "session-claim-111"},
+    )
+    h.ok(
+        mcp_verified["status"] == "verificado",
+        "call_tool('transition') verifica con evidencia",
+    )
+    review_prompt = handlers.get_prompt("review")
+    h.ok(
+        mcp_created["code"]
+        in review_prompt["messages"][0]["content"]["text"],
+        "el prompt review incluye los tickets verificados",
+    )
     completed_full = handlers.call_tool(
         "get", {"code": mcp_created["code"]}
     )

@@ -16,6 +16,7 @@ STATUS_COLORS: dict[str, str] = {
     "pendiente": "33",
     "en_progreso": "34",
     "completado": "32",
+    "verificado": "1;36",
     "confirmado": "1;32",
     "bloqueado": "35",
     "cancelado": "2",

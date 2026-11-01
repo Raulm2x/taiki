@@ -55,6 +55,15 @@ def run(h: Harness) -> None:
         ),
         "MUTATING_TOOLS se deriva de read_only",
     )
+    transition_tool = next(
+        tool for tool in schemas.TOOLS if tool["name"] == "transition"
+    )
+    h.ok(
+        "verificado"
+        in transition_tool["inputSchema"]["properties"]["status"]["enum"]
+        and "verificado" in schemas.INSTRUCTIONS,
+        "el catálogo MCP expone y documenta el estado verificado",
+    )
 
     # Precedencia en resolve_session
     # 1. meta > args > env

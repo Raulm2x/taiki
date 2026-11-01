@@ -18,6 +18,7 @@ from .state import (
     ORDER_MODES,
     PANE_MESSAGES,
     SCOPE_LABELS,
+    SCOPE_STATUSES,
     SCOPES,
     TuiState,
     layout_width,
@@ -199,7 +200,10 @@ def _handle_mouse(state: TuiState, layout) -> None:
     column = layout.column_at(mx)
     if column == "toggle":
         if not state.toggle():
-            state.notify("Solo se pueden marcar tickets 'completado'.", "info")
+            state.notify(
+                "Solo se pueden marcar tickets 'completado' o 'verificado'.",
+                "info",
+            )
     elif column in ("title", "code") and epic:
         state.toggle_expanded(ticket["code"])
     elif column == "agent":
@@ -288,7 +292,7 @@ def _initial_state(
     if statuses:
         if set(statuses) == set(OPEN_STATUSES):
             state.set_scope("abiertos")
-        elif statuses == ["completado"]:
+        elif set(statuses) == set(SCOPE_STATUSES["completados"]):
             state.set_scope("completados")
         else:
             # Un estado explícito (p. ej. `--status confirmado`) debe verse
@@ -497,10 +501,16 @@ def main_loop(
             if ticket is not None and state.is_epic(ticket):
                 state.toggle_expanded(ticket["code"])
             elif not state.toggle():
-                state.notify("Solo se pueden marcar tickets 'completado'.", "info")
+                state.notify(
+                    "Solo se pueden marcar tickets 'completado' o 'verificado'.",
+                    "info",
+                )
         elif key == ord(" "):
             if not state.toggle():
-                state.notify("Solo se pueden marcar tickets 'completado'.", "info")
+                state.notify(
+                    "Solo se pueden marcar tickets 'completado' o 'verificado'.",
+                    "info",
+                )
         elif key in (curses.KEY_RIGHT, ord("l")):
             ticket = state.current()
             if ticket is not None and state.is_epic(ticket):
@@ -522,7 +532,9 @@ def main_loop(
             count = state.expand_all()
             state.notify(f"{count} épica(s) desplegadas.", "info", ttl=3)
         elif key == ord("a"):
-            state.notify(f"Marcados {state.select_all()} completados.", "info")
+            state.notify(
+                f"Marcados {state.select_all()} confirmables.", "info"
+            )
         elif key == ord("A"):
             state.clear_selection()
             state.notify("Selección vacía.", "info")

@@ -111,6 +111,43 @@ def run(h: Harness) -> None:
         "el CLI no cambia nada en un lote inválido",
     )
 
+    verified = completado("verificado por CLI")
+    repo.transition(
+        conn,
+        verified["code"],
+        "verificado",
+        note="tests/run.py --strict-budget verde",
+        actor="conductor",
+    )
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        exit_verified = cli.main(["confirm", verified["code"]])
+    h.ok(
+        exit_verified == 0
+        and repo.get_ticket(conn, verified["code"])["status"] == "confirmado",
+        "el CLI confirma un ticket verificado",
+    )
+
+    rejected = completado("rechazado por CLI")
+    repo.transition(
+        conn,
+        rejected["code"],
+        "verificado",
+        note="gates verdes",
+        actor="conductor",
+    )
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        exit_reject = cli.main(
+            ["reject", rejected["code"], "--why", "caso sin cubrir"]
+        )
+    h.ok(
+        exit_reject == 0
+        and repo.get_ticket(conn, rejected["code"])["iterations"] == 2
+        and "intento 2" in out.getvalue(),
+        "rechazar un verificado cuenta un intento y lo informa",
+    )
+
     # ── Acciones de administración ────────────────────────────────
     target = repo.create_ticket(conn, title="Acciones de la TUI")
     claimed = tui_actions.claim(target["code"], "tui:test")

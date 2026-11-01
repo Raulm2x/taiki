@@ -234,9 +234,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser(
         "confirm",
-        help="Confirma uno o varios tickets completados",
+        help="Confirma uno o varios tickets completados o verificados",
         description="Confirma varios tickets de forma atómica: si alguno no "
-        "está en 'completado' no se confirma ninguno.",
+        "está en 'completado' o 'verificado' no se confirma ninguno.",
     )
     p.add_argument("code", nargs="+", help="Uno o varios códigos (T-0001 T-0002)")
     p.add_argument("--note")
@@ -249,7 +249,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser(
         "reject",
-        help="Rechaza un ticket completado y lo devuelve a en_progreso",
+        help="Rechaza un ticket completado/verificado y lo devuelve a en_progreso",
     )
     p.add_argument("code")
     p.add_argument("--why", required=True, help="Motivo del rechazo")

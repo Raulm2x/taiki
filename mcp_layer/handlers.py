@@ -973,9 +973,11 @@ def get_prompt(name: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
             text = _next_prompt(ticket)
             description = "Siguiente ticket pendiente"
         elif name == "review":
-            rows = repo.list_tickets(conn, statuses=["completado"], limit=20)
+            rows = repo.list_tickets(
+                conn, statuses=["completado", "verificado"], limit=20
+            )
             text = _review_prompt(rows)
-            description = "Tickets completados pendientes de confirmación"
+            description = "Tickets completados o verificados pendientes de confirmación"
         else:
             raise domain.NotFoundError(f"Prompt desconocido: {name}")
     finally:
@@ -1014,8 +1016,11 @@ No lo confirmes: esa transición la hace el usuario con el CLI.
 
 def _review_prompt(rows: list[dict[str, Any]]) -> str:
     if not rows:
-        return "No hay tickets completados pendientes de confirmación."
-    lines = ["Tickets completados pendientes de confirmación del usuario:", ""]
+        return "No hay tickets completados o verificados pendientes de confirmación."
+    lines = [
+        "Tickets completados o verificados pendientes de confirmación del usuario:",
+        "",
+    ]
     for ticket in rows:
         lines.append(
             f"- {ticket['code']} ({ticket['priority']}): {ticket['title']}"

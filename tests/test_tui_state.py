@@ -36,10 +36,10 @@ def run(h: Harness) -> None:
         state.set_scope("completados") == "completados"
         and state.visible()
         and all(
-            ticket["status"] == "completado"
+            ticket["status"] in ("completado", "verificado")
             for ticket in state.visible()
         ),
-        "el ámbito 'completados' solo muestra completados",
+        "el ámbito 'completados' incluye completados y verificados",
     )
     state.set_scope("abiertos")
     h.ok(
@@ -71,6 +71,30 @@ def run(h: Harness) -> None:
     )
     state.clear_selection()
     h.ok(state.selected == set(), "clear_selection vacía la selección")
+
+    verified = repo.create_ticket(conn, title="Verificado en la TUI")
+    repo.claim_ticket(conn, verified["code"], agent="opencode")
+    repo.complete_ticket(conn, verified["code"], resolution="lista")
+    repo.transition(
+        conn,
+        verified["code"],
+        "verificado",
+        note="gates verdes",
+        actor="conductor",
+    )
+    verified_state = tui.TuiState()
+    verified_state.load(repo.list_tickets(conn, limit=None))
+    verified_state.set_scope("completados")
+    verified_row = next(
+        ticket
+        for ticket in verified_state.tickets
+        if ticket["code"] == verified["code"]
+    )
+    h.ok(
+        verified_row in verified_state.visible()
+        and verified_state.can_confirm(verified_row),
+        "un verificado aparece en 'completados' y se puede marcar",
+    )
 
     state.cursor = 0
     state.scroll = 0

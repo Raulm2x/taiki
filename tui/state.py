@@ -12,8 +12,9 @@ from ticketlib.domain import FINAL_STATUSES, OPEN_STATUSES
 
 from . import heatmap
 
-# `atencion` es el ámbito por defecto: todo lo que aún requiere acción, incluido
-# `completado` (pendiente de confirmar), pero sin `confirmado` ni `cancelado`.
+# `atencion` es el ámbito por defecto: todo lo que aún requiere acción, incluidos
+# `completado` y `verificado` (pendientes de confirmar), pero sin `confirmado`
+# ni `cancelado`.
 SCOPES = ("atencion", "todos", "completados", "abiertos", "cerrados")
 DEFAULT_SCOPE = "atencion"
 # Ámbitos que no son un filtro manual: conservan el árbol de épicas.
@@ -28,7 +29,7 @@ SCOPE_LABELS = {
 SCOPE_STATUSES: dict[str, tuple[str, ...] | None] = {
     "atencion": None,
     "todos": None,
-    "completados": ("completado",),
+    "completados": ("completado", "verificado"),
     "abiertos": tuple(OPEN_STATUSES),
     "cerrados": tuple(FINAL_STATUSES),
 }
@@ -39,7 +40,8 @@ FILTERS = SCOPES
 FILTER_STATUSES = {
     k: list(v) if v is not None else None for k, v in SCOPE_STATUSES.items()
 }
-CONFIRMABLE = "completado"
+# Estados que el usuario puede marcar para confirmar desde la TUI.
+CONFIRMABLE = ("completado", "verificado")
 ORDER_MODES = ("code", "priority")
 FOCUSES = ("list", "detail")
 PANES = ("detail", "activity", "heatmap")
@@ -84,6 +86,7 @@ STATUS_CURSES = {
     "pendiente": 3,
     "en_progreso": 4,
     "completado": 2,
+    "verificado": 2,
     "confirmado": 2,
     "bloqueado": 5,
     "cancelado": 8,
@@ -499,7 +502,7 @@ class TuiState:
         return (now or time.monotonic()) - seen < FRESH_SECONDS
 
     def can_confirm(self, ticket: dict[str, Any]) -> bool:
-        if ticket["status"] != CONFIRMABLE:
+        if ticket["status"] not in CONFIRMABLE:
             return False
         progress = ticket.get("progress") or {}
         return not (

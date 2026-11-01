@@ -69,13 +69,18 @@ La base de datos se resuelve, por orden:
 ## Estados
 
 ```
-nuevo → pendiente → en_progreso → completado → confirmado
-                 ↘ bloqueado ↗
+nuevo → pendiente → en_progreso → completado → verificado → confirmado
+                 ↘ bloqueado ↗                    ↘ en_progreso (rechazo)
                  ↘ cancelado ↗ (reabrible)
 ```
 
-- `confirmado` solo lo puede aplicar el usuario desde el CLI.
-- Reabrir un ticket (`completado`, `confirmado` o `cancelado`) exige un motivo.
+- `completado`: el worker terminó (commit, tests y criterios de aceptación).
+- `verificado`: el conductor revisó y ejecutó los gates; exige evidencia en la
+  nota (tests, CI, revisión). No cuenta como abierto ni como final.
+- `confirmado` solo lo puede aplicar el usuario desde el CLI, tanto desde
+  `completado` como desde `verificado`.
+- Reabrir un ticket (`completado`, `verificado`, `confirmado` o `cancelado`)
+  exige un motivo e incrementa el contador de intentos.
 - Cada cambio queda registrado en el historial con actor, sesión y nota.
 
 ## Estructura
@@ -513,10 +518,10 @@ taiki confirm T-0003 T-0004
 `confirm` valida **todos** los códigos antes de escribir y aplica el lote en
 una sola transacción:
 
-- `completado` → se confirma.
-- **épica `completado`** → se confirman primero sus tareas completadas y después
-  la épica, todo en la misma transacción. Si queda una tarea abierta no se
-  confirma nada.
+- `completado` o `verificado` → se confirma.
+- **épica `completado`/`verificado`** → se confirman primero sus tareas
+  completadas o verificadas y después la épica, todo en la misma transacción.
+  Si queda una tarea abierta no se confirma nada.
 - `confirmado` → se omite con aviso (idempotente).
 - otro estado o código inexistente → **no se confirma ninguno** y sale con
   código 1 listando los problemas por stderr.
@@ -556,8 +561,9 @@ enlazar un commit y abrir la sesión del agente.
   si quedan páginas.
 - **Filtros combinables** (`f`): ámbito (`atención` por defecto → `todos` →
   `completados` → `abiertos` → `cerrados`, con `s` para ciclar), estado,
-  prioridad, tipo, agente, proyecto y etiqueta; `x` limpia. `cerrados` muestra
-  solo `confirmado` y `cancelado`; `M` alterna esa vista con el ámbito anterior
+  prioridad, tipo, agente, proyecto y etiqueta; `x` limpia. `completados`
+  incluye `completado` y `verificado`; `cerrados` muestra solo `confirmado` y
+  `cancelado`; `M` alterna esa vista con el ámbito anterior
   (la `m` minúscula abre el menú de acciones). Al abrir la TUI quedan ocultos
   los `confirmado` y `cancelado`, pero siguen cargados: cambiar de ámbito los
   recupera, y la selección solo confirma lo que pasa los filtros activos. En
@@ -569,10 +575,10 @@ enlazar un commit y abrir la sesión del agente.
   (`taiki tui --order priority`).
 - **Paginación**: al llegar al final (o con `n`) se cargan 200 tickets más;
   el indicador `hay más` desaparece cuando ya está todo.
-- `espacio`/`enter` marca (solo `completado`), `a` marca todos los
-  completados, `A` limpia, `c` confirma con un modal de resumen.
-  Al marcar una épica se marcan sus tareas completadas (aunque estén
-  plegadas); al confirmarla se confirman en orden tareas → épica.
+- `espacio`/`enter` marca (solo `completado` o `verificado`), `a` marca todos
+  los confirmables, `A` limpia, `c` confirma con un modal de resumen.
+  Al marcar una épica se marcan sus tareas completadas o verificadas (aunque
+  estén plegadas); al confirmarla se confirman en orden tareas → épica.
 - **Acciones** (`m`): reclamar, asignar, cambiar de estado (con motivo al
   reabrir), comentar, copiar código al portapapeles, enlazar commit y abrir
   sesión. Las acciones destructivas piden confirmación y todo pasa por el

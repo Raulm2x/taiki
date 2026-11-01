@@ -30,9 +30,9 @@ from .state import (
 HELP_LINES = (
     "Atajos de la TUI de tickets",
     "",
-    "  espacio           Marcar o desmarcar (solo 'completado')",
+    "  espacio           Marcar o desmarcar ('completado'/'verificado')",
     "  enter             Desplegar la épica o marcar la tarea",
-    "  a / A             Marcar todos los completados / limpiar",
+    "  a / A             Marcar todos los confirmables / limpiar",
     "  c                 Confirmar la selección (modal)",
     "  m                 Menú de acciones del ticket actual",
     "  o                 Abrir la sesión del agente",
@@ -276,7 +276,7 @@ def draw_header(
 
     stats = state.stats or {}
     by_status = stats.get("por_estado") or {}
-    confirmable = by_status.get("completado", 0)
+    confirmable = by_status.get("completado", 0) + by_status.get("verificado", 0)
     pieces = [
         f"abiertos {stats.get('abiertos', 0)}",
         f"en progreso {by_status.get('en_progreso', 0)}",

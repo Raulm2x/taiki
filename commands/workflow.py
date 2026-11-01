@@ -107,8 +107,9 @@ def cmd_reject(args: argparse.Namespace) -> int:
             f"Rechazado en revisión: {args.why}",
             author="usuario",
         )
-    iteration = int(ticket.get("iterations") or 0) + 1
-    print(f"{ticket['code']} → en_progreso · siguiente iteración {iteration}")
+    print(
+        f"{ticket['code']} → en_progreso · intento {ticket['iterations']}"
+    )
     return 0
 
 
