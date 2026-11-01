@@ -33,7 +33,18 @@ KINDS = (
 PRIORITIES = ("baja", "media", "alta", "urgente")
 PRIORITY_RANK = {"urgente": 0, "alta": 1, "media": 2, "baja": 3}
 
-LINK_KINDS = ("commit", "archivo", "url", "sesion", "worktree", "rama", "otro")
+LINK_KINDS = (
+    "commit",
+    "archivo",
+    "url",
+    "sesion",
+    "worktree",
+    "rama",
+    "depende",
+    "otro",
+)
+# Enlace que expresa "este ticket depende de otro": el ref es un código T-XXXX.
+DEPENDENCY_KIND = "depende"
 ACTOR_TYPES = ("agente", "usuario")
 
 TRANSITIONS: dict[str, set[str]] = {

@@ -11,5 +11,24 @@
     "refresh": 2.0
   },
   "guard": true,
-  "guard_auto": "scratch"
+  "guard_auto": "scratch",
+  "agents": {
+    "worker": {
+      "strengths": [
+        "mantenimiento",
+        "funcionalidad",
+        "bug",
+        "documentacion",
+        "seguridad",
+        "otro"
+      ],
+      "max_parallel": 2,
+      "cost": 1.0
+    },
+    "reviewer": {
+      "strengths": [],
+      "max_parallel": 1,
+      "cost": 0.5
+    }
+  }
 }

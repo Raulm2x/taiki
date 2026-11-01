@@ -199,6 +199,11 @@ TOOL_SPECS = [
                 "default": False,
                 "description": "Excluye épicas que ya tienen tareas",
             },
+            "ready": {
+                "type": "boolean",
+                "default": False,
+                "description": "Solo tareas sin dependencias abiertas",
+            },
             "parent_id": {
                 "type": "string",
                 "maxLength": 40,
@@ -502,6 +507,25 @@ TOOL_SPECS = [
                 "type": "boolean",
                 "default": False,
                 "description": "Devuelve el ticket completo en vez del resumen",
+            },
+            "ready": {
+                "type": "boolean",
+                "default": True,
+                "description": "Salta tareas con dependencias abiertas",
+            },
+        },
+        read_only=True,
+    ),
+    ToolSpec(
+        "agents",
+        "Registro de capacidades de agentes: modelo, variante, fortalezas por "
+        "tipo, paralelismo máximo, rutas y coste. Con kind devuelve además el "
+        "agente recomendado para ese tipo de trabajo.",
+        {
+            "kind": {
+                "type": "string",
+                "enum": list(KINDS),
+                "description": "Tipo de trabajo para recomendar un agente",
             },
         },
         read_only=True,

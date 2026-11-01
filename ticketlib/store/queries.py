@@ -10,7 +10,9 @@ from typing import Any, Iterable
 
 from .. import db
 from ..domain import (
+    DEPENDENCY_KIND,
     KINDS,
+    OPEN_STATUSES,
     PARENT_CONFIRMED_STATUSES,
     PARENT_DONE_STATUSES,
     PRIORITIES,
@@ -121,6 +123,25 @@ def _subtask_progress(
     }
 
 
+def _dependency_fields(
+    conn: sqlite3.Connection, ticket_id: int
+) -> tuple[list[str], list[str]]:
+    """Códigos de los que depende el ticket y cuáles siguen abiertos."""
+    rows = conn.execute(
+        "SELECT l.ref AS code, t.status AS status FROM links l "
+        "LEFT JOIN tickets t ON t.code = l.ref "
+        "WHERE l.ticket_id = ? AND l.kind = ? ORDER BY l.id",
+        (ticket_id, DEPENDENCY_KIND),
+    ).fetchall()
+    depends_on = [row["code"] for row in rows]
+    blocked_by = [
+        row["code"]
+        for row in rows
+        if row["status"] is None or row["status"] in OPEN_STATUSES
+    ]
+    return depends_on, blocked_by
+
+
 def get_ticket(
     conn: sqlite3.Connection,
     code: Any,
@@ -199,6 +220,10 @@ def get_ticket(
         commits = commits[-commits_maximum:]
     ticket["commits"] = commits
     ticket["committed"] = bool(commits)
+    ticket["depends_on"], ticket["blocked_by"] = _dependency_fields(
+        conn, row["id"]
+    )
+    ticket["ready"] = not ticket["blocked_by"]
     if ticket["parent_id"]:
         parent = conn.execute(
             "SELECT code FROM tickets WHERE id = ?", (ticket["parent_id"],)
@@ -283,6 +308,7 @@ class TicketFilter:
     roots_only: bool = False
     leaves_only: bool = False
     include_scratch: bool = False
+    ready_only: bool = False
 
     def build(self, conn: sqlite3.Connection) -> tuple[str, list[str], list[Any]]:
         parent_pk = UNSET
@@ -362,6 +388,17 @@ def _build_filters(
             "NOT EXISTS (SELECT 1 FROM tickets ch "
             "WHERE ch.parent_id = t.id AND ch.archived = 0)"
         )
+    if filt.ready_only:
+        # Listo = sin dependencias abiertas. Una dependencia archivada o
+        # cerrada no bloquea.
+        where.append(
+            "NOT EXISTS (SELECT 1 FROM links dl "
+            "JOIN tickets dt ON dt.code = dl.ref AND dt.archived = 0 "
+            "WHERE dl.ticket_id = t.id AND dl.kind = ? "
+            f"AND dt.status IN ({', '.join('?' for _ in OPEN_STATUSES)}))"
+        )
+        params.append(DEPENDENCY_KIND)
+        params.extend(OPEN_STATUSES)
     if not filt.include_archived:
         where.append("t.archived = 0")
     if not filt.include_scratch:
@@ -394,6 +431,7 @@ def list_tickets(
     leaves_only: bool = False,
     include_scratch: bool = False,
     detail: bool = False,
+    ready: bool = False,
     filters: TicketFilter | None = None,
 ) -> list[dict[str, Any]]:
     """Lista tickets con filtros, paginación, orden y jerarquía.
@@ -420,6 +458,7 @@ def list_tickets(
         roots_only=roots_only,
         leaves_only=leaves_only,
         include_scratch=include_scratch,
+        ready_only=ready,
     )
     join, where, params = filt.build(conn)
 
@@ -473,6 +512,7 @@ def count_tickets(
     roots_only: bool = False,
     leaves_only: bool = False,
     include_scratch: bool = False,
+    ready: bool = False,
     filters: TicketFilter | None = None,
 ) -> int:
     """Cuenta tickets con los mismos filtros que ``list_tickets``."""
@@ -491,6 +531,7 @@ def count_tickets(
         roots_only=roots_only,
         leaves_only=leaves_only,
         include_scratch=include_scratch,
+        ready_only=ready,
     )
     join, where, params = filt.build(conn)
     sql = "SELECT COUNT(*) FROM tickets t" + join
@@ -649,9 +690,15 @@ def recent_events(
 
 
 def next_ticket(
-    conn: sqlite3.Connection, project: str | None = None
+    conn: sqlite3.Connection,
+    project: str | None = None,
+    ready: bool = True,
 ) -> dict[str, Any] | None:
-    """Devuelve el siguiente ticket de mayor prioridad listo para trabajar."""
+    """Devuelve el siguiente ticket de mayor prioridad listo para trabajar.
+
+    Con ``ready=True`` (por defecto) se saltan las tareas con dependencias
+    abiertas: una tarea bloqueada no es "la siguiente".
+    """
     for statuses in (["pendiente"], ["nuevo"]):
         rows = list_tickets(
             conn,
@@ -659,6 +706,7 @@ def next_ticket(
                 statuses=statuses,
                 project=project,
                 leaves_only=True,
+                ready_only=ready,
             ),
             limit=1,
             order="priority",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 from mcp_layer import handlers, schemas
+from ticketlib import repo
 from tests.support import Harness
 
 
@@ -13,8 +14,9 @@ def run(h: Harness) -> None:
     # Catálogo MCP: nombres estables y anotaciones solo donde aportan.
     expected_catalog = {
         "create", "list", "get", "claim", "update", "transition", "complete",
-        "comment", "link", "stats", "next", "status", "whoami", "heartbeat",
-        "worktree_create", "worktree_list", "promote", "scratch_drop", "health",
+        "comment", "link", "stats", "next", "agents", "status", "whoami",
+        "heartbeat", "worktree_create", "worktree_list", "promote",
+        "scratch_drop", "health",
     }
     catalog_names = {tool["name"] for tool in schemas.TOOLS}
     h.eq(
@@ -30,7 +32,7 @@ def run(h: Harness) -> None:
     h.eq(
         read_only,
         {
-            "list", "get", "stats", "next",
+            "list", "get", "stats", "next", "agents",
             "status", "whoami", "worktree_list", "health",
         },
         "readOnlyHint solo se anota en las herramientas de lectura",
@@ -134,4 +136,34 @@ def run(h: Harness) -> None:
     h.ok(
         handlers.resolve_session(meta={"sessionId": "   "}, args={"session_id": "fallback-arg"}) == "fallback-arg",
         "meta vacío cae al identificador provisto en args",
+    )
+
+    # ── Dependencias y capacidades por MCP ──────────────────────────────
+    base = repo.create_ticket(h.conn, title="Base MCP", project="ready-mcp")
+    dependent = repo.create_ticket(
+        h.conn, title="Dependiente MCP", project="ready-mcp"
+    )
+    repo.link_ticket(
+        h.conn, dependent["code"], "depende", base["code"]
+    )
+    listed = handlers.call_tool(
+        "list", {"project": "ready-mcp", "ready": True, "limit": 10}
+    )
+    listed_codes = {ticket["code"] for ticket in listed["tickets"]}
+    h.ok(
+        base["code"] in listed_codes and dependent["code"] not in listed_codes,
+        "list ready filtra las dependencias abiertas por MCP",
+    )
+    following = handlers.call_tool("next", {"project": "ready-mcp"})
+    h.ok(
+        following["ticket"]["code"] == base["code"],
+        "next salta la tarea bloqueada por MCP",
+    )
+    catalog = handlers.call_tool("agents", {"kind": "bug"})
+    h.ok(
+        catalog["agents"]
+        and catalog["recommended"]["name"] in {
+            item["name"] for item in catalog["agents"]
+        },
+        "agents expone el registro y recomienda un agente",
     )

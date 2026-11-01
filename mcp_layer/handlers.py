@@ -10,6 +10,7 @@ from typing import Any, Callable
 from urllib.parse import unquote
 
 from ticketlib import (
+    agents as agents_lib,
     audit as audit_lib,
     db,
     domain,
@@ -328,6 +329,7 @@ def _handle_list(
         include_archived=bool(args.get("include_archived", False)),
         tag=args.get("tag"),
         tags=args.get("tags"),
+        ready_only=bool(args.get("ready", False)),
     )
     ticket_filter = base_filter
     if args.get("only_roots"):
@@ -653,12 +655,35 @@ def _handle_next(
     session: str | None = None,
     actor: str = "agente",
 ) -> dict[str, Any]:
-    ticket = repo.next_ticket(conn, project=args.get("project"))
+    ticket = repo.next_ticket(
+        conn,
+        project=args.get("project"),
+        ready=bool(args.get("ready", True)),
+    )
     if ticket is None:
         return {"ticket": None}
     if args.get("detail"):
         return {"ticket": ticket}
     return {"ticket": _summary(ticket, preview=True)}
+
+
+def _handle_agents(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    session: str | None = None,
+    actor: str = "agente",
+) -> dict[str, Any]:
+    info = workspace.resolve()
+    config = workspace.load_config(info["workspace"]) if info["workspace"] else {}
+    table = agents_lib.registry(config)
+    data: dict[str, Any] = {
+        "agents": [table[name] for name in sorted(table)],
+        "fallback": agents_lib.FALLBACK_AGENT,
+    }
+    kind = args.get("kind")
+    if kind:
+        data["recommended"] = agents_lib.recommend(kind, config)
+    return data
 
 
 def _handle_status(
@@ -969,7 +994,11 @@ def get_prompt(name: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
     conn = db.connect()
     try:
         if name == "next":
-            ticket = repo.next_ticket(conn, project=args.get("project"))
+            ticket = repo.next_ticket(
+        conn,
+        project=args.get("project"),
+        ready=bool(args.get("ready", True)),
+    )
             text = _next_prompt(ticket)
             description = "Siguiente ticket pendiente"
         elif name == "review":

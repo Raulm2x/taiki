@@ -444,3 +444,97 @@ def run(h: Harness) -> None:
         [f"L{index}" for index in range(1, 26)],
         "sin límite se conserva el orden ascendente completo",
     )
+
+    # ── Dependencias entre tareas y registro de capacidades ──────────────
+    base = repo.create_ticket(conn, title="Base", project="deps")
+    dependent = repo.create_ticket(conn, title="Dependiente", project="deps")
+    repo.link_ticket(conn, dependent["code"], "depende", base["code"])
+    blocked = repo.get_ticket(conn, dependent["code"])
+    h.ok(
+        blocked["depends_on"] == [base["code"]]
+        and blocked["blocked_by"] == [base["code"]]
+        and blocked["ready"] is False,
+        "una dependencia abierta bloquea la tarea",
+    )
+    h.ok(
+        base["code"]
+        in {ticket["code"] for ticket in repo.list_tickets(conn, ready=True)}
+        and dependent["code"]
+        not in {ticket["code"] for ticket in repo.list_tickets(conn, ready=True)},
+        "list ready deja fuera las tareas bloqueadas",
+    )
+    h.ok(
+        repo.next_ticket(conn, project="deps", ready=True)["code"] == base["code"],
+        "next salta la tarea con dependencias abiertas",
+    )
+    repo.transition(conn, base["code"], "en_progreso", actor="test")
+    repo.complete_ticket(conn, base["code"], resolution="base lista")
+    h.ok(
+        repo.get_ticket(conn, dependent["code"])["ready"]
+        and repo.next_ticket(conn, project="deps", ready=True)["code"]
+        == dependent["code"],
+        "al cerrar la dependencia la tarea pasa a lista",
+    )
+
+    cycle_a = repo.create_ticket(conn, title="Ciclo A", project="deps")
+    cycle_b = repo.create_ticket(conn, title="Ciclo B", project="deps")
+    repo.link_ticket(conn, cycle_a["code"], "depende", cycle_b["code"])
+    h.raises(
+        domain.ValidationError,
+        lambda: repo.link_ticket(
+            conn, cycle_b["code"], "depende", cycle_a["code"]
+        ),
+        "una dependencia circular se rechaza",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: repo.link_ticket(
+            conn, cycle_a["code"], "depende", cycle_a["code"]
+        ),
+        "un ticket no puede depender de sí mismo",
+    )
+    h.raises(
+        domain.NotFoundError,
+        lambda: repo.link_ticket(
+            conn, cycle_a["code"], "depende", "T-9999"
+        ),
+        "una dependencia a un ticket inexistente falla",
+    )
+
+    from ticketlib import agents
+
+    default_table = agents.registry()
+    h.ok(
+        set(agents.DEFAULT_AGENTS) <= set(default_table)
+        and default_table["worker"]["max_parallel"] >= 1,
+        "el registro por defecto valida y expone capacidades",
+    )
+    custom = agents.registry(
+        {"agents": {"worker": {"max_parallel": 3, "cost": 2.5}}}
+    )
+    h.eq(
+        (custom["worker"]["max_parallel"], custom["worker"]["cost"]),
+        (3, 2.5),
+        "la configuración sobrescribe el registro",
+    )
+    h.ok(
+        agents.recommend("documentacion")["name"] == "gemini",
+        "recomendar elige el agente más barato que cubre el tipo",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: agents.capability("desconocido"),
+        "un agente desconocido falla con error claro",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: agents.registry({"agents": {"worker": {"max_parallel": 0}}}),
+        "el registro rechaza paralelismo inválido",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: agents.registry(
+            {"agents": {"worker": {"strengths": ["inventado"]}}}
+        ),
+        "el registro rechaza tipos desconocidos",
+    )

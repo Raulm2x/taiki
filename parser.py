@@ -80,6 +80,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-q", "--query")
     p.add_argument("--tag", help="Filtra por etiqueta")
     p.add_argument("--all", action="store_true", help="Incluye estados finales")
+    p.add_argument(
+        "--ready",
+        action="store_true",
+        help="Solo tareas sin dependencias abiertas",
+    )
     group = p.add_mutually_exclusive_group()
     group.add_argument(
         "--flat",

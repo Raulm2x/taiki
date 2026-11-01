@@ -7,13 +7,42 @@ import sqlite3
 from typing import Any
 
 from .. import db
-from ..domain import LINK_KINDS, NotFoundError, ValidationError
+from ..domain import (
+    DEPENDENCY_KIND,
+    LINK_KINDS,
+    NotFoundError,
+    ValidationError,
+)
 from ..gitutil import resolve_commit
 from ..util import check_enum, normalize_agent, now
 
 TICKET_CODE_RE = re.compile(r"\bT-\d{4,}(?:\.\d+)?\b")
 from .common import event, row_by_code
 from .queries import get_ticket
+
+
+def dependency_reaches(
+    conn: sqlite3.Connection, start: str, target: str
+) -> bool:
+    """¿``start`` depende, directa o transitivamente, de ``target``?"""
+    pending = [start]
+    seen: set[str] = set()
+    while pending:
+        code = pending.pop()
+        if code == target:
+            return True
+        if code in seen:
+            continue
+        seen.add(code)
+        pending.extend(
+            row["ref"]
+            for row in conn.execute(
+                "SELECT l.ref FROM links l JOIN tickets t ON t.id = l.ticket_id "
+                "WHERE t.code = ? AND l.kind = ?",
+                (code, DEPENDENCY_KIND),
+            )
+        )
+    return False
 
 
 def comment_ticket(
@@ -74,6 +103,18 @@ def link_ticket(
         if full:
             ref = full
     row = row_by_code(conn, code)
+    if kind == DEPENDENCY_KIND:
+        # Una dependencia es siempre otro ticket: se normaliza el código y se
+        # rechazan los ciclos antes de tocar la tabla.
+        target = row_by_code(conn, ref)
+        ref = target["code"]
+        if target["id"] == row["id"]:
+            raise ValidationError("Un ticket no puede depender de sí mismo")
+        if dependency_reaches(conn, ref, row["code"]):
+            raise ValidationError(
+                f"Dependencia circular: {row['code']} → {ref} "
+                f"(ya existe un camino {ref} → {row['code']})"
+            )
     with db.tx(conn):
         if kind == "commit":
             for existing in conn.execute(

@@ -7,6 +7,7 @@ from typing import Any, Iterable
 
 from .. import db
 from ..domain import (
+    DEPENDENCY_KIND,
     KINDS,
     OPEN_STATUSES,
     PARENT_CONFIRMED_STATUSES,
@@ -109,6 +110,7 @@ def export_all(conn: sqlite3.Connection) -> dict[str, Any]:
         for row in conn.execute("SELECT * FROM tickets ORDER BY id")
     ]
     code_by_id = {ticket["id"]: ticket["code"] for ticket in tickets}
+    status_by_code = {ticket["code"]: ticket["status"] for ticket in tickets}
 
     tags: dict[int, list[str]] = {}
     for row in conn.execute(
@@ -167,6 +169,19 @@ def export_all(conn: sqlite3.Connection) -> dict[str, Any]:
         ticket["comments"] = comments.get(ticket_id, [])
         ticket["events"] = events.get(ticket_id, [])
         ticket["links"] = links.get(ticket_id, [])
+        dependencies = [
+            link["ref"]
+            for link in ticket["links"]
+            if link["kind"] == DEPENDENCY_KIND
+        ]
+        ticket["depends_on"] = dependencies
+        ticket["blocked_by"] = [
+            code
+            for code in dependencies
+            if status_by_code.get(code) is None
+            or status_by_code.get(code) in OPEN_STATUSES
+        ]
+        ticket["ready"] = not ticket["blocked_by"]
         commits: list[str] = []
         for link in ticket["links"]:
             if link["kind"] != "commit":

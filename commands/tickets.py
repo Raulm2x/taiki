@@ -64,6 +64,7 @@ def cmd_list(args: argparse.Namespace) -> int:
         include_archived=args.archived,
         tag=args.tag,
         include_scratch=getattr(args, "include_scratch", False),
+        ready_only=getattr(args, "ready", False),
     )
     if args.parent:
         ticket_filter = replace(base_filter, parent_id=args.parent)
