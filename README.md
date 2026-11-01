@@ -293,6 +293,8 @@ taiki list --tag noctalia      # filtrar por etiqueta
 taiki list --tree              # épicas con sus tareas, indentadas
 taiki list --flat              # todas las tareas, sin plegar
 taiki list --parent T-0014     # solo las tareas de una épica
+taiki list --json-summary --compact --limit 20  # JSON barato para agentes
+taiki show T-0001 --json --compact              # detalle JSON en una línea
 taiki show T-0001              # detalle completo (incluye jerarquía de subtareas)
 taiki new -t "Revisar backups" -k mantenimiento -p alta --tags backup infra
 taiki new -t "Migrar API" --paths src/api/ tests/api/  # rutas que posee el ticket

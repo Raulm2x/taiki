@@ -993,7 +993,7 @@ def read_resource(uri: str) -> dict[str, Any]:
     try:
         if uri == "taiki://inbox":
             statuses = list(domain.OPEN_STATUSES)
-            rows = repo.list_tickets(conn, statuses=statuses, limit=100)
+            rows = repo.list_tickets(conn, statuses=statuses, limit=20)
             total = repo.count_tickets(conn, statuses=statuses)
             data: Any = {
                 "count": len(rows),

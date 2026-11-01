@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -169,6 +170,27 @@ def run(h: Harness) -> None:
     h.ok(
         payload.startswith("\033]52;c;") and payload.endswith("\033\\"),
         "osc52 genera la secuencia de copiado",
+    )
+
+    # ── JSON compacto y resumido ────────────────────────────────────────
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        cli.main(["list", "--json-summary", "--compact", "--limit", "5"])
+    text = out.getvalue().strip()
+    data = json.loads(text)
+    h.ok(
+        data["count"] <= 5
+        and all("body" not in ticket for ticket in data["tickets"])
+        and "\n" not in text,
+        "list --json-summary --compact emite una línea sin historial",
+    )
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        cli.main(["show", c1["code"], "--json", "--compact"])
+    shown = out.getvalue().strip()
+    h.ok(
+        "\n" not in shown and json.loads(shown)["code"] == c1["code"],
+        "show --json --compact emite JSON en una línea",
     )
 
     # ── Wrapper del CLI ─────────────────────────────────────────────────

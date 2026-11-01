@@ -164,17 +164,15 @@ def run(h: Harness) -> None:
     )
     by_name = {tool["name"]: tool for tool in schemas.TOOLS}
     h.ok(
-        all(
-            "annotations" in tool and "outputSchema" not in tool
-            for tool in schemas.TOOLS
-        ),
-        "las herramientas declaran anotaciones sin outputSchema genérico",
+        all("outputSchema" not in tool for tool in schemas.TOOLS),
+        "las herramientas no declaran un outputSchema genérico",
     )
     h.ok(
-        by_name["get"]["annotations"]["readOnlyHint"]
-        and by_name["get"]["annotations"]["idempotentHint"]
-        and not by_name["create"]["annotations"]["readOnlyHint"],
-        "las herramientas de lectura se marcan como read-only",
+        by_name["get"].get("annotations", {}).get("readOnlyHint")
+        and not by_name["create"].get("annotations", {}).get(
+            "readOnlyHint", False
+        ),
+        "solo las herramientas de lectura se marcan como read-only",
     )
 
     # ── Límites de tamaño y bloqueo global de escrituras con MCP viejo ──

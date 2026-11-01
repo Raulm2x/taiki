@@ -25,10 +25,20 @@ def _clean_expired(conn) -> list[str]:
         return []
 
 
-def _show(ticket: dict, as_json: bool, session_id: str | None = None) -> None:
+def _show(
+    ticket: dict,
+    as_json: bool,
+    session_id: str | None = None,
+    *,
+    compact: bool = False,
+) -> None:
     """Imprime un ticket en JSON o en formato detallado."""
     if as_json:
-        print(render.to_json({**ticket, "session_id": session_id}))
+        print(
+            render.to_json(
+                {**ticket, "session_id": session_id}, compact=compact
+            )
+        )
     else:
         print(render.render_detail(ticket, session_id=session_id))
 

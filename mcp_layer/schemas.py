@@ -41,15 +41,11 @@ def _tool(
             "required": list(required),
             "additionalProperties": False,
         },
-        "annotations": {
-            "readOnlyHint": read_only,
-            "destructiveHint": destructive,
-            "idempotentHint": idempotent,
-            "openWorldHint": False,
-        },
     }
-    if title:
-        tool["title"] = title
+    # Solo se anota lo que aporta una pista real al cliente. Las anotaciones
+    # ``false`` y los títulos duplicaban el catálogo en cada sesión.
+    if read_only:
+        tool["annotations"] = {"readOnlyHint": True}
     return tool
 
 
@@ -616,7 +612,7 @@ RESOURCES = [
     {
         "uri": "taiki://inbox",
         "name": "Bandeja de entrada",
-        "description": "Tickets abiertos en resumen (máximo 100; usa list para el resto)",
+        "description": "Tickets abiertos en resumen (máximo 20; usa list para el resto)",
         "mimeType": "application/json",
     },
     {

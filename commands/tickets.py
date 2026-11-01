@@ -47,6 +47,34 @@ def _tree_rows(tickets: list[dict]) -> list[dict]:
     return rows
 
 
+SUMMARY_JSON_FIELDS = (
+    "code",
+    "title",
+    "status",
+    "priority",
+    "kind",
+    "project",
+    "assigned_to",
+    "parent_id",
+    "updated_at",
+)
+
+
+def _json_summary(ticket: dict) -> dict:
+    data = {
+        key: ticket[key]
+        for key in SUMMARY_JSON_FIELDS
+        if ticket.get(key) is not None
+    }
+    progress = ticket.get("progress") or {}
+    if progress.get("total"):
+        data["progress"] = progress
+    for key in ("paths", "tags"):
+        if ticket.get(key):
+            data[key] = ticket[key]
+    return data
+
+
 def cmd_list(args: argparse.Namespace) -> int:
     statuses = args.status or (None if args.all else list(OPEN_STATUSES))
     filters = {
@@ -92,9 +120,13 @@ def cmd_list(args: argparse.Namespace) -> int:
             tickets = _tree_rows(tickets)
         session_map = _annotate(conn, tickets)
 
-    if args.json:
+    if args.json or getattr(args, "json_summary", False):
+        summary = getattr(args, "json_summary", False)
         payload = []
         for ticket in tickets:
+            if summary:
+                payload.append(_json_summary(ticket))
+                continue
             item = {
                 key: value
                 for key, value in ticket.items()
@@ -122,7 +154,8 @@ def cmd_list(args: argparse.Namespace) -> int:
                     "scope": scope,
                     "hidden_children": hidden,
                     "tickets": payload,
-                }
+                },
+                compact=getattr(args, "compact", False),
             )
         )
         return 0
@@ -154,7 +187,12 @@ def cmd_show(args: argparse.Namespace) -> int:
         _clean_expired(conn)
         ticket = repo.get_ticket(conn, args.code)
         session_id = _annotate(conn, [ticket]).get(ticket["code"])
-    _show(ticket, args.json, session_id)
+    _show(
+        ticket,
+        args.json,
+        session_id,
+        compact=getattr(args, "compact", False),
+    )
     return 0
 
 

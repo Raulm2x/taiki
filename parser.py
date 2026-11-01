@@ -107,6 +107,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Orden: código descendente (defecto) o prioridad",
     )
     p.add_argument("--json", action="store_true")
+    p.add_argument(
+        "--json-summary",
+        action="store_true",
+        help="Con --json, emite el resumen lean sin historial",
+    )
+    p.add_argument(
+        "--compact",
+        action="store_true",
+        help="Con --json, emite JSON compacto sin sangría",
+    )
     p.set_defaults(func=cmd_list)
 
     p = sub.add_parser("attach", help="Agrupa tickets bajo una épica")
@@ -123,6 +133,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("show", help="Muestra un ticket")
     p.add_argument("code")
     p.add_argument("--json", action="store_true")
+    p.add_argument(
+        "--compact",
+        action="store_true",
+        help="Con --json, emite JSON compacto sin sangría",
+    )
     p.set_defaults(func=cmd_show)
 
     p = sub.add_parser("new", aliases=["add"], help="Crea un ticket")

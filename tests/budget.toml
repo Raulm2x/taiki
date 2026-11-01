@@ -1,8 +1,8 @@
 # Presupuesto de la suite. Los incumplimientos son avisos accionables, nunca
 # borrados automáticos. Ajusta la línea base al añadir o quitar comprobaciones.
 [suite]
-max_seconds = 3.3
-baseline_checks = 803
+max_seconds = 3.5
+baseline_checks = 805
 checks_tolerance = 20
 
 [module]
