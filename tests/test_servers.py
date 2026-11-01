@@ -310,6 +310,40 @@ def run(h: Harness) -> None:
         finally:
             twins_db.close()
 
+        fleet.execute("DELETE FROM mcp_servers")
+        for pid, space in ((800, ".config"), (801, "taiki")):
+            fleet.execute(
+                "INSERT INTO mcp_servers(pid, ppid, name, fingerprint, "
+                "started_at, heartbeat_at, workspace) VALUES "
+                "(?, 50, 'tickets', 'abc', '2026-10-31T10:00:00-05:00', "
+                "'2026-10-31T10:00:00-05:00', ?)",
+                (pid, space),
+            )
+        spaces = {
+            item["pid"]: item["state"]
+            for item in servers.inventory(
+                fleet,
+                process=fake_process,
+                current="abc",
+                live={
+                    800: {
+                        "pid": 800,
+                        "ppid": 50,
+                        "cmdline": "python3 /x/taiki/server.py",
+                    },
+                    801: {
+                        "pid": 801,
+                        "ppid": 50,
+                        "cmdline": "python3 /x/taiki/server.py",
+                    },
+                },
+            )
+        }
+        h.ok(
+            spaces == {800: "al día", 801: "al día"},
+            "instancias de proyectos distintos no se marcan duplicadas",
+        )
+
         servers.register(fleet, "tickets", "test")
         row = fleet.execute(
             "SELECT * FROM mcp_servers WHERE pid = ?", (os.getpid(),)

@@ -58,10 +58,15 @@ def process_info(pid: int) -> dict[str, Any] | None:
         raw = Path(f"/proc/{pid}/cmdline").read_bytes()
     except OSError:
         return None
+    try:
+        cwd = os.readlink(f"/proc/{pid}/cwd")
+    except OSError:
+        cwd = None
     return {
         "pid": pid,
         "ppid": ppid,
         "cmdline": raw.replace(b"\0", b" ").decode(errors="replace").strip(),
+        "cwd": cwd,
     }
 
 
@@ -266,17 +271,25 @@ def inventory(
                 "started_at": started_at,
                 "heartbeat_at": row.get("heartbeat_at"),
                 "connection": row.get("connection"),
-                "workspace": row.get("workspace"),
+                "workspace": row.get("workspace")
+                or (info.get("cwd") if info else None),
                 "registered": pid in rows,
                 "state": state,
                 "base_state": state,
             }
         )
 
-    groups: dict[tuple[str, int | None], list[dict[str, Any]]] = {}
+    groups: dict[tuple[str, int | None, str | None], list[dict[str, Any]]] = {}
     for entry in entries:
         if entry["state"] in ("al día", "sin registro", "desactualizado"):
-            groups.setdefault((entry["name"], entry["ppid"]), []).append(entry)
+            groups.setdefault(
+                (
+                    entry["name"],
+                    entry["ppid"],
+                    entry.get("workspace"),
+                ),
+                [],
+            ).append(entry)
     for group in groups.values():
         if len(group) < 2:
             continue
