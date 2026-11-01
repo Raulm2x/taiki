@@ -64,7 +64,7 @@ def run(h: Harness) -> None:
         "UPDATE tickets SET created_by = 'build' WHERE id = ?",
         (refreshed["id"],),
     )
-    db.migrate(conn)
+    db.migrate(conn, force=True)
     h.ok(
         repo.get_ticket(conn, normalized["code"])["created_by"]
         == "opencode",

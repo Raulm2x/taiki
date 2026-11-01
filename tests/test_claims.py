@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import threading
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -299,6 +301,8 @@ def run(h: Harness) -> None:
     older.execute("DROP INDEX IF EXISTS idx_tickets_owner")
     for column in ("owner_session", "heartbeat_at", "lease_until", "paths"):
         older.execute(f"ALTER TABLE tickets DROP COLUMN {column}")
+    # Simula una DB v1 real: user_version nunca se fijó.
+    older.execute("PRAGMA user_version = 0")
     older.close()
     upgraded = db.connect(legacy)
     columns = {row["name"] for row in upgraded.execute("PRAGMA table_info(tickets)")}
@@ -311,4 +315,35 @@ def run(h: Harness) -> None:
         "idx_tickets_owner" in indexes,
         "migrate crea el índice de owner_session",
     )
+    h.eq(
+        upgraded.execute("PRAGMA user_version").fetchone()[0],
+        domain.SCHEMA_VERSION,
+        "migrate sella la versión del esquema en user_version",
+    )
+    h.eq(
+        db.meta_get(upgraded, "schema_version"),
+        str(domain.SCHEMA_VERSION),
+        "meta.schema_version sigue en sincronía",
+    )
     upgraded.close()
+
+    # ── connect no espera detrás de otro escritor en régimen estable ────
+    writer = db.connect(legacy)
+    writer.execute("BEGIN IMMEDIATE")
+    elapsed: dict[str, float] = {}
+
+    def opener() -> None:
+        started = time.perf_counter()
+        opened = db.connect(legacy)
+        elapsed["seconds"] = time.perf_counter() - started
+        opened.close()
+
+    thread = threading.Thread(target=opener)
+    thread.start()
+    thread.join(timeout=5)
+    writer.execute("ROLLBACK")
+    writer.close()
+    h.ok(
+        not thread.is_alive() and elapsed.get("seconds", 99.0) < 1.0,
+        "db.connect no espera al lock de otro escritor",
+    )

@@ -11,6 +11,8 @@ from pathlib import Path
 from .domain import SCHEMA_VERSION, TicketError
 from .util import AGENT_ALIASES, now
 
+AGENTS_NORMALIZED_KEY = "agents_normalized"
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
@@ -178,7 +180,22 @@ def connect(
     return conn
 
 
-def migrate(conn: sqlite3.Connection) -> None:
+def migrate(conn: sqlite3.Connection, force: bool = False) -> None:
+    """Aplica el esquema y las migraciones pendientes.
+
+    La versión vive en ``PRAGMA user_version``; en régimen estable ``connect``
+    no ejecuta DDL ni el fixup de alias, así que no toma el lock de escritura.
+    ``force`` reaplica todo (útil en tests de migración).
+    """
+    current = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    if current > SCHEMA_VERSION:
+        raise TicketError(
+            f"La base de datos usa el esquema v{current}, más reciente que "
+            f"v{SCHEMA_VERSION}. Actualiza taiki y vuelve a intentarlo."
+        )
+    if not force and current >= SCHEMA_VERSION:
+        return
+
     conn.executescript(SCHEMA_SQL)
     # Columnas aditivas: se añaden antes de crear índices sobre ellas.
     columns = {col["name"] for col in conn.execute("PRAGMA table_info(tickets)")}
@@ -194,17 +211,11 @@ def migrate(conn: sqlite3.Connection) -> None:
     )
 
     row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
-    if row is None:
-        meta_set(conn, "schema_version", str(SCHEMA_VERSION))
-        meta_set(conn, "next_ticket_number", "1")
-        meta_set(conn, "created_at", now())
-        return
-
-    version = int(row["value"])
+    version = int(row["value"]) if row else 0
     if version > SCHEMA_VERSION:
         raise TicketError(
-            f"La base de datos usa el esquema v{version}, más reciente que v{SCHEMA_VERSION}. "
-            "Actualiza taiki y vuelve a intentarlo."
+            f"La base de datos usa el esquema v{version}, más reciente que "
+            f"v{SCHEMA_VERSION}. Actualiza taiki y vuelve a intentarlo."
         )
     server_columns = {
         col["name"] for col in conn.execute("PRAGMA table_info(mcp_servers)")
@@ -212,7 +223,24 @@ def migrate(conn: sqlite3.Connection) -> None:
     if "workspace" not in server_columns:
         conn.execute("ALTER TABLE mcp_servers ADD COLUMN workspace TEXT")
 
-    # Los agentes internos de OpenCode (build, plan…) no son dueños distintos.
+    with tx(conn):
+        if row is None:
+            meta_set(conn, "schema_version", str(SCHEMA_VERSION))
+            meta_set(conn, "next_ticket_number", "1")
+            meta_set(conn, "created_at", now())
+        else:
+            meta_set(conn, "schema_version", str(SCHEMA_VERSION))
+        # Los agentes internos de OpenCode (build, plan…) no son dueños
+        # distintos. El fixup recorre cuatro columnas: se hace una sola vez.
+        if row is not None and (
+            force or not meta_get(conn, AGENTS_NORMALIZED_KEY)
+        ):
+            _normalize_agent_aliases(conn)
+            meta_set(conn, AGENTS_NORMALIZED_KEY, "1")
+    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+
+def _normalize_agent_aliases(conn: sqlite3.Connection) -> None:
     for alias, canonical in AGENT_ALIASES.items():
         for table, column in (
             ("tickets", "created_by"),
