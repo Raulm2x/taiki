@@ -29,7 +29,9 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    MCP `agents` y `schedule` (paralelismo seguro por paths). Los perfiles
    worker usan deepseek-v4.1-flash; `worker-medium` va sin variante. Los
    agentes escriben estado por MCP (claim/complete/transition/checkpoint)
-   para conservar actor, actor_type y owner_session; el CLI es del usuario. `taiki status`
+   para conservar actor, actor_type y owner_session; el CLI es del usuario.
+   Tras claim con worktree, usa `session_move` a la ruta devuelta. El shell
+   de los agentes solo permite lecturas de taiki y `taiki commit`. `taiki status`
    muestra la cola (listos, en curso, verificando, bloqueados) y métricas.
    Una dependencia solo se cierra al `verificado`/`confirmado`, no al
    `completado`.

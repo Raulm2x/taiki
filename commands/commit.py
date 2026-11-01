@@ -106,7 +106,15 @@ def cmd_commit(args: argparse.Namespace) -> int:
         message = args.message or ticket["title"]
         message = _with_code(message, ticket["code"])
         sha = commits.commit(root, message)
-        repo.link_ticket(conn, ticket["code"], "commit", sha)
+        actor = (getattr(args, "agent", None) or "agente").strip() or "agente"
+        repo.link_ticket(
+            conn,
+            ticket["code"],
+            "commit",
+            sha,
+            actor=actor,
+            session_id=getattr(args, "session", None),
+        )
     leftover = commits.unstaged(root)
     if leftover:
         print(

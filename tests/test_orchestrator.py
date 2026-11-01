@@ -103,10 +103,6 @@ def run(h: Harness) -> None:
         and _rule(worker, "shell", "taiki worktree merge*") == "deny",
         "el worker no publica, no mergea ni confirma",
     )
-    h.ok(
-        "worktree" in worker_body and "heartbeat" not in worker_body,
-        "el worker reclama en su worktree",
-    )
 
     h.ok(
         reviewer["mode"] == "subagent"
@@ -974,4 +970,21 @@ def run(h: Harness) -> None:
         and _rule(worker, "shell", "python3 -c*") == "deny"
         and _rule(worker, "shell", "python3 tests/*") == "allow",
         "el worker no puede ejecutar python3 -c",
+    )
+    h.ok(
+        "session_move" in worker_body
+        and "session_move" in conductor_body
+        and "worktree" in worker_body
+        and "MCP `health`" in conductor_body
+        and "taiki health" not in conductor_body,
+        "el worker mueve la sesión al worktree y el conductor usa health MCP",
+    )
+    h.ok(
+        _rule(worker, "shell", "taiki *") == "deny"
+        and _rule(worker, "shell", "taiki commit *") == "allow"
+        and _rule(worker, "shell", "taiki complete*") is None
+        and _rule(conductor, "shell", "taiki *") == "deny"
+        and _rule(conductor, "shell", "taiki commit *") is None
+        and "--agent worker" in worker_body,
+        "los writes de taiki solo van por MCP; el commit se atribuye",
     )

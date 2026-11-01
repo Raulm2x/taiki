@@ -517,6 +517,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("-m", "--message", help="Mensaje del commit")
     p.add_argument("-t", "--ticket", help="Código del ticket (o TAIKI_TICKET)")
+    p.add_argument("--agent", help="Agente que hizo el commit (atribución)")
+    p.add_argument("--session", help="Sesión del agente que hizo el commit")
     p.add_argument("--dry-run", action="store_true", help="Solo comprueba")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_commit)

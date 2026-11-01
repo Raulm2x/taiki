@@ -93,7 +93,10 @@ y mergea. Las capacidades (tipos, variantes, paralelismo y coste) viven en
 agentes escriben el estado con las herramientas MCP (`claim`, `complete`,
 `transition`, `checkpoint`, `comment`) para conservar `actor`,
 `actor_type=agente` y `owner_session`; el CLI queda para el usuario y
-atribuye sus acciones como tales.
+atribuye sus acciones como tales. Tras `claim` con worktree, el worker llama
+a `session_move` con la ruta devuelta; el conductor comprueba que la sesión
+hija está en el worktree. Los permisos de shell solo dejan a los agentes
+lecturas de `taiki` y `taiki commit`; cualquier write de estado va por MCP.
 
 Routing de modelos: `documentacion` → `low`; mantenimiento/funcionalidad →
 `medium`; `bug`/`seguridad` → `high`. Todos los perfiles worker usan
@@ -110,7 +113,9 @@ paths); las migraciones y los merges nunca van en paralelo.
 `taiki status` (y el modal `S` de la TUI) muestra la cola del orquestador
 (listos, en curso, verificando, bloqueados y por confirmar), los worktrees y
 métricas: lead time, intentos medios, fallos de verificación y paralelismo
-máximo observado. «Por confirmar» suma `completado` y `verificado`;
+máximo observado. La supervisión usa `taiki status` y la herramienta MCP
+`health` (no existe `taiki health`). «Por confirmar» suma `completado` y
+`verificado`;
 «verificando» es el subconjunto que el conductor ya validó. El coste y los
 tokens quedan como `no disponible` mientras no haya telemetría del proveedor.
 

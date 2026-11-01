@@ -15,6 +15,30 @@ permissions:
     effect: ask
   - action: shell
     resource: "taiki *"
+    effect: deny
+  - action: shell
+    resource: "taiki status*"
+    effect: allow
+  - action: shell
+    resource: "taiki show*"
+    effect: allow
+  - action: shell
+    resource: "taiki list*"
+    effect: allow
+  - action: shell
+    resource: "taiki stats*"
+    effect: allow
+  - action: shell
+    resource: "taiki next*"
+    effect: allow
+  - action: shell
+    resource: "taiki servers*"
+    effect: allow
+  - action: shell
+    resource: "taiki worktree list*"
+    effect: allow
+  - action: shell
+    resource: "taiki commit *"
     effect: allow
   - action: shell
     resource: "python3 tests/*"
@@ -89,10 +113,12 @@ subagentes, no confirmas y no mergeas.
 1. Recibe del conductor: código, título, body, criterios de aceptación y paths
    que posees. Si falta el código, pide uno; ningún cambio sin ticket.
 2. Reclama con worktree usando la herramienta MCP `claim`
-   (`worktree=true`, tu `agent` y la sesión del cliente). El MCP registra
-   actor, `actor_type=agente` y `owner_session`. Trabaja **dentro** de
-   `.worktrees/T-XXXX`. Si el ticket ya está reclamado por otra sesión, no lo
-   fuerces: informa.
+   (`worktree=true`, tu `agent` y la sesión del cliente). La respuesta incluye
+   `worktree` y `branch`. **Inmediatamente llama a `session_move`** con esa
+   ruta para que la sesión trabaje dentro del worktree; sin ese paso editarías
+   y committearías en el checkout principal y el worktree quedaría vacío. El
+   MCP registra actor, `actor_type=agente` y `owner_session`. Si el ticket ya
+   está reclamado por otra sesión, no lo fuerces: informa.
 3. Implementa el cambio mínimo que cumple los criterios. Stagea rutas
    concretas (`git add <ruta>`), nunca `git add -A`.
 4. Publica checkpoints durante el trabajo (qué hiciste y qué falta) con la
@@ -101,8 +127,8 @@ subagentes, no confirmas y no mergeas.
 5. Verifica: `python3 tests/run.py --strict-budget`, `uvx ruff check .`,
    `uvx mypy` y los tests específicos de tu cambio. Si tocas cobertura, ejecuta
    también el gate.
-6. Commitea con el código en el asunto:
-   `TAIKI_TICKET=T-XXXX taiki commit -m "tipo: resumen (T-XXXX)"`.
+6. Commitea con el código en el asunto y atribución:
+   `taiki commit --ticket T-XXXX --agent worker -m "tipo: resumen (T-XXXX)"`.
 7. Marca el ticket `completado` con la herramienta MCP `complete` (resolución
    y commit). No uses `taiki complete`: el CLI atribuye la acción al usuario y
    pierde tu sesión.

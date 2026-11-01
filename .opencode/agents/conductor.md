@@ -26,6 +26,27 @@ permissions:
     effect: ask
   - action: shell
     resource: "taiki *"
+    effect: deny
+  - action: shell
+    resource: "taiki status*"
+    effect: allow
+  - action: shell
+    resource: "taiki show*"
+    effect: allow
+  - action: shell
+    resource: "taiki list*"
+    effect: allow
+  - action: shell
+    resource: "taiki stats*"
+    effect: allow
+  - action: shell
+    resource: "taiki next*"
+    effect: allow
+  - action: shell
+    resource: "taiki servers*"
+    effect: allow
+  - action: shell
+    resource: "taiki worktree list*"
     effect: allow
   - action: shell
     resource: "python3 tests/*"
@@ -106,9 +127,10 @@ verificas. **No editas código, no confirmas tickets y no mergeas worktrees.**
 3. Para cada tarea lanza el subagente que devuelve `agents` para su tipo
    (`worker-low`, `worker-medium` o `worker-high`), no el `worker` genérico:
    así se aplican el modelo, la variante y los steps. Pásale código, título,
-   body, criterios de aceptación y paths. El worker reclama con worktree,
-   implementa, commitea y marca `completado` por MCP.
-4. Supervisa con `taiki status`, `taiki health` y los checkpoints del
+   body, criterios de aceptación y paths. El worker reclama con worktree y
+   llama a `session_move` con la ruta devuelta; comprueba con `status`/`whoami`
+   que la sesión hija está en el worktree antes de dejarla escribir.
+4. Supervisa con `taiki status`, la herramienta MCP `health` y los checkpoints del
    ticket. Si el lease caduca, usa `reassign`; si el worker falla, `retry` en
    la misma sesión hasta `TAIKI_MAX_ATTEMPTS`; si se agotan, deja el ticket
    `bloqueado` para decisión humana y no dupliques el claim.

@@ -109,7 +109,12 @@ def run(h: Harness) -> None:
                 "el staging dentro del alcance pasa la comprobación",
             )
             args = argparse.Namespace(
-                message="cambio en src", ticket=ticket["code"], dry_run=False, json=False
+                message="cambio en src",
+                ticket=ticket["code"],
+                agent="worker",
+                session="ses_commit",
+                dry_run=False,
+                json=False,
             )
             with contextlib.chdir(root), contextlib.redirect_stdout(
                 io.StringIO()
@@ -125,6 +130,18 @@ def run(h: Harness) -> None:
             h.ok(
                 any(item["kind"] == "commit" for item in linked["links"]),
                 "el commit queda enlazado al ticket",
+            )
+            link_event = next(
+                event
+                for event in linked["events"]
+                if event["action"] == "enlazar"
+                and (event.get("note") or "").startswith("commit:")
+            )
+            h.ok(
+                link_event["actor"] == "worker"
+                and link_event["actor_type"] == "agente"
+                and link_event["session_id"] == "ses_commit",
+                "el commit se atribuye al agente y su sesión",
             )
 
             # ── Índice fuera del alcance ────────────────────────────────
