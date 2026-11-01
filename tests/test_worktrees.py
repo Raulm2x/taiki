@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
+import argparse
+import contextlib
+import io
 import subprocess
 from pathlib import Path
 
+from commands.tickets import cmd_claim
+from commands.workflow import cmd_confirm
 from ticketlib import db, repo, workspace, worktree
+from ticketlib.domain import TicketError
 from tests.seeds import git_repo
 from tests.support import Harness
+
+
+def _git(root: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(root), *args], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise AssertionError(result.stderr)
+    return result.stdout.strip()
 
 
 def _commit(repo_dir: Path, message: str = "init") -> None:
@@ -187,4 +202,144 @@ def run(h: Harness) -> None:
         ["git", "-C", str(root), "worktree", "remove", "--force", str(external)],
         check=True,
         capture_output=True,
+    )
+
+    # ── claim --worktree y limpieza al confirmar ────────────────────────
+    with h.env(TAIKI_DB=str(info["db"])):
+        setup = db.connect()
+        try:
+            with_tree = repo.create_ticket(
+                conn=setup, title="Con worktree", project="proyecto"
+            )
+            dirty_ticket = repo.create_ticket(
+                conn=setup, title="Worktree sucio", project="proyecto"
+            )
+        finally:
+            setup.close()
+
+    with h.env(TAIKI_DB=str(info["db"])), contextlib.chdir(root), \
+            contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        h.eq(
+            cmd_claim(
+                argparse.Namespace(
+                    code=with_tree["code"],
+                    agent="opencode",
+                    force=False,
+                    steal=False,
+                    worktree=True,
+                )
+            ),
+            0,
+            "taiki claim --worktree responde",
+        )
+    tree_path = root / ".worktrees" / with_tree["code"]
+    h.ok(tree_path.is_dir(), "claim --worktree crea el worktree")
+
+    (tree_path / "nuevo.txt").write_text("x\n", encoding="utf-8")
+    _git(tree_path, "add", "-A")
+    _git(tree_path, "commit", "-m", f"cambio {with_tree['code']}")
+    with h.env(TAIKI_DB=str(info["db"])):
+        reader = db.connect()
+        try:
+            links = repo.get_ticket(reader, with_tree["code"])["links"]
+            branch = next(item["ref"] for item in links if item["kind"] == "rama")
+            repo.complete_ticket(
+                reader, with_tree["code"], resolution="mergeado"
+            )
+        finally:
+            reader.close()
+    _git(root, "merge", "--ff-only", branch)
+    out = io.StringIO()
+    with h.env(TAIKI_DB=str(info["db"])), contextlib.chdir(root), \
+            contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+        h.eq(
+            cmd_confirm(
+                argparse.Namespace(
+                    code=[with_tree["code"]],
+                    note=None,
+                    keep_worktrees=False,
+                )
+            ),
+            0,
+            "confirm responde tras limpiar el worktree",
+        )
+    h.ok(not tree_path.exists(), "confirm retira el worktree mergeado")
+    remaining = _git(root, "branch", "--format=%(refname:short)").split()
+    h.ok(branch not in remaining, "confirm elimina la rama del worktree")
+
+    # Worktree sucio: se conserva y se avisa
+    with h.env(TAIKI_DB=str(info["db"])), contextlib.chdir(root), \
+            contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        cmd_claim(
+            argparse.Namespace(
+                code=dirty_ticket["code"],
+                agent="opencode",
+                force=False,
+                steal=False,
+                worktree=True,
+            )
+        )
+    dirty_path = root / ".worktrees" / dirty_ticket["code"]
+    (dirty_path / "pendiente.txt").write_text("x\n", encoding="utf-8")
+    with h.env(TAIKI_DB=str(info["db"])):
+        reader = db.connect()
+        try:
+            repo.complete_ticket(
+                reader, dirty_ticket["code"], resolution="sin commitear"
+            )
+        finally:
+            reader.close()
+    errors = io.StringIO()
+    with h.env(TAIKI_DB=str(info["db"])), contextlib.chdir(root), \
+            contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
+        cmd_confirm(
+            argparse.Namespace(
+                code=[dirty_ticket["code"]],
+                note=None,
+                keep_worktrees=False,
+            )
+        )
+    h.ok(dirty_path.exists(), "un worktree sucio se conserva al confirmar")
+    h.ok("sin commitear" in errors.getvalue(), "confirm avisa del worktree sucio")
+    worktree.remove(root, dirty_path, force=True, delete_branch=True)
+
+    # ── merge: rebase + ff-only + limpieza ──────────────────────────────
+    with h.env(TAIKI_DB=str(info["db"])):
+        setup = db.connect()
+        try:
+            merge_ticket = repo.create_ticket(
+                conn=setup, title="Para mergear", project="proyecto"
+            )
+        finally:
+            setup.close()
+    with h.env(TAIKI_DB=str(info["db"])), contextlib.chdir(root), \
+            contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        cmd_claim(
+            argparse.Namespace(
+                code=merge_ticket["code"],
+                agent="opencode",
+                force=False,
+                steal=False,
+                worktree=True,
+            )
+        )
+    merge_path = root / ".worktrees" / merge_ticket["code"]
+    (merge_path / "merge.txt").write_text("x\n", encoding="utf-8")
+    _git(merge_path, "add", "-A")
+    _git(merge_path, "commit", "-m", f"merge {merge_ticket['code']}")
+    (root / "src" / "app.py").write_text("dirty\n", encoding="utf-8")
+    h.raises(
+        TicketError,
+        lambda: worktree.merge(root, merge_path),
+        "merge exige el checkout principal limpio",
+    )
+    _git(root, "checkout", "--", "src/app.py")
+    merged = worktree.merge(root, merge_path, delete=True)
+    h.ok(
+        (root / "merge.txt").is_file() and not merge_path.exists(),
+        "merge ff-only integra el cambio y retira el worktree",
+    )
+    h.ok(
+        merged["branch"] not in _git(root, "branch", "--format=%(refname:short)").split(),
+        "merge --delete elimina la rama",
     )

@@ -127,9 +127,28 @@ def cmd_hook_check_index(args: argparse.Namespace) -> int:
     except Exception:  # noqa: BLE001 - sin DB no se bloquea
         return 0
     try:
-        ticket = _resolve(conn, args.ticket, quiet=True)
-        if ticket is None:
-            return 0
+        explicit = (args.ticket or env.get("TICKET") or "").strip()
+        if explicit:
+            ticket = repo.get_ticket(conn, explicit)
+        else:
+            active = [
+                row["code"]
+                for row in conn.execute(
+                    "SELECT code FROM tickets WHERE archived = 0 "
+                    "AND status = 'en_progreso' ORDER BY updated_at DESC"
+                )
+            ]
+            if len(active) > 1:
+                print(
+                    "pre-commit: hay varios tickets activos "
+                    f"({', '.join(active)}); define TAIKI_TICKET o usa "
+                    "`taiki commit --ticket`.",
+                    file=sys.stderr,
+                )
+                return 1
+            if not active:
+                return 0
+            ticket = repo.get_ticket(conn, active[0])
         report = commits.check(root, ticket, _active(conn, ticket["code"]))
         if report["outside"]:
             print(

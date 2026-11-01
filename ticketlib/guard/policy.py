@@ -207,6 +207,48 @@ def other_active_sessions(
     return others
 
 
+def shared_tree(environ: dict[str, str] | None = None) -> bool:
+    """¿Se permite escribir en el árbol compartido con otras sesiones?"""
+    value = str(env.get("SHARED_TREE", "", environ)).strip().lower()
+    return bool(value) and value not in DISABLED_VALUES
+
+
+def _has_worktree(conn: Any, code: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM links l JOIN tickets t ON t.id = l.ticket_id "
+            "WHERE t.code = ? AND l.kind = 'worktree' LIMIT 1",
+            (code,),
+        ).fetchone()
+        is not None
+    )
+
+
+def _worktree_message(
+    active: dict[str, Any], others: list[dict[str, Any]]
+) -> str:
+    codes = ", ".join(item["code"] for item in others[:5])
+    extra = "" if len(others) <= 5 else f" y {len(others) - 5} más"
+    return (
+        f"Hay otra sesión activa ({codes}{extra}) y {active['code']} no tiene "
+        "worktree.\n"
+        f"Crea uno con `taiki worktree create {active['code']}` y trabaja allí; "
+        "si de verdad compartís árbol, define TAIKI_SHARED_TREE=1."
+    )
+
+
+def _inside_repo(session_base: Path, path: str | None) -> bool:
+    """La escritura cae dentro del checkout del proyecto."""
+    base = Path(session_base).expanduser().resolve()
+    root = workspace.project_root(base).resolve()
+    target = Path(path).expanduser().resolve() if path else base
+    try:
+        target.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
 def evaluate(
     *,
     tool: str,
@@ -253,8 +295,8 @@ def evaluate(
     conn = db.connect(target)
     try:
         chain = session_chain(session)
+        others = other_active_sessions(conn, chain, agent) if mutating or risky else []
         if risky:
-            others = other_active_sessions(conn, chain, agent)
             if others:
                 return _blocked(
                     "parallel", session, _parallel_message(risky, others)
@@ -263,6 +305,19 @@ def evaluate(
                 return _allowed("skipped", session)
         active = find_active(conn, chain, agent)
         if active is not None:
+            if (
+                mutating
+                and others
+                and not shared_tree(environ)
+                and _inside_repo(session_base, path)
+                and not _has_worktree(conn, active["code"])
+            ):
+                return _blocked(
+                    "worktree",
+                    session,
+                    _worktree_message(active, others),
+                    active["code"],
+                )
             repo.heartbeat_ticket(
                 conn, active["code"], chain[0] if chain else None
             )

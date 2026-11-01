@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from ticketlib import db, render, repo, scratch, sessions, workspace
-from ticketlib.domain import OPEN_STATUSES
+from ticketlib.domain import OPEN_STATUSES, TicketError
 from ticketlib.util import resolve_scope
 
 from .common import _clean_expired, _conn, _read_body, _show
@@ -275,7 +275,26 @@ def cmd_claim(args: argparse.Namespace) -> int:
             force=getattr(args, "force", False),
             steal=getattr(args, "steal", False),
         )
+        created = None
+        if getattr(args, "worktree", False):
+            from ticketlib import worktree as worktree_lib
+
+            try:
+                created = worktree_lib.create(
+                    workspace.project_root(),
+                    ticket["code"],
+                    title=ticket["title"],
+                )
+            except TicketError as exc:
+                print(f"Error al crear el worktree: {exc}", file=sys.stderr)
+                return 1
+            repo.link_ticket(
+                conn, ticket["code"], "worktree", str(created["path"])
+            )
+            repo.link_ticket(conn, ticket["code"], "rama", created["branch"])
     print(f"{ticket['code']} en progreso, asignado a {ticket['assigned_to']}")
+    if created:
+        print(f"Worktree: {created['path']} (rama {created['branch']})")
     return 0
 
 

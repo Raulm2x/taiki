@@ -32,6 +32,7 @@ MODULES = (
     "test_claims",
     "test_commit",
     "test_status",
+    "test_parallel",
     "test_servers",
     "test_herdr",
     "test_githook",

@@ -648,6 +648,58 @@ def run(h: Harness) -> None:
                 scoped["allow"],
                 "stagear una ruta concreta no se bloquea",
             )
+            mine = repo.create_ticket(
+                pconn, title="Trabajo propio", project=".config"
+            )
+            repo.claim_ticket(
+                pconn, mine["code"], agent="opencode", session_id="ses_mia"
+            )
+            write_blocked = guard.evaluate(
+                tool="write",
+                session="ses_mia",
+                agent="opencode",
+                path=str(parallel_dir / "nota.txt"),
+                cwd=str(parallel_dir),
+            )
+            h.ok(
+                write_blocked["action"] == "worktree"
+                and not write_blocked["allow"],
+                "escribir sin worktree se bloquea con otra sesión activa",
+            )
+            escape = guard.evaluate(
+                tool="write",
+                session="ses_mia",
+                agent="opencode",
+                path=str(parallel_dir / "nota.txt"),
+                cwd=str(parallel_dir),
+                environ={"TAIKI_SHARED_TREE": "1"},
+            )
+            h.ok(
+                escape["allow"],
+                "TAIKI_SHARED_TREE=1 permite el árbol compartido",
+            )
+            read = guard.evaluate(
+                tool="bash",
+                session="ses_mia",
+                agent="opencode",
+                command="git status",
+                cwd=str(parallel_dir),
+            )
+            h.ok(read["allow"], "las lecturas no exigen worktree")
+            repo.link_ticket(
+                pconn, mine["code"], "worktree", "/tmp/worktree-propio"
+            )
+            with_tree = guard.evaluate(
+                tool="write",
+                session="ses_mia",
+                agent="opencode",
+                path=str(parallel_dir / "nota.txt"),
+                cwd=str(parallel_dir),
+            )
+            h.ok(
+                with_tree["allow"] and with_tree["action"] == "active",
+                "con worktree enlazado la escritura pasa",
+            )
             repo.transition(
                 pconn,
                 other["code"],
@@ -656,12 +708,6 @@ def run(h: Harness) -> None:
                 actor="usuario",
                 actor_type="usuario",
                 session_id="ses_otra",
-            )
-            mine = repo.create_ticket(
-                pconn, title="Trabajo propio", project=".config"
-            )
-            repo.claim_ticket(
-                pconn, mine["code"], agent="opencode", session_id="ses_mia"
             )
             allowed = guard.evaluate(
                 tool="bash",

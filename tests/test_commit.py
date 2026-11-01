@@ -126,6 +126,15 @@ def run(h: Harness) -> None:
             ):
                 blocked = cmd_hook_check_index(argparse.Namespace(ticket=None))
             h.eq(blocked, 1, "hook-check-index bloquea rutas ajenas")
+            with contextlib.chdir(root), contextlib.redirect_stdout(
+                io.StringIO()
+            ), contextlib.redirect_stderr(io.StringIO()):
+                ambiguous = cmd_hook_check_index(argparse.Namespace(ticket=None))
+            h.eq(
+                ambiguous,
+                1,
+                "hook-check-index bloquea si hay varios tickets activos",
+            )
             _git(root, "reset", "-q", "docs/b.md")
             _git(root, "checkout", "--", "docs/b.md")
 

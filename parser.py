@@ -25,6 +25,7 @@ from commands import (
     cmd_hook_check_msg,
     cmd_hook_check_index,
     cmd_hook_check_push,
+    cmd_heartbeat,
     cmd_hook_install,
     cmd_init,
     cmd_link,
@@ -52,6 +53,7 @@ from commands import (
     cmd_worktree_adopt,
     cmd_worktree_create,
     cmd_worktree_list,
+    cmd_worktree_merge,
     cmd_worktree_remove,
 )
 from ticketlib import domain
@@ -171,7 +173,22 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="recupera un claim caducado de otra sesión",
     )
+    p.add_argument(
+        "--worktree",
+        action="store_true",
+        help="crea y enlaza un worktree para el ticket",
+    )
     p.set_defaults(func=cmd_claim)
+
+    p = sub.add_parser(
+        "heartbeat",
+        help="Renueva el lease de un ticket activo (comandos largos)",
+    )
+    p.add_argument("code", nargs="?", help="Código del ticket (o el único activo)")
+    p.add_argument(
+        "--minutes", type=int, help="Minutos de lease (por defecto TAIKI_LEASE_MINUTES)"
+    )
+    p.set_defaults(func=cmd_heartbeat)
 
     p = sub.add_parser("update", help="Actualiza campos")
     p.add_argument("code")
@@ -203,6 +220,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("code", nargs="+", help="Uno o varios códigos (T-0001 T-0002)")
     p.add_argument("--note")
+    p.add_argument(
+        "--keep-worktrees",
+        action="store_true",
+        help="No retirar los worktrees limpios y mergeados",
+    )
     p.set_defaults(func=cmd_confirm)
 
     p = sub.add_parser(
@@ -353,6 +375,17 @@ def build_parser() -> argparse.ArgumentParser:
     wt_adopt.add_argument("--force", action="store_true")
     wt_adopt.add_argument("--json", action="store_true")
     wt_adopt.set_defaults(func=cmd_worktree_adopt)
+    wt_merge = wt_sub.add_parser(
+        "merge", help="rebase, tests y merge ff-only del worktree"
+    )
+    wt_merge.add_argument("code", nargs="?")
+    wt_merge.add_argument("--path", help="ruta concreta del worktree")
+    wt_merge.add_argument("--no-tests", action="store_true")
+    wt_merge.add_argument(
+        "--delete", action="store_true", help="retira el worktree tras mergear"
+    )
+    wt_merge.add_argument("--json", action="store_true")
+    wt_merge.set_defaults(func=cmd_worktree_merge)
 
     p = sub.add_parser("link", help="Enlaza una referencia a un ticket")
     p.add_argument("code")

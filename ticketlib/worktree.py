@@ -235,6 +235,56 @@ def warnings(main: Path, entries: list[dict[str, Any]]) -> list[str]:
     return messages
 
 
+def cleanup(
+    main: Path,
+    entries: list[dict[str, Any]],
+    *,
+    keep: bool = False,
+) -> dict[str, list[dict[str, Any]]]:
+    """Retira worktrees limpios y mergeados; conserva sucios o sin mergear."""
+    main = Path(main).expanduser().resolve()
+    removed: list[dict[str, Any]] = []
+    kept: list[dict[str, Any]] = []
+    for entry in entries:
+        path = entry.get("path")
+        code = entry.get("code")
+        if not path:
+            continue
+        state = status(path)
+        branch = state.get("branch") or entry.get("branch")
+        if not state["exists"]:
+            removed.append({"code": code, "path": path, "reason": "ausente"})
+            continue
+        unmerged = bool(
+            branch and branch.startswith("agent/") and not merged(main, branch)
+        )
+        if keep or state["dirty"] or unmerged:
+            kept.append(
+                {
+                    "code": code,
+                    "path": path,
+                    "branch": branch,
+                    "dirty": state["dirty"],
+                    "unmerged": unmerged,
+                }
+            )
+            continue
+        try:
+            remove(main, path, delete_branch=bool(branch))
+            removed.append({"code": code, "path": path, "branch": branch})
+        except TicketError as exc:
+            kept.append(
+                {
+                    "code": code,
+                    "path": path,
+                    "branch": branch,
+                    "dirty": state["dirty"],
+                    "error": str(exc),
+                }
+            )
+    return {"removed": removed, "kept": kept}
+
+
 def remove(
     main: Path,
     target: str | Path,
@@ -260,6 +310,76 @@ def remove(
         _git(main, "branch", "-D", str(state["branch"]))
         removed["branch_deleted"] = state["branch"]
     return removed
+
+
+def _tracked_dirty(root: Path) -> bool:
+    result = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+        capture_output=True,
+        text=True,
+    )
+    return bool(result.stdout.strip())
+
+
+def merge(
+    main: Path,
+    target: str | Path,
+    *,
+    test_cmd: list[str] | None = None,
+    delete: bool = False,
+) -> dict[str, Any]:
+    """Rebase + tests + merge ff-only en el checkout principal.
+
+    Exige el worktree y el checkout principal limpios. Si el rebase o los
+    tests fallan, no se mergea nada.
+    """
+    main = Path(main).expanduser().resolve()
+    path = Path(target).expanduser().resolve()
+    tree = status(path)
+    if not tree["exists"]:
+        raise TicketError(f"No existe el worktree {path}")
+    if tree["dirty"]:
+        raise TicketError(f"{path} tiene cambios sin commitear")
+    branch = tree.get("branch")
+    if not branch or not branch.startswith("agent/"):
+        raise TicketError(f"{path} no está en una rama agent/…")
+    base = status(main)
+    if _tracked_dirty(main):
+        raise TicketError(f"El checkout principal {main} tiene cambios sin commitear")
+    main_branch = base.get("branch")
+    if not main_branch:
+        raise TicketError("El checkout principal no está en una rama")
+    try:
+        _git(path, "rebase", main_branch)
+    except TicketError:
+        subprocess.run(
+            ["git", "-C", str(path), "rebase", "--abort"],
+            capture_output=True,
+            text=True,
+        )
+        raise
+    tested = False
+    if test_cmd:
+        result = subprocess.run(
+            test_cmd, cwd=str(path), capture_output=True, text=True
+        )
+        tested = True
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip().splitlines()
+            tail = "\n".join(detail[-10:])
+            raise TicketError(f"Los tests fallaron:\n{tail}")
+    _git(main, "merge", "--ff-only", branch)
+    summary = {
+        "path": str(path),
+        "branch": branch,
+        "main": str(main),
+        "main_branch": main_branch,
+        "tests": tested,
+    }
+    if delete:
+        remove(main, path, delete_branch=True)
+        summary["removed"] = True
+    return summary
 
 
 def adopt(main: Path, path: str | Path) -> dict[str, Any]:

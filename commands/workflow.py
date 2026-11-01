@@ -26,6 +26,8 @@ def cmd_transition(args: argparse.Namespace) -> int:
 
 def cmd_confirm(args: argparse.Namespace) -> int:
     note = args.note or "Confirmado por el usuario"
+    root = workspace.project_root()
+    removed: list[dict] = []
     with _conn() as conn:
         report = repo.confirm_tickets(conn, args.code, note=note)
         entries = []
@@ -50,8 +52,30 @@ def cmd_confirm(args: argparse.Namespace) -> int:
                             ),
                         }
                     )
-    for warning in worktree.warnings(workspace.project_root(), entries):
+        if getattr(args, "keep_worktrees", False) or not entries:
+            kept = entries
+        else:
+            result = worktree.cleanup(root, entries)
+            removed = result["removed"]
+            kept = result["kept"]
+            for item in removed:
+                if item.get("code"):
+                    conn.execute(
+                        "DELETE FROM links WHERE kind IN ('worktree', 'rama') "
+                        "AND ticket_id = (SELECT id FROM tickets WHERE code = ?)",
+                        (item["code"],),
+                    )
+                conn.execute(
+                    "DELETE FROM links WHERE kind IN ('worktree', 'rama') "
+                    "AND ref = ?",
+                    (str(item["path"]),),
+                )
+            conn.commit()
+    for warning in worktree.warnings(root, kept):
         print(f"aviso: {warning}", file=sys.stderr)
+    for item in removed:
+        suffix = f" ({item['reason']})" if item.get("reason") else ""
+        print(f"Worktree retirado: {item.get('code') or '?'} {item['path']}{suffix}")
 
     for code in report["confirmed"]:
         print(f"{code} confirmado")

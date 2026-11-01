@@ -208,6 +208,18 @@ def claim_ticket(
                 f"{row['code']} está en progreso en la sesión {owner}. "
                 "Espera a que termine o usa --steal para recuperarlo."
             )
+        if (
+            steal
+            and row["status"] == "en_progreso"
+            and owner
+            and (session_id is None or owner != session_id)
+            and not force
+            and not _expired(row["lease_until"], now())
+        ):
+            raise TransitionError(
+                f"{row['code']} tiene un lease vigente hasta "
+                f"{row['lease_until']}; usa --force para forzarlo."
+            )
         if session_id and not force:
             other = conn.execute(
                 "SELECT code FROM tickets WHERE archived = 0 "

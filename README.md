@@ -84,6 +84,7 @@ taiki/
 │   ├── worktree.py        taiki worktree (aislamiento por tarea)
 │   ├── commit.py          taiki commit y hook-check-index
 │   ├── status.py          taiki status (sesiones y claims)
+│   ├── heartbeat.py       taiki heartbeat (renueva el lease)
 │   └── system.py          open, scheme-install, scheme-uninstall, tui
 ├── tui/                   TUI en curses
 │   ├── state.py           estado, filtros y geometría (sin curses)
@@ -114,6 +115,7 @@ taiki/
 │   ├── test_worktrees.py  worktrees, bootstrap y resolución de DB
 │   ├── test_commit.py     commit por rutas y solapamientos
 │   ├── test_status.py     estado de sesiones y modal de la TUI
+│   ├── test_parallel.py   dos procesos reclamando el mismo ticket
 │   ├── test_servers.py    inventario y limpieza de servidores MCP
 │   ├── test_herdr.py      integración con herdr
 │   ├── test_githook.py    commit-msg, pre-push y auditoría
@@ -270,11 +272,14 @@ taiki renumber --apply              # renombra los códigos planos
 taiki repair-gaps                   # simula cubrir T-XXXX que nunca existieron
 taiki repair-gaps --apply           # los cubre con tickets genéricos cancelados
 taiki claim T-0001
+taiki claim T-0001 --worktree  # reclama y crea .worktrees/T-0001
 taiki claim T-0001 --steal     # recupera un claim caducado de otra sesión
+taiki heartbeat T-0001         # renueva el lease en comandos largos
 taiki status                   # sesiones, claims, worktrees y solapamientos
 taiki status --sessions        # solo las sesiones activas
 taiki worktree create T-0001  # .worktrees/T-0001 + rama agent/T-0001-…
 taiki worktree list
+taiki worktree merge T-0001 --delete  # rebase + tests + ff-only + limpieza
 taiki worktree remove T-0001 --delete-branch
 taiki commit -m "..."          # commitea solo las rutas del ticket activo
 taiki complete T-0001 -r "Qué se hizo y cómo se verificó" --commit abc1234
@@ -662,27 +667,34 @@ Varias sesiones pueden trabajar a la vez sin pisarse:
   `taiki worktree adopt <ruta>` registrar uno creado por OpenCode.
 - **Claim por sesión**: el ticket queda ligado a `owner_session` con un lease de
   30 min (`TAIKI_LEASE_MINUTES`). Otra sesión no puede reclamarlo; si el agente
-  muere, `taiki claim T-XXXX --steal` lo recupera y `taiki audit` lo señala.
+  muere, `taiki claim T-XXXX --steal` lo recupera (solo si el lease caducó;
+  `--force` lo fuerza) y `taiki audit` lo señala. `taiki heartbeat T-XXXX`
+  renueva el lease durante comandos largos.
 - **Un ticket activo por sesión**, con heartbeat en cada acción del guard.
+- **Worktree obligatorio**: si otra sesión está activa, el guard bloquea las
+  escrituras dentro del checkout cuando tu ticket no tiene worktree; la lectura
+  sigue libre. Escape consciente: `TAIKI_SHARED_TREE=1`.
 - **Commits acotados**: declara las rutas del ticket con `--paths` y usa
   `taiki commit -m "..."`. Rechaza el índice fuera de alcance o que solapa con
   otro ticket activo; el hook `pre-commit` (`taiki hook-check-index`) aplica la
-  misma regla.
+  misma regla y exige `TAIKI_TICKET` si hay varios tickets activos.
+- **Merge asistido**: `taiki worktree merge T-XXXX` hace rebase sobre la rama
+  principal, ejecuta `tests/run.py` si existe (`--no-tests` para omitir),
+  `merge --ff-only` y limpia con `--delete`. Nunca mergea si algo falla.
 - **Estado**: `taiki status` (o la tecla `S` en la TUI) muestra sesiones,
   leases, ramas, worktrees y solapamientos. El plugin de recarga del MCP se
   aplaza si hay otra sesión con actividad reciente.
 - **Reglas**: con otra sesión activa no uses `git add -A`, `git add .` ni
-  `git stash`; fusiona de una rama a la vez (rebase + tests + `merge --ff-only`).
+  `git stash`; fusiona de una rama a la vez.
 
 ```bash
-taiki claim T-0001
-taiki worktree create T-0001
+taiki claim T-0001 --worktree
 cd .worktrees/T-0001 && opencode
 # ...trabajo en el worktree...
 taiki commit -m "cambio acotado"
 taiki complete T-0001 -r "Qué se hizo y cómo se verificó"
 # el usuario confirma y fusiona la rama
-taiki worktree remove T-0001 --delete-branch
+taiki worktree merge T-0001 --delete
 ```
 
 ### Tickets temporales (scratch)

@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from ticketlib import render, repo, workspace, worktree
+from ticketlib.domain import TicketError
 
 from .common import _conn
 
@@ -149,6 +150,45 @@ def cmd_worktree_remove(args: argparse.Namespace) -> int:
         print(f"Worktree retirado: {target}")
         if removed.get("branch_deleted"):
             print(f"Rama eliminada: {removed['branch_deleted']}")
+    return 0
+
+
+def cmd_worktree_merge(args: argparse.Namespace) -> int:
+    root = _root()
+    target = args.path
+    if target is None:
+        if not args.code:
+            raise SystemExit("Indica el ticket o --path")
+        found = worktree.locate(root, args.code)
+        if found is None:
+            raise SystemExit(f"No se encontró worktree para {args.code}")
+        target = found["path"]
+    test_cmd = None
+    if not args.no_tests and (Path(target) / "tests" / "run.py").is_file():
+        test_cmd = [sys.executable, "tests/run.py"]
+    try:
+        result = worktree.merge(
+            root, target, test_cmd=test_cmd, delete=args.delete
+        )
+    except TicketError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    if result.get("removed") and args.code:
+        with _conn() as conn:
+            conn.execute(
+                "DELETE FROM links WHERE kind IN ('worktree', 'rama') "
+                "AND ticket_id = (SELECT id FROM tickets WHERE code = ?)",
+                (args.code,),
+            )
+            conn.commit()
+    if args.json:
+        print(render.to_json(result))
+        return 0
+    print(f"Merge ff-only: {result['branch']} → {result['main_branch']}")
+    if result.get("tests"):
+        print("Tests: OK")
+    if result.get("removed"):
+        print(f"Worktree retirado: {result['path']}")
     return 0
 
 

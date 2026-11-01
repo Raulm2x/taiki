@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import argparse
+import contextlib
+import io
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -91,6 +94,34 @@ def run(h: Harness) -> None:
         "ses_b",
         "--steal recupera el claim caducado",
     )
+    h.raises(
+        domain.TransitionError,
+        lambda: repo.claim_ticket(
+            conn,
+            second["code"],
+            agent="opencode",
+            session_id="ses_otra",
+            steal=True,
+        ),
+        "--steal rechaza un lease todavía vigente",
+    )
+    forced = repo.claim_ticket(
+        conn,
+        second["code"],
+        agent="opencode",
+        session_id="ses_otra",
+        force=True,
+    )
+    h.eq(
+        forced["owner_session"],
+        "ses_otra",
+        "--force sí puede forzar un lease vigente",
+    )
+    conn.execute(
+        "UPDATE tickets SET heartbeat_at = ?, lease_until = ? WHERE code = ?",
+        (_past(), _past(), second["code"]),
+    )
+    conn.commit()
     recovered = repo.claim_ticket(
         conn,
         second["code"],
@@ -108,7 +139,7 @@ def run(h: Harness) -> None:
         second["code"],
         agent="opencode",
         session_id="ses_b",
-        steal=True,
+        force=True,
     )
 
     # ── Heartbeat renueva el lease ──────────────────────────────────────
@@ -133,6 +164,22 @@ def run(h: Harness) -> None:
         repo.get_ticket(conn, second["code"])["owner_session"],
         "ses_b",
         "el heartbeat no cambia el dueño",
+    )
+    conn.execute(
+        "UPDATE tickets SET heartbeat_at = ?, lease_until = ? WHERE code = ?",
+        (_past(5), _past(5), second["code"]),
+    )
+    conn.commit()
+    from commands.heartbeat import cmd_heartbeat
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        code = cmd_heartbeat(
+            argparse.Namespace(code=second["code"], minutes=10)
+        )
+    h.eq(code, 0, "taiki heartbeat renueva el lease por CLI")
+    h.ok(
+        not repo.stale_claims(conn),
+        "el lease renovado por CLI deja de estar caducado",
     )
 
     # ── find_active prioriza al dueño ───────────────────────────────────
