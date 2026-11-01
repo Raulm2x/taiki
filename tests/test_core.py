@@ -8,6 +8,7 @@ from pathlib import Path
 import cli
 from mcp_layer import handlers
 from ticketlib import audit as audit_lib, domain, githook, gitutil, render, repo
+from ticketlib.store import workflow
 from tui import detail as tui_detail
 from tests.seeds import completed, git_repo
 from tests.support import Harness
@@ -347,4 +348,34 @@ def run(h: Harness) -> None:
     h.ok(
         mcp_all["total"] == total_open,
         "call_tool('list') con include_closed cuenta todos",
+    )
+
+    # ── complete_ticket es atómico: sin enlaces no hay cierre ────────────
+    atomic = repo.create_ticket(conn, title="Cierre atómico")
+    repo.claim_ticket(conn, atomic["code"], agent="agente:test")
+    original_link = workflow.link_ticket
+
+    def broken_link(*args, **kwargs):
+        raise RuntimeError("fallo simulado al enlazar")
+
+    workflow.link_ticket = broken_link
+    try:
+        h.raises(
+            RuntimeError,
+            lambda: repo.complete_ticket(
+                conn,
+                atomic["code"],
+                resolution="no debe quedar",
+                commit="deadbee",
+            ),
+            "un fallo al enlazar aborta el cierre",
+        )
+    finally:
+        workflow.link_ticket = original_link
+    after = repo.get_ticket(conn, atomic["code"])
+    h.ok(
+        after["status"] == "en_progreso"
+        and not after["commits"]
+        and after["completed_at"] is None,
+        "el fallo no deja el ticket completado sin enlaces",
     )

@@ -508,24 +508,26 @@ def fill_gaps(
     if not apply or not plan:
         return plan
     ts = now()
-    for item in plan:
-        ticket = create_ticket(
-            conn,
-            title="Hueco histórico de numeración",
-            body=(
-                f"El código {item['code']} nunca tuvo ticket "
-                f"({item['reason']}). Se cubre con un ticket genérico "
-                "cancelado para que la secuencia no quede rota y el número "
-                "no se reutilice."
-            ),
-            kind="otro",
-            priority="baja",
-            tags=[TOMBSTONE_TAG],
-            created_by=actor,
-            actor_type=actor_type,
-            code=item["code"],
-        )
-        with db.tx(conn):
+    # Un solo commit para todo el plan: si algo falla a mitad, no queda un
+    # hueco visible en estado 'nuevo' ni un contador desincronizado.
+    with db.tx(conn):
+        for item in plan:
+            ticket = create_ticket(
+                conn,
+                title="Hueco histórico de numeración",
+                body=(
+                    f"El código {item['code']} nunca tuvo ticket "
+                    f"({item['reason']}). Se cubre con un ticket genérico "
+                    "cancelado para que la secuencia no quede rota y el número "
+                    "no se reutilice."
+                ),
+                kind="otro",
+                priority="baja",
+                tags=[TOMBSTONE_TAG],
+                created_by=actor,
+                actor_type=actor_type,
+                code=item["code"],
+            )
             conn.execute(
                 "UPDATE tickets SET status = 'cancelado', completed_at = ?, "
                 "updated_at = ?, resolution = ? WHERE id = ?",

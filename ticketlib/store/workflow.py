@@ -362,37 +362,41 @@ def complete_ticket(
     if not resolution:
         raise ValidationError("La resolución es obligatoria al completar un ticket")
 
-    transition(
-        conn,
-        code,
-        "completado",
-        note=resolution,
-        actor=actor,
-        actor_type=actor_type,
-        session_id=session_id,
-        resolution=resolution,
-        force=force,
-    )
-    if commit:
-        link_ticket(
+    # Una sola transacción: o se completa y se enlazan commit/archivos, o no
+    # queda nada. ``db.tx`` es reentrante, así que transition/link_ticket se
+    # suman a esta transacción en vez de abrir la suya.
+    with db.tx(conn):
+        transition(
             conn,
             code,
-            "commit",
-            commit,
+            "completado",
+            note=resolution,
             actor=actor,
             actor_type=actor_type,
             session_id=session_id,
+            resolution=resolution,
+            force=force,
         )
-    for file_ref in as_list(files):
-        link_ticket(
-            conn,
-            code,
-            "archivo",
-            file_ref,
-            actor=actor,
-            actor_type=actor_type,
-            session_id=session_id,
-        )
+        if commit:
+            link_ticket(
+                conn,
+                code,
+                "commit",
+                commit,
+                actor=actor,
+                actor_type=actor_type,
+                session_id=session_id,
+            )
+        for file_ref in as_list(files):
+            link_ticket(
+                conn,
+                code,
+                "archivo",
+                file_ref,
+                actor=actor,
+                actor_type=actor_type,
+                session_id=session_id,
+            )
     return get_ticket(conn, code)
 
 

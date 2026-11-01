@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ticketlib import audit, db, domain, repo, scratch
-from ticketlib.store import queries
+from ticketlib.store import mutations, queries
 from ticketlib.util import normalize_code
 from tests.support import Harness
 
@@ -181,6 +181,37 @@ def run(h: Harness) -> None:
         lambda: repo.create_ticket(conn, title="Duplicado", code="T-0001"),
         "no se puede forzar un código existente",
     )
+
+    # ── fill_gaps es atómico: un fallo a mitad no deja huecos sueltos ───
+    with db.tx(conn):
+        db.meta_set(conn, domain.TICKET_COUNTER, "13")
+    pending = [item["code"] for item in queries.missing_codes(conn)]
+    h.ok(pending, "hay huecos nuevos para probar la atomicidad")
+    original_create = mutations.create_ticket
+    calls = {"count": 0}
+
+    def flaky_create(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise RuntimeError("fallo simulado")
+        return original_create(*args, **kwargs)
+
+    mutations.create_ticket = flaky_create
+    try:
+        h.raises(
+            RuntimeError,
+            lambda: repo.fill_gaps(conn, apply=True, actor="usuario"),
+            "un fallo a mitad aborta el cubrimiento de huecos",
+        )
+    finally:
+        mutations.create_ticket = original_create
+    h.eq(
+        [item["code"] for item in queries.missing_codes(conn)],
+        pending,
+        "el fallo no deja huecos a medio cubrir",
+    )
+    with db.tx(conn):
+        db.meta_set(conn, domain.TICKET_COUNTER, "10")
 
     # ── Auditoría expone ambas categorías ────────────────────────────────
     data = audit.audit(conn, repo=str(h.tmp))
