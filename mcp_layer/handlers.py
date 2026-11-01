@@ -1014,7 +1014,11 @@ def read_resource(uri: str) -> dict[str, Any]:
 
     return {
         "contents": [
-            {"uri": uri, "mimeType": "application/json", "text": render.to_json(data)}
+            {
+                "uri": uri,
+                "mimeType": "application/json",
+                "text": render.to_json(data, compact=True),
+            }
         ]
     }
 

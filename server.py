@@ -53,7 +53,9 @@ class RpcError(Exception):
 
 
 def _send(payload: dict) -> None:
-    sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    sys.stdout.write(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
+    )
     sys.stdout.flush()
 
 
@@ -66,9 +68,10 @@ def _reply_error(rid, code: int, message: str) -> None:
 
 
 def _tool_result(data: dict) -> dict:
+    # Una sola representación: JSON compacto en ``content``. ``structuredContent``
+    # duplicaba todo el payload y los clientes MCP pueden parsear el texto.
     return {
-        "content": [{"type": "text", "text": render.to_json(data)}],
-        "structuredContent": data,
+        "content": [{"type": "text", "text": render.to_json(data, compact=True)}],
     }
 
 

@@ -156,6 +156,12 @@ def run(h: Harness) -> None:
         == "invalid_arguments",
         "el servidor devuelve errores estructurados con isError",
     )
+    tool_result = mcp_server._tool_result({"a": 1, "b": [1, 2]})
+    h.ok(
+        "structuredContent" not in tool_result
+        and json.loads(tool_result["content"][0]["text"]) == {"a": 1, "b": [1, 2]},
+        "las respuestas MCP usan solo JSON compacto",
+    )
     by_name = {tool["name"]: tool for tool in schemas.TOOLS}
     h.ok(
         all("annotations" in tool and "outputSchema" in tool for tool in schemas.TOOLS),

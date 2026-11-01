@@ -167,8 +167,15 @@ def _json_default(value: Any) -> Any:
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
-def to_json(data: Any) -> str:
-    """Serializa estructuras de datos a JSON formateado con sangría."""
+def to_json(data: Any, *, compact: bool = False) -> str:
+    """Serializa a JSON; compacto para agentes, con sangría para humanos."""
+    if compact:
+        return json.dumps(
+            data,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=_json_default,
+        )
     return json.dumps(
         data, ensure_ascii=False, indent=2, default=_json_default
     )
