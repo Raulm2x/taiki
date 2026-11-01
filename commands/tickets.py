@@ -113,7 +113,9 @@ def cmd_list(args: argparse.Namespace) -> int:
         )
         total = repo.count_tickets(conn, **filters, **hierarchy)
         hidden = 0
-        if hierarchy.get("roots_only"):
+        # El resumen lean no incluye hidden_children: evita un segundo COUNT
+        # sobre 20k filas en la ruta caliente de los agentes.
+        if hierarchy.get("roots_only") and not summary:
             hidden = max(
                 0,
                 repo.count_tickets(conn, **filters, roots_only=False) - total,
@@ -145,18 +147,20 @@ def cmd_list(args: argparse.Namespace) -> int:
             if args.flat
             else "roots"
         )
+        envelope = {
+            "count": len(tickets),
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "order": args.sort,
+            "scope": scope,
+            "tickets": payload,
+        }
+        if not summary:
+            envelope["hidden_children"] = hidden
         print(
             render.to_json(
-                {
-                    "count": len(tickets),
-                    "total": total,
-                    "offset": offset,
-                    "limit": limit,
-                    "order": args.sort,
-                    "scope": scope,
-                    "hidden_children": hidden,
-                    "tickets": payload,
-                },
+                envelope,
                 compact=getattr(args, "compact", False),
             )
         )

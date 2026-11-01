@@ -866,7 +866,8 @@ el nombre real de la herramienta es el que aparece en `tools/list`.
   devuelven un recibo; `detail=true` recupera el ticket completo.
 - En CLI, prefiere `taiki list --json-summary --compact --limit 20` y
   `taiki show T-XXXX --json --compact`; evita `list --json` completo.
-  `--json-summary` no calcula sesiones (solo el resumen lean).
+  `--json-summary` no calcula sesiones ni `hidden_children` (solo el resumen
+  lean).
 - `taiki://inbox` devuelve como máximo 20 tickets en resumen.
 
 ## Datos y respaldo
