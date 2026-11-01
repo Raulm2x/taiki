@@ -7,15 +7,18 @@ STATUSES = (
     "pendiente",
     "en_progreso",
     "completado",
+    "verificado",
     "confirmado",
     "bloqueado",
     "cancelado",
 )
 
+# ``verificado`` no está abierto: el trabajo terminó y espera al usuario. Tampoco
+# es final: el cierre real lo marca ``confirmado``.
 OPEN_STATUSES = ("nuevo", "pendiente", "en_progreso", "bloqueado")
 FINAL_STATUSES = ("confirmado", "cancelado")
 # Una épica puede cerrarse cuando sus tareas están en alguno de estos estados.
-PARENT_DONE_STATUSES = ("completado", "confirmado", "cancelado")
+PARENT_DONE_STATUSES = ("completado", "verificado", "confirmado", "cancelado")
 PARENT_CONFIRMED_STATUSES = ("confirmado", "cancelado")
 
 KINDS = (
@@ -38,12 +41,15 @@ TRANSITIONS: dict[str, set[str]] = {
     "pendiente": {"en_progreso", "bloqueado", "cancelado"},
     "en_progreso": {"completado", "bloqueado", "pendiente", "cancelado"},
     "bloqueado": {"pendiente", "en_progreso", "cancelado"},
-    "completado": {"confirmado", "en_progreso"},
+    # ``verificado`` es el visto bueno del conductor; el usuario puede
+    # confirmar tanto desde ``completado`` como desde ``verificado``.
+    "completado": {"verificado", "confirmado", "en_progreso"},
+    "verificado": {"confirmado", "en_progreso"},
     "confirmado": {"en_progreso"},
     "cancelado": {"pendiente"},
 }
 
-REOPEN_FROM = {"completado", "confirmado", "cancelado"}
+REOPEN_FROM = {"completado", "verificado", "confirmado", "cancelado"}
 
 SCHEMA_VERSION = 4
 

@@ -158,8 +158,13 @@ def run(h: Harness) -> None:
     )
     h.ok(
         tui_actions.available_statuses({"status": "completado"})
-        == ["en_progreso"],
-        "las acciones no ofrecen confirmar directamente",
+        == ["en_progreso", "verificado"],
+        "las acciones ofrecen verificar pero no confirmar directamente",
+    )
+    h.ok(
+        "confirmado"
+        not in tui_actions.available_statuses({"status": "verificado"}),
+        "confirmar sigue reservado al usuario",
     )
     h.ok(
         tui_actions.needs_note({"status": "completado"}, "en_progreso")

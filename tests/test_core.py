@@ -106,7 +106,8 @@ def run(h: Harness) -> None:
         "pendiente": {"en_progreso", "bloqueado", "cancelado"},
         "en_progreso": {"completado", "bloqueado", "pendiente", "cancelado"},
         "bloqueado": {"pendiente", "en_progreso", "cancelado"},
-        "completado": {"confirmado", "en_progreso"},
+        "completado": {"verificado", "confirmado", "en_progreso"},
+        "verificado": {"confirmado", "en_progreso"},
         "confirmado": {"en_progreso"},
         "cancelado": {"pendiente"},
     }
@@ -454,4 +455,149 @@ def run(h: Harness) -> None:
         and not after["commits"]
         and after["completed_at"] is None,
         "el fallo no deja el ticket completado sin enlaces",
+    )
+
+    # ── Estado verificado: visto bueno del conductor ────────────────────
+    review = repo.create_ticket(conn, title="Revisión del conductor")
+    repo.claim_ticket(conn, review["code"], agent="conductor")
+    repo.complete_ticket(conn, review["code"], resolution="primera entrega")
+    h.ok(
+        repo.get_ticket(conn, review["code"])["iterations"] == 1,
+        "el primer intento cuenta al empezar el trabajo",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: repo.transition(
+            conn, review["code"], "verificado", actor="conductor"
+        ),
+        "verificar sin evidencia debe fallar",
+    )
+    checked = repo.transition(
+        conn,
+        review["code"],
+        "verificado",
+        note="tests/run.py --strict-budget, ruff y mypy verdes",
+        actor="conductor",
+    )
+    h.ok(checked["status"] == "verificado", "el conductor puede verificar")
+    h.ok(
+        checked["completed_at"] is not None,
+        "verificado conserva la fecha de completado",
+    )
+    h.ok(
+        checked["status"] not in domain.OPEN_STATUSES
+        and checked["status"] not in domain.FINAL_STATUSES,
+        "verificado no es abierto ni final",
+    )
+    h.raises(
+        domain.TransitionError,
+        lambda: repo.claim_ticket(conn, review["code"], agent="worker"),
+        "no se reclama un ticket verificado",
+    )
+    h.raises(
+        domain.PermissionDenied,
+        lambda: repo.transition(
+            conn, review["code"], "confirmado", actor="conductor"
+        ),
+        "un agente no confirma un ticket verificado",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: repo.transition(
+            conn, review["code"], "en_progreso", actor="conductor"
+        ),
+        "reabrir un verificado exige motivo",
+    )
+    reopened_review = repo.transition(
+        conn,
+        review["code"],
+        "en_progreso",
+        note="la revisión detectó un caso sin cubrir",
+        actor="conductor",
+    )
+    h.ok(
+        reopened_review["status"] == "en_progreso"
+        and reopened_review["iterations"] == 2
+        and reopened_review["completed_at"] is None,
+        "rechazar un verificado abre un intento nuevo",
+    )
+
+    repo.complete_ticket(conn, review["code"], resolution="segunda entrega")
+    h.ok(
+        repo.get_ticket(conn, review["code"])["iterations"] == 2,
+        "completar no duplica el intento ya contado al reabrir",
+    )
+    repo.transition(
+        conn,
+        review["code"],
+        "verificado",
+        note="gates verdes tras la corrección",
+        actor="conductor",
+    )
+    report = repo.confirm_tickets(conn, [review["code"]])
+    h.ok(
+        report["confirmed"] == [review["code"]]
+        and repo.get_ticket(conn, review["code"])["status"] == "confirmado",
+        "el usuario confirma desde verificado",
+    )
+
+    # Confirmar una épica expande y confirma sus tareas verificadas.
+    reviewed_epic = repo.create_ticket(conn, title="Épica revisada")
+    reviewed_kids = []
+    for name in ("tarea revisada A", "tarea revisada B"):
+        kid = repo.create_ticket(conn, title=name, parent_id=reviewed_epic["code"])
+        repo.claim_ticket(conn, kid["code"], agent="worker")
+        repo.complete_ticket(conn, kid["code"], resolution="lista")
+        repo.transition(
+            conn,
+            kid["code"],
+            "verificado",
+            note="gates verdes",
+            actor="conductor",
+        )
+        reviewed_kids.append(kid["code"])
+    repo.transition(conn, reviewed_epic["code"], "en_progreso", actor="conductor")
+    repo.transition(
+        conn,
+        reviewed_epic["code"],
+        "completado",
+        note="todas las tareas entregadas",
+        actor="conductor",
+    )
+    repo.transition(
+        conn,
+        reviewed_epic["code"],
+        "verificado",
+        note="gates verdes sobre la épica",
+        actor="conductor",
+    )
+    report = repo.confirm_tickets(conn, [reviewed_epic["code"]])
+    statuses = {
+        code: repo.get_ticket(conn, code)["status"]
+        for code in [reviewed_epic["code"], *reviewed_kids]
+    }
+    h.ok(
+        set(report["confirmed"])
+        == {reviewed_epic["code"], *reviewed_kids}
+        and all(status == "confirmado" for status in statuses.values()),
+        "confirmar una épica confirma primero sus tareas verificadas",
+    )
+
+    # Una épica que recibe una tarea nueva no puede verificarse.
+    late_epic = repo.create_ticket(conn, title="Épica con tarea tardía")
+    repo.transition(conn, late_epic["code"], "en_progreso", actor="conductor")
+    repo.transition(
+        conn,
+        late_epic["code"],
+        "completado",
+        note="cierre inicial",
+        actor="conductor",
+    )
+    repo.create_ticket(conn, title="tarea tardía", parent_id=late_epic["code"])
+    h.raises(
+        domain.TransitionError,
+        lambda: repo.transition(
+            conn, late_epic["code"], "verificado", note="gates", actor="conductor"
+        ),
+        "una épica con tareas abiertas no se verifica",
     )

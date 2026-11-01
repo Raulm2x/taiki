@@ -113,10 +113,16 @@ def transition(
     if status in ("en_progreso", "pendiente") and current in REOPEN_FROM and not note:
         raise ValidationError("Reabrir un ticket requiere un motivo en 'note'")
 
-    if status in ("completado", "confirmado"):
+    if status == "verificado" and not note:
+        raise ValidationError(
+            "Marcar un ticket como 'verificado' requiere evidencia en 'note' "
+            "(tests, CI, revisión)"
+        )
+
+    if status in ("completado", "verificado", "confirmado"):
         closed = (
             PARENT_DONE_STATUSES
-            if status == "completado"
+            if status in ("completado", "verificado")
             else PARENT_CONFIRMED_STATUSES
         )
         pending_children = [
@@ -137,10 +143,17 @@ def transition(
 
     if status == "en_progreso" and not row["started_at"]:
         changes.append(("started_at", ts))
+    # ``iterations`` cuenta intentos de trabajo: el primero al empezar y uno
+    # nuevo cada vez que se reabre un ticket ya cerrado o verificado.
+    if status == "en_progreso" and (
+        current in REOPEN_FROM or current in ("nuevo", "pendiente")
+    ):
+        changes.append(("iterations", int(row["iterations"] or 0) + 1))
     if status == "completado":
         changes.append(("completed_at", ts))
-        changes.append(("iterations", int(row["iterations"] or 0) + 1))
-    elif current in ("completado", "confirmado"):
+    elif status != "verificado":
+        # Confirmar o reabrir cierra la entrega: ``confirmed_at`` o el nuevo
+        # intento mandan. ``verificado`` conserva la fecha de completado.
         changes.append(("completed_at", None))
     if status == "confirmado":
         changes.append(("confirmed_at", ts))
@@ -190,7 +203,7 @@ def claim_ticket(
     agent = normalize_agent(agent)
     with db.tx(conn):
         row = row_by_code(conn, code)
-        if row["status"] in ("completado", "confirmado", "cancelado"):
+        if row["status"] in ("completado", "verificado", "confirmado", "cancelado"):
             raise TransitionError(
                 f"No se puede reclamar {row['code']} porque está '{row['status']}'. "
                 "Reábrelo primero."
@@ -418,8 +431,8 @@ def confirm_tickets(
     """Confirma varios tickets de forma atómica.
 
     Se valida todo antes de escribir: si algún código no existe o no está en
-    ``completado`` no se confirma ninguno. Los que ya estaban confirmados se
-    omiten (idempotente) y se informan aparte.
+    ``completado``/``verificado`` no se confirma ninguno. Los que ya estaban
+    confirmados se omiten (idempotente) y se informan aparte.
     """
     if isinstance(codes, str):
         codes = [codes]
@@ -466,9 +479,10 @@ def confirm_tickets(
                 "o `--drop`"
             )
             continue
-        if row["status"] != "completado":
+        if row["status"] not in ("completado", "verificado"):
             errors[row["code"]] = (
-                f"estado '{row['status']}' (debe estar en 'completado')"
+                f"estado '{row['status']}' "
+                "(debe estar en 'completado' o 'verificado')"
             )
             continue
 
@@ -492,9 +506,9 @@ def confirm_tickets(
                     )
                 )
                 continue
-            # Primero las tareas completadas, y después la épica.
+            # Primero las tareas completadas o verificadas, y después la épica.
             for child in children:
-                if child["status"] == "completado":
+                if child["status"] in ("completado", "verificado"):
                     schedule(child["code"])
         schedule(row["code"])
 
