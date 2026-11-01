@@ -79,18 +79,24 @@ def _limited_section(
     count_params: tuple[Any, ...],
     limit: Any,
 ) -> tuple[list[dict[str, Any]], int | None]:
-    """Igual que ``_history_section`` pero para consultas ya construidas."""
+    """Igual que ``_history_section`` pero para consultas ya construidas.
+
+    ``sql`` debe ordenar de más reciente a más antiguo (``ORDER BY id DESC``).
+    El resultado se devuelve en orden ascendente, igual que el resto del
+    ticket: así el recorte conserva las filas más recientes y no las primeras.
+    """
     try:
         maximum = int(limit) if limit is not None else 0
     except (TypeError, ValueError):
         maximum = 0
     if maximum <= 0:
-        return [dict(row) for row in conn.execute(sql, params)], None
+        rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in reversed(rows)], None
     rows = conn.execute(sql + " LIMIT ?", (*params, maximum + 1)).fetchall()
     if len(rows) <= maximum:
-        return [dict(row) for row in rows], None
+        return [dict(row) for row in reversed(rows)], None
     total = conn.execute(count_sql, count_params).fetchone()[0]
-    return [dict(row) for row in rows[1:]], total
+    return [dict(row) for row in reversed(rows[:maximum])], total
 
 
 def _subtask_progress(
@@ -155,9 +161,8 @@ def get_ticket(
         ticket["events_total"] = events_total
     ticket["links"], links_total = _limited_section(
         conn,
-        "SELECT kind, ref, created_at FROM ("
-        "SELECT kind, ref, created_at, id FROM links "
-        "WHERE ticket_id = ? ORDER BY id DESC) ORDER BY id",
+        "SELECT kind, ref, created_at FROM links "
+        "WHERE ticket_id = ? ORDER BY id DESC",
         (row["id"],),
         "SELECT COUNT(*) FROM links WHERE ticket_id = ?",
         (row["id"],),
@@ -203,9 +208,8 @@ def get_ticket(
         ticket["parent_code"] = None
     ticket["subtasks"], subtasks_total = _limited_section(
         conn,
-        "SELECT code, title, status, priority, kind FROM ("
-        "SELECT code, title, status, priority, kind, id FROM tickets "
-        "WHERE parent_id = ? ORDER BY id DESC) ORDER BY id",
+        "SELECT code, title, status, priority, kind FROM tickets "
+        "WHERE parent_id = ? ORDER BY id DESC",
         (row["id"],),
         "SELECT COUNT(*) FROM tickets WHERE parent_id = ?",
         (row["id"],),

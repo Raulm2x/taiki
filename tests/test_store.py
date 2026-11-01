@@ -347,3 +347,60 @@ def run(h: Harness) -> None:
         lambda: repo.create_ticket(conn, title="Subtarea huérfana", parent_id="T-9999"),
         "parent_id inexistente debe fallar con NotFoundError",
     )
+
+    # ── get con límites conserva la franja más reciente ─────────────────
+    bounded = repo.create_ticket(conn, title="Límites de secciones")
+    stamp = "2026-01-01T00:00:00+01:00"
+    with db.tx(conn):
+        for index in range(1, 26):
+            conn.execute(
+                "INSERT INTO links(ticket_id, kind, ref, created_at) "
+                "VALUES (?, 'url', ?, ?)",
+                (bounded["id"], f"L{index}", stamp),
+            )
+            conn.execute(
+                "INSERT INTO tickets(code, title, status, priority, kind, "
+                "parent_id, created_at, updated_at) "
+                "VALUES (?, ?, 'pendiente', 'media', 'otro', ?, ?, ?)",
+                (f"{bounded['code']}.{index:02d}", f"Sub {index}", bounded["id"], stamp, stamp),
+            )
+
+    recent = repo.get_ticket(
+        conn, bounded["code"], links_limit=3, subtasks_limit=3
+    )
+    h.eq(
+        [link["ref"] for link in recent["links"]],
+        ["L23", "L24", "L25"],
+        "links_limit devuelve los 3 enlaces más recientes",
+    )
+    h.eq(
+        [sub["code"] for sub in recent["subtasks"]],
+        [f"{bounded['code']}.{index:02d}" for index in (23, 24, 25)],
+        "subtasks_limit devuelve las 3 tareas más recientes",
+    )
+    h.eq(
+        (recent["links_total"], recent["subtasks_total"]),
+        (25, 25),
+        "los totales reflejan el conjunto completo",
+    )
+    h.eq(
+        recent["progress"]["total"],
+        25,
+        "progress se calcula sobre todas las subtareas, no sobre el recorte",
+    )
+    default_limit = repo.get_ticket(
+        conn, bounded["code"], links_limit=20, subtasks_limit=20
+    )
+    h.eq(
+        [link["ref"] for link in default_limit["links"]],
+        [f"L{index}" for index in range(6, 26)],
+        "el límite por defecto 20 devuelve los 20 enlaces más recientes",
+    )
+    unbounded = repo.get_ticket(
+        conn, bounded["code"], links_limit=0, subtasks_limit=0
+    )
+    h.eq(
+        [link["ref"] for link in unbounded["links"]],
+        [f"L{index}" for index in range(1, 26)],
+        "sin límite se conserva el orden ascendente completo",
+    )
