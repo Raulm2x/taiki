@@ -79,10 +79,30 @@ agentes escriben el estado con las herramientas MCP (`claim`, `complete`,
 atribuye sus acciones como tales. Tras `claim` con worktree, el worker llama
 a `session_move` con la ruta devuelta; el conductor comprueba que la sesión
 hija está en el worktree y que el commit vive en `agent/T-XXXX-*`, no en
-`main`. Los permisos de shell solo dejan a los agentes lecturas de `taiki` y
-`taiki commit`; cualquier write de estado va por MCP. `uvx` queda limitado a
-`ruff` y `mypy`: `python3 tests/run.py --verify` los ejecuta internamente,
-pero edit/shell/uvx/tests no son un sandbox de seguridad.
+`main`. Cualquier write de estado va por MCP y `uvx` queda limitado a `ruff` y
+`mypy`: `python3 tests/run.py --verify` los ejecuta internamente.
+
+### Permisos de shell
+
+Cada perfil declara sus reglas en `.opencode/agents/*.md`; el objetivo es no
+interrumpir la inspección y la edición normal sin abrir la puerta a lo
+peligroso:
+
+- **Permitido sin preguntar**: `pwd`, `ls`, `cat`, `head`, `tail`, `sed -n`,
+  `grep`, `rg`, `find`, `wc`, `diff`, `file`, `stat`, `mkdir -p docs` y
+  `git show`; además de `python3 tests/*`, `python3 -m tests.*`,
+  `git status/diff/log/add/commit`, las lecturas de `taiki` y `taiki commit`.
+- **Pide permiso (`ask`)**: comandos no clasificados, red e instalación. Es el
+  fallback del conductor y de los workers.
+- **Denegado**: `git push`, `git merge` directo, `taiki confirm`,
+  `taiki worktree merge` (salvo el conductor), `taiki transition`/writes de
+  estado por CLI, `rm -rf`, `sudo`, `chmod`/`chown` peligrosos y el staging
+  masivo (`git add -A`, `git add .`, `git commit -a`). El reviewer, que es de
+  solo lectura, deniega todo lo no listado.
+
+El límite de confianza es explícito: estas reglas evitan prompts repetidos y
+reducen el daño accidental, **no son un sandbox de seguridad**. La garantía
+sigue siendo el guard de tickets, la revisión del conductor y los gates.
 
 Routing de modelos: `documentacion` → `low`; mantenimiento/funcionalidad →
 `medium`; `bug`/`seguridad` → `high`. Todos los perfiles worker usan

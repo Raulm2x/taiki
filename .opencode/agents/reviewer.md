@@ -13,6 +13,45 @@ permissions:
     resource: "*"
     effect: deny
   - action: shell
+    resource: "pwd*"
+    effect: allow
+  - action: shell
+    resource: "ls*"
+    effect: allow
+  - action: shell
+    resource: "cat *"
+    effect: allow
+  - action: shell
+    resource: "head *"
+    effect: allow
+  - action: shell
+    resource: "tail *"
+    effect: allow
+  - action: shell
+    resource: "sed -n *"
+    effect: allow
+  - action: shell
+    resource: "grep *"
+    effect: allow
+  - action: shell
+    resource: "rg *"
+    effect: allow
+  - action: shell
+    resource: "find *"
+    effect: allow
+  - action: shell
+    resource: "wc *"
+    effect: allow
+  - action: shell
+    resource: "diff *"
+    effect: allow
+  - action: shell
+    resource: "file *"
+    effect: allow
+  - action: shell
+    resource: "stat *"
+    effect: allow
+  - action: shell
     resource: "python3 tests/*"
     effect: allow
   - action: shell
@@ -34,8 +73,41 @@ permissions:
     resource: "git log*"
     effect: allow
   - action: shell
+    resource: "git show*"
+    effect: allow
+  - action: shell
     resource: "taiki show*"
     effect: allow
+  - action: shell
+    resource: "git push*"
+    effect: deny
+  - action: shell
+    resource: "git merge*"
+    effect: deny
+  - action: shell
+    resource: "taiki confirm*"
+    effect: deny
+  - action: shell
+    resource: "taiki worktree merge*"
+    effect: deny
+  - action: shell
+    resource: "rm -rf*"
+    effect: deny
+  - action: shell
+    resource: "rm -fr*"
+    effect: deny
+  - action: shell
+    resource: "sudo *"
+    effect: deny
+  - action: shell
+    resource: "chmod 777*"
+    effect: deny
+  - action: shell
+    resource: "chmod -R*"
+    effect: deny
+  - action: shell
+    resource: "chown -R*"
+    effect: deny
 ---
 
 Revisas el trabajo de otra tarea sin modificarlo. No editas, no confirmas, no

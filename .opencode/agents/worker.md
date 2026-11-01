@@ -37,6 +37,48 @@ permissions:
     resource: "taiki worktree list*"
     effect: allow
   - action: shell
+    resource: "pwd*"
+    effect: allow
+  - action: shell
+    resource: "ls*"
+    effect: allow
+  - action: shell
+    resource: "cat *"
+    effect: allow
+  - action: shell
+    resource: "head *"
+    effect: allow
+  - action: shell
+    resource: "tail *"
+    effect: allow
+  - action: shell
+    resource: "sed -n *"
+    effect: allow
+  - action: shell
+    resource: "grep *"
+    effect: allow
+  - action: shell
+    resource: "rg *"
+    effect: allow
+  - action: shell
+    resource: "find *"
+    effect: allow
+  - action: shell
+    resource: "wc *"
+    effect: allow
+  - action: shell
+    resource: "diff *"
+    effect: allow
+  - action: shell
+    resource: "file *"
+    effect: allow
+  - action: shell
+    resource: "stat *"
+    effect: allow
+  - action: shell
+    resource: "mkdir -p docs*"
+    effect: allow
+  - action: shell
     resource: "taiki commit *"
     effect: allow
   - action: shell
@@ -65,6 +107,9 @@ permissions:
     effect: allow
   - action: shell
     resource: "git log*"
+    effect: allow
+  - action: shell
+    resource: "git show*"
     effect: allow
   - action: shell
     resource: "git add *"
@@ -107,6 +152,24 @@ permissions:
     effect: deny
   - action: shell
     resource: "taiki transition*"
+    effect: deny
+  - action: shell
+    resource: "rm -rf*"
+    effect: deny
+  - action: shell
+    resource: "rm -fr*"
+    effect: deny
+  - action: shell
+    resource: "sudo *"
+    effect: deny
+  - action: shell
+    resource: "chmod 777*"
+    effect: deny
+  - action: shell
+    resource: "chmod -R*"
+    effect: deny
+  - action: shell
+    resource: "chown -R*"
     effect: deny
 ---
 

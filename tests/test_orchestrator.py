@@ -1011,6 +1011,64 @@ def run(h: Harness) -> None:
         ),
         "uvx solo permite ruff y mypy en todos los perfiles",
     )
+    inspect_rules = (
+        "pwd*",
+        "ls*",
+        "cat *",
+        "head *",
+        "tail *",
+        "sed -n *",
+        "grep *",
+        "rg *",
+        "find *",
+        "wc *",
+        "diff *",
+        "file *",
+        "stat *",
+    )
+    h.ok(
+        all(
+            _rule(meta, "shell", pattern) == "allow"
+            and _rule(meta, "shell", "git show*") == "allow"
+            for meta in profiles.values()
+            for pattern in inspect_rules
+        )
+        and all(
+            _rule(profiles[name], "shell", "mkdir -p docs*") == "allow"
+            for name in (
+                "worker.md",
+                "worker-low.md",
+                "worker-medium.md",
+                "worker-high.md",
+            )
+        )
+        and _rule(profiles["reviewer.md"], "shell", "mkdir -p docs*") is None
+        and all(
+            _rule(meta, "shell", pattern) == "deny"
+            for meta in profiles.values()
+            for pattern in (
+                "git push*",
+                "git merge*",
+                "taiki confirm*",
+                "rm -rf*",
+                "sudo *",
+            )
+        )
+        and _rule(profiles["conductor.md"], "shell", "taiki worktree merge*")
+        == "allow"
+        and all(
+            _rule(meta, "shell", "taiki worktree merge*") == "deny"
+            for name, meta in profiles.items()
+            if name != "conductor.md"
+        )
+        and all(
+            _rule(meta, "shell", "*") == "ask"
+            for name, meta in profiles.items()
+            if name != "reviewer.md"
+        )
+        and _rule(profiles["reviewer.md"], "shell", "*") == "deny",
+        "permisos de shell: inspección sin prompt, denies críticos y fallback",
+    )
     problems = orchestrator.isolation_problems(
         "T-0001",
         worktree="/wt",
