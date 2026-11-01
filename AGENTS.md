@@ -91,8 +91,9 @@ taiki tui                   # dashboard del proyecto
 taiki mcp install           # MCP de OpenCode solo para este proyecto
 taiki mcp uninstall         # lo retira y desactiva el guard
 taiki servers               # instancias MCP vivas (registro global)
-python3 tests/run.py         # suite completa
-python3 tests/run.py --audit # ruido, presupuesto y línea base
+python3 tests/run.py          # suite completa
+python3 tests/run.py --verify # todos los gates (suite, cobertura, ruff, mypy, benchmarks)
+python3 tests/run.py --audit  # ruido, presupuesto y línea base
 ```
 
 ## Aislamiento

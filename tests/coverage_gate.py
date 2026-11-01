@@ -27,12 +27,32 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import tomllib
 from pathlib import Path
 from typing import Any, Iterable
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = ROOT / "pyproject.toml"
+
+# Pasos para regenerar el informe antes de medir. ``--run`` los ejecuta.
+COVERAGE_STEPS: tuple[tuple[str, ...], ...] = (
+    ("uvx", "coverage", "run", "tests/run.py"),
+    ("uvx", "coverage", "json", "-o", "coverage.json", "-q"),
+)
+
+
+def run_coverage(runner=None, cwd: Path = ROOT) -> tuple[bool, str]:
+    """Regenera ``coverage.json``; devuelve (ok, salida del primer fallo)."""
+    execute = runner or subprocess.run
+    for argv in COVERAGE_STEPS:
+        completed = execute(argv, cwd=cwd, capture_output=True, text=True)
+        if completed.returncode != 0:
+            output = (
+                (completed.stdout or "") + (completed.stderr or "")
+            ).strip()
+            return False, output[-2000:]
+    return True, ""
 
 
 def load_thresholds(path: Path | None = None) -> tuple[dict[str, float], list[str]]:
@@ -121,7 +141,19 @@ def main(argv: list[str] | None = None) -> int:
         default=str(CONFIG),
         help="pyproject.toml con [tool.coverage.taiki]",
     )
+    parser.add_argument(
+        "--run",
+        action="store_true",
+        help="regenera coverage.json con `coverage run` y `coverage json`",
+    )
     args = parser.parse_args(argv)
+
+    if args.run:
+        ok, detail = run_coverage()
+        if not ok:
+            print("No se pudo generar la cobertura:")
+            print(detail)
+            return 1
 
     report = Path(args.report)
     if not report.is_file():

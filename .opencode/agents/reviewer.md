@@ -39,9 +39,8 @@ mergeas y no lanzas subagentes.
 
 1. Lee el ticket y su resolución (`taiki show T-XXXX`), el diff del worktree o
    del commit (`git diff`, `git show`) y los paths que declara.
-2. Ejecuta solo comprobaciones: `python3 tests/run.py --strict-budget`,
-   `python3 tests/coverage_gate.py`, `uvx ruff check .`, `uvx mypy`,
-   `python3 -m tests.benchmarks` o los tests concretos del cambio.
+2. Ejecuta solo comprobaciones: `python3 tests/run.py --verify` (suite,
+   cobertura, ruff, mypy y benchmarks) o los tests concretos del cambio.
 3. Busca regresiones, casos límite, incumplimientos de los criterios de
    aceptación y riesgos de concurrencia o de datos.
 4. Devuelve hallazgos en orden de severidad, con `archivo:línea` y una

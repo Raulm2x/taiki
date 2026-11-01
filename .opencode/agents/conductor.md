@@ -77,16 +77,16 @@ verificas. **No editas código, no confirmas tickets y no mergeas worktrees.**
    ticket. Si el lease caduca, usa `reassign`; si el worker falla, `retry` en
    la misma sesión hasta `TAIKI_MAX_ATTEMPTS`; si se agotan, deja el ticket
    `bloqueado` para decisión humana y no dupliques el claim.
-5. Verifica con gates deterministas: `python3 tests/run.py
-   --strict-budget`, `python3 tests/coverage_gate.py`, `uvx ruff check .`,
-   `uvx mypy` y `python3 -m tests.benchmarks`. Revisa también los criterios de
-   aceptación del ticket y, si aporta, lanza `reviewer`.
-6. Si todo pasa, marca la tarea `verificado` con evidencia:
-   `taiki transition T-XXXX verificado --note "tests/CI/reviewer: ..."`.
-   Si falla en el mismo alcance, reabre la tarea
-   (`taiki reject T-XXXX --why "..."`) y continúa la sesión del worker.
-   Si el fallo es independiente, crea una tarea `bug` hija de la épica con
-   paths, evidencia y enlace a la original, y asígnala.
+5. Verifica con gates deterministas: `python3 tests/run.py --verify`
+   (suite `--strict-budget`, cobertura por capa, ruff, mypy y benchmarks).
+   Revisa también los criterios de aceptación del ticket y, si aporta, lanza
+   `reviewer` para la semántica. Guarda la línea `Evidencia:` que imprime.
+6. Si todo pasa, marca la tarea `verificado` con esa evidencia:
+   `taiki transition T-XXXX verificado --note "Evidencia: suite=ok; ..."`.
+   Si falla en el mismo alcance, reabre la tarea con `retry` (misma sesión del
+   worker) y una nota con el gate que falló. Si el fallo es independiente, crea
+   una tarea `bug` hija de la épica con paths, evidencia y un enlace
+   `relacionado` a la original, y asígnala.
 7. Cuando todas las tareas estén `verificado`, deja la épica lista y pide al
    usuario que confirme y mergee. **Nunca ejecutes `taiki confirm` ni
    `taiki worktree merge`.**

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import subprocess
 import sys
 import time
 import traceback
@@ -18,6 +19,50 @@ from tests import hygiene
 from tests.support import Harness
 
 MODULES = hygiene.discover_modules()
+
+# Gates deterministas del conductor. Cada paso es independiente: el informe
+# final dice cuál falló y con qué salida.
+VERIFY_STEPS: tuple[tuple[str, list[str]], ...] = (
+    ("suite", [sys.executable, "tests/run.py", "--strict-budget"]),
+    ("cobertura", [sys.executable, "tests/coverage_gate.py", "--run"]),
+    ("ruff", ["uvx", "ruff", "check", "."]),
+    ("mypy", ["uvx", "mypy"]),
+    ("benchmarks", [sys.executable, "-m", "tests.benchmarks"]),
+)
+
+
+def run_verification(
+    runner=None,
+    steps: tuple[tuple[str, list[str]], ...] = VERIFY_STEPS,
+    cwd: Path = ROOT,
+) -> list[dict]:
+    """Ejecuta los gates y devuelve nombre, resultado y salida de cada uno."""
+    execute = runner or subprocess.run
+    results: list[dict] = []
+    for name, argv in steps:
+        completed = execute(argv, cwd=cwd, capture_output=True, text=True)
+        output = ((completed.stdout or "") + (completed.stderr or "")).strip()
+        results.append(
+            {
+                "name": name,
+                "ok": completed.returncode == 0,
+                "returncode": completed.returncode,
+                "output": output[-2000:],
+            }
+        )
+    return results
+
+
+def verification_ok(results: list[dict]) -> bool:
+    return bool(results) and all(item["ok"] for item in results)
+
+
+def verification_evidence(results: list[dict]) -> str:
+    """Nota de evidencia para la transición a verificado."""
+    return "; ".join(
+        f"{item['name']}={'ok' if item['ok'] else 'fallo'}"
+        for item in results
+    )
 
 
 def _selected(only: list[str], keyword: str | None) -> list[str]:
@@ -89,6 +134,11 @@ def main(argv: list[str] | None = None) -> int:
         help="ejecuta los benchmarks de connect/export a 20k",
     )
     parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="ejecuta todos los gates deterministas (suite, cobertura, ruff, mypy y benchmarks)",
+    )
+    parser.add_argument(
         "--strict-budget",
         action="store_true",
         help="falla si la suite o un módulo supera el presupuesto de tiempo",
@@ -102,6 +152,15 @@ def main(argv: list[str] | None = None) -> int:
         for name in names:
             print(name)
         return 0
+
+    if args.verify:
+        results = run_verification()
+        for item in results:
+            print(f"{'OK' if item['ok'] else 'FALLO'} {item['name']}")
+            if not item["ok"]:
+                print(item["output"])
+        print(f"Evidencia: {verification_evidence(results)}")
+        return 0 if verification_ok(results) else 1
 
     partial = len(names) != len(MODULES)
     budget = hygiene.load_budget()

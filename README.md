@@ -904,11 +904,13 @@ python3 tests/run.py -k tui -v       # filtrar por nombre y ver el desglose
 python3 tests/run.py --audit         # ruido, duplicados, imports y techo de checks
 python3 tests/run.py --strict-budget # falla si se supera el presupuesto de tiempo
 python3 tests/run.py --bench         # benchmarks 20k (límites según CI/local)
+python3 tests/run.py --verify        # todos los gates: suite, cobertura, ruff, mypy y benchmarks
 python3 -m tests.benchmarks          # benchmarks por separado
 ruff check .                         # lint (corrección + ARG)
 mypy                                 # tipos de ticketlib (gradual)
 coverage run tests/run.py && coverage json -o coverage.json
-python3 tests/coverage_gate.py coverage.json   # umbral por capa (ratchet)
+python3 tests/coverage_gate.py --run           # regenera cobertura y aplica el umbral por capa
+python3 tests/coverage_gate.py coverage.json   # umbral por capa sobre un JSON existente
 python3 selftest.py                  # compatibilidad (delega en tests/run.py)
 TAIKI_DB=/tmp/opencode/taiki.db python3 cli.py list
 ```

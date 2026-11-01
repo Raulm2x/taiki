@@ -41,6 +41,7 @@ LINK_KINDS = (
     "worktree",
     "rama",
     "depende",
+    "relacionado",
     "otro",
 )
 # Enlace que expresa "este ticket depende de otro": el ref es un código T-XXXX.

@@ -341,3 +341,144 @@ def run(h: Harness) -> None:
         and "resto" in mcp_checkpoint["checkpoint"],
         "checkpoint por MCP publica progreso y renueva el lease",
     )
+
+    # ── Verificación determinista y tareas de corrección ────────────────
+    from tests import coverage_gate
+    from tests import run as suite_run
+
+    class _Done:
+        def __init__(self, code=0, out="", err=""):
+            self.returncode = code
+            self.stdout = out
+            self.stderr = err
+
+    ok_gates = suite_run.run_verification(
+        runner=lambda *args, **kwargs: _Done(0, "ok"),
+        steps=(("suite", ["x"]), ("ruff", ["y"])),
+    )
+    h.ok(
+        suite_run.verification_ok(ok_gates)
+        and "suite=ok" in suite_run.verification_evidence(ok_gates)
+        and "ruff=ok" in suite_run.verification_evidence(ok_gates),
+        "los gates verdes producen evidencia reutilizable",
+    )
+    bad_gates = suite_run.run_verification(
+        runner=lambda *args, **kwargs: _Done(1, "", "E501 línea larga"),
+        steps=(("ruff", ["x"]),),
+    )
+    h.ok(
+        not suite_run.verification_ok(bad_gates)
+        and bad_gates[0]["output"] == "E501 línea larga",
+        "un gate rojo conserva la salida para la nota",
+    )
+    h.ok(
+        len(coverage_gate.COVERAGE_STEPS) == 2
+        and "coverage" in coverage_gate.COVERAGE_STEPS[0],
+        "el gate de cobertura sabe regenerar el informe",
+    )
+    coverage_ok, coverage_detail = coverage_gate.run_coverage(
+        runner=lambda *args, **kwargs: _Done(0)
+    )
+    h.ok(
+        coverage_ok and coverage_detail == "",
+        "coverage --run ejecuta los dos pasos",
+    )
+
+    verify_epic = repo.create_ticket(conn, title="Épica verificada")
+    good_task = repo.create_ticket(
+        conn,
+        title="Tarea buena",
+        parent_id=verify_epic["code"],
+        paths=["src/good.py"],
+    )
+    repo.claim_ticket(
+        conn, good_task["code"], agent="worker", session_id="ses_good"
+    )
+    repo.complete_ticket(
+        conn,
+        good_task["code"],
+        resolution="lista",
+        commit="aaa1111",
+        actor="worker",
+        session_id="ses_good",
+    )
+    verified = repo.transition(
+        conn,
+        good_task["code"],
+        "verificado",
+        note=f"Evidencia: {suite_run.verification_evidence(ok_gates)}",
+        actor="conductor",
+    )
+    h.ok(
+        verified["status"] == "verificado"
+        and any(
+            "suite=ok" in (event.get("note") or "")
+            for event in verified["events"]
+        ),
+        "un éxito marca verificado con evidencia de gates",
+    )
+
+    bad_task = repo.create_ticket(
+        conn,
+        title="Tarea con lint roto",
+        parent_id=verify_epic["code"],
+        paths=["src/bad.py"],
+    )
+    repo.claim_ticket(
+        conn, bad_task["code"], agent="worker", session_id="ses_bad"
+    )
+    repo.complete_ticket(
+        conn,
+        bad_task["code"],
+        resolution="entrega con lint roto",
+        commit="bbb2222",
+        actor="worker",
+        session_id="ses_bad",
+    )
+    same_scope = orchestrator.retry(
+        conn,
+        bad_task["code"],
+        "ruff: E501 en src/bad.py",
+        agent="worker",
+        session_id="ses_bad",
+    )
+    h.ok(
+        same_scope["status"] == "en_progreso"
+        and same_scope["session"] == "ses_bad",
+        "un fallo del mismo alcance reabre y conserva la sesión",
+    )
+
+    bug = repo.create_ticket(
+        conn,
+        title="Bug: el parser no cubre comillas",
+        kind="bug",
+        parent_id=verify_epic["code"],
+        paths=["src/parser.py"],
+        assigned_to="worker",
+    )
+    repo.link_ticket(conn, bug["code"], "relacionado", bad_task["code"])
+    repo.comment_ticket(
+        conn,
+        bug["code"],
+        "Evidencia: ruff=fallo en src/parser.py; gates del ticket original rojos.",
+        author="conductor",
+    )
+    bug_detail = repo.get_ticket(conn, bug["code"])
+    h.ok(
+        bug_detail["parent_code"] == verify_epic["code"]
+        and bug_detail["paths"] == ["src/parser.py"]
+        and bug_detail["assigned_to"] == "worker"
+        and any(
+            link["kind"] == "relacionado"
+            and link["ref"] == bad_task["code"]
+            for link in bug_detail["links"]
+        ),
+        "un fallo independiente crea una tarea bug enlazada y asignada",
+    )
+    h.raises(
+        domain.PermissionDenied,
+        lambda: repo.transition(
+            conn, good_task["code"], "confirmado", actor="conductor"
+        ),
+        "el conductor tampoco confirma al verificar",
+    )
