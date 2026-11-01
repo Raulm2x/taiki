@@ -379,20 +379,41 @@ def run(h: Harness) -> None:
         {"code": mcp_created["code"], "priority": "urgente"},
     )
     h.ok(mcp_updated["priority"] == "urgente", "call_tool('update') modifica prioridad")
+    h.ok(
+        "events" not in mcp_updated and "body" not in mcp_updated,
+        "update devuelve un recibo sin historial",
+    )
+    full_update = handlers.call_tool(
+        "update",
+        {"code": mcp_created["code"], "priority": "urgente", "detail": True},
+        meta={"sessionId": "session-claim-111"},
+    )
+    h.ok(
+        "events" in full_update and "body" in full_update,
+        "detail=true mantiene el ticket completo",
+    )
 
     # call_tool('comment')
     mcp_commented = handlers.call_tool(
         "comment",
         {"code": mcp_created["code"], "body": "Comentario registrado por MCP"},
     )
-    h.ok(len(mcp_commented["comments"]) == 1, "call_tool('comment') registra comentario")
+    h.ok(
+        mcp_commented["comment"]["body"] == "Comentario registrado por MCP"
+        and mcp_commented["comments_count"] == 1,
+        "call_tool('comment') devuelve el comentario creado",
+    )
 
     # call_tool('link')
     mcp_linked = handlers.call_tool(
         "link",
         {"code": mcp_created["code"], "kind": "url", "ref": "https://mcp.spec/test"},
     )
-    h.ok(len(mcp_linked["links"]) == 1, "call_tool('link') registra enlace")
+    h.ok(
+        mcp_linked["link"]["ref"] == "https://mcp.spec/test"
+        and mcp_linked["links_count"] == 1,
+        "call_tool('link') devuelve el enlace creado",
+    )
 
     for index in range(3):
         handlers.call_tool(

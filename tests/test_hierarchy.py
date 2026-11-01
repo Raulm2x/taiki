@@ -385,7 +385,7 @@ def run(h: Harness) -> None:
         "update", {"code": free["code"], "parent_id": None}
     )
     h.ok(
-        mcp_updated["parent_code"] is None,
+        mcp_updated.get("parent_code") is None,
         "MCP update con null desvincula",
     )
 

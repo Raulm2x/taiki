@@ -184,7 +184,7 @@ def run(h: Harness) -> None:
     )
     mcp_anon = handlers.call_tool("create", {"title": "Sin agente MCP"})
     h.ok(
-        mcp_anon["assigned_to"] is None,
+        mcp_anon.get("assigned_to") is None,
         "sin agent el MCP no inventa asignación",
     )
 

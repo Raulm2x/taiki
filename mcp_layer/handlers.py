@@ -150,6 +150,53 @@ DETAIL_SECTIONS = (
 )
 PREVIEW_CHARS = 240
 IDEMPOTENCY_PREFIX = "idempotency:"
+RECEIPT_FIELDS = (
+    "code",
+    "title",
+    "status",
+    "priority",
+    "kind",
+    "project",
+    "assigned_to",
+    "owner_session",
+    "parent_id",
+    "parent_code",
+    "paths",
+    "tags",
+    "progress",
+    "lease_until",
+    "updated_at",
+)
+
+
+def _receipt(
+    ticket: dict[str, Any],
+    *,
+    detail: bool = False,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Resumen de una mutación: evita devolver todo el historial."""
+    if detail:
+        return ticket
+    data: dict[str, Any] = {}
+    for key in RECEIPT_FIELDS:
+        if key not in ticket:
+            continue
+        value = ticket[key]
+        if value is None or value == [] or value == {} or value == "":
+            continue
+        if key == "progress" and not (value or {}).get("total"):
+            continue
+        data[key] = value
+    if extra:
+        data.update(
+            {
+                key: value
+                for key, value in extra.items()
+                if value is not None and value != [] and value != {}
+            }
+        )
+    return data
 
 
 def _project_root() -> Path:
@@ -231,6 +278,7 @@ def _handle_create(
             )
         subtasks.append(title)
 
+    detail = bool(args.get("detail", False))
     key = str(args.get("idempotency_key") or "").strip()
     if key:
         previous = db.meta_get(conn, f"{IDEMPOTENCY_PREFIX}{key}")
@@ -240,8 +288,16 @@ def _handle_create(
             except domain.NotFoundError:
                 pass
             else:
-                ticket["idempotent_replay"] = True
-                return ticket
+                return _receipt(
+                    ticket,
+                    detail=detail,
+                    extra={
+                        "idempotent_replay": True,
+                        "subtasks": [
+                            item["code"] for item in ticket.get("subtasks", [])
+                        ],
+                    },
+                )
 
     project, path = resolve_scope(args.get("project"), args.get("path"))
     config = workspace.load_config()
@@ -285,7 +341,14 @@ def _handle_create(
                 session_id=session,
                 assigned_to=assigned,
             )
-    return repo.get_ticket(conn, ticket["code"])
+    ticket = repo.get_ticket(conn, ticket["code"])
+    return _receipt(
+        ticket,
+        detail=detail,
+        extra={
+            "subtasks": [item["code"] for item in ticket.get("subtasks", [])]
+        },
+    )
 
 
 def _handle_list(
@@ -420,7 +483,14 @@ def _handle_claim(
     )
     if args.get("worktree"):
         ticket = _attach_worktree(conn, ticket)
-    return ticket
+    return _receipt(
+        ticket,
+        detail=bool(args.get("detail", False)),
+        extra={
+            "worktree": ticket.get("worktree"),
+            "branch": ticket.get("branch"),
+        },
+    )
 
 
 def _handle_update(
@@ -448,12 +518,19 @@ def _handle_update(
         )
         if key in args
     }
-    return repo.update_ticket(
+    ticket = repo.update_ticket(
         conn,
         code,
         actor=actor,
         session_id=session,
         **fields,
+    )
+    extra = {"changed": sorted(fields)}
+    extra.update({key: ticket.get(key) for key in fields})
+    return _receipt(
+        ticket,
+        detail=bool(args.get("detail", False)),
+        extra=extra,
     )
 
 
@@ -469,7 +546,7 @@ def _handle_transition(
     status = args.get("status")
     if not status:
         raise domain.ValidationError("El parámetro 'status' es obligatorio")
-    return repo.transition(
+    ticket = repo.transition(
         conn,
         code,
         status,
@@ -478,6 +555,10 @@ def _handle_transition(
         actor_type="agente",
         session_id=session,
         force=bool(args.get("force")),
+    )
+    return _receipt(
+        ticket,
+        detail=bool(args.get("detail", False)),
     )
 
 
@@ -493,7 +574,7 @@ def _handle_complete(
     resolution = args.get("resolution")
     if not resolution:
         raise domain.ValidationError("El parámetro 'resolution' es obligatorio")
-    return repo.complete_ticket(
+    ticket = repo.complete_ticket(
         conn,
         code,
         resolution=resolution,
@@ -503,6 +584,11 @@ def _handle_complete(
         actor_type="agente",
         session_id=session,
         force=bool(args.get("force")),
+    )
+    return _receipt(
+        ticket,
+        detail=bool(args.get("detail", False)),
+        extra={"commit": args.get("commit")},
     )
 
 
@@ -518,13 +604,22 @@ def _handle_comment(
     body = args.get("body")
     if body is None:
         raise domain.ValidationError("El parámetro 'body' es obligatorio")
-    return repo.comment_ticket(
+    ticket = repo.comment_ticket(
         conn,
         code,
         body=body,
         author=actor,
         actor_type="agente",
         session_id=session,
+    )
+    comments = ticket.get("comments") or []
+    return _receipt(
+        ticket,
+        detail=bool(args.get("detail", False)),
+        extra={
+            "comment": comments[-1] if comments else None,
+            "comments_count": len(comments),
+        },
     )
 
 
@@ -543,7 +638,7 @@ def _handle_link(
     ref = args.get("ref")
     if not ref:
         raise domain.ValidationError("El parámetro 'ref' es obligatorio")
-    return repo.link_ticket(
+    ticket = repo.link_ticket(
         conn,
         code,
         kind=kind,
@@ -551,6 +646,15 @@ def _handle_link(
         actor=actor,
         actor_type="agente",
         session_id=session,
+    )
+    links = ticket.get("links") or []
+    return _receipt(
+        ticket,
+        detail=bool(args.get("detail", False)),
+        extra={
+            "link": links[-1] if links else None,
+            "links_count": len(links),
+        },
     )
 
 

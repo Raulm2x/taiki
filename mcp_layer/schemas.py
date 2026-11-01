@@ -82,6 +82,11 @@ FORCE = {
     "default": False,
     "description": "Fuerza la operación aunque el ticket esté reclamado por otra sesión.",
 }
+DETAIL = {
+    "type": "boolean",
+    "default": False,
+    "description": "Devuelve el ticket completo en vez del recibo compacto",
+}
 
 TOOLS = [
     _tool(
@@ -152,6 +157,7 @@ TOOLS = [
                 "maxLength": 200,
                 "description": "Clave para que un reintento devuelva el mismo ticket",
             },
+            "detail": DETAIL,
             "agent": AGENT,
         },
         ("title",),
@@ -338,6 +344,7 @@ TOOLS = [
                 "maximum": 1440,
                 "description": "Minutos de lease (por defecto TAIKI_LEASE_MINUTES)",
             },
+            "detail": DETAIL,
         },
         ("code",),
         title="Reclamar ticket",
@@ -375,6 +382,7 @@ TOOLS = [
                 "maxLength": 80,
                 "description": "Reasigna el ticket; null lo deja sin agente",
             },
+            "detail": DETAIL,
             "agent": AGENT,
             "session_id": SESSION,
         },
@@ -396,6 +404,7 @@ TOOLS = [
             "agent": AGENT,
             "session_id": SESSION,
             "force": FORCE,
+            "detail": DETAIL,
         },
         ("code", "status"),
         title="Cambiar estado",
@@ -425,6 +434,7 @@ TOOLS = [
             "agent": AGENT,
             "session_id": SESSION,
             "force": FORCE,
+            "detail": DETAIL,
         },
         ("code", "resolution"),
         title="Completar ticket",
@@ -437,6 +447,7 @@ TOOLS = [
             "body": {"type": "string", "maxLength": 50_000},
             "agent": AGENT,
             "session_id": SESSION,
+            "detail": DETAIL,
         },
         ("code", "body"),
         title="Comentar ticket",
@@ -458,6 +469,7 @@ TOOLS = [
             },
             "agent": AGENT,
             "session_id": SESSION,
+            "detail": DETAIL,
         },
         ("code", "kind", "ref"),
         title="Enlazar referencia",
