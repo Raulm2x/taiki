@@ -60,6 +60,7 @@ Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
   el ticket completo y `get raw=true` para el registro íntegro.
 - En CLI prefiere `taiki list --json-summary --compact --limit 20` y
   `taiki show T-XXXX --json --compact`; evita `list --json` completo.
+  `--compact` y `--json-summary` ya implican `--json`.
 
 ## Comandos útiles
 

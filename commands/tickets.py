@@ -98,6 +98,7 @@ def cmd_list(args: argparse.Namespace) -> int:
     limit, offset = args.limit, args.offset
     if args.tree:
         limit, offset = None, 0
+    summary = bool(getattr(args, "json_summary", False))
 
     with _conn() as conn:
         _clean_expired(conn)
@@ -118,10 +119,10 @@ def cmd_list(args: argparse.Namespace) -> int:
             )
         if args.tree:
             tickets = _tree_rows(tickets)
-        session_map = _annotate(conn, tickets)
+        # El resumen lean no necesita sesiones ni actores: evita la consulta.
+        session_map = {} if summary else _annotate(conn, tickets)
 
-    if args.json or getattr(args, "json_summary", False):
-        summary = getattr(args, "json_summary", False)
+    if args.json or args.compact or summary:
         payload = []
         for ticket in tickets:
             if summary:
@@ -189,7 +190,7 @@ def cmd_show(args: argparse.Namespace) -> int:
         session_id = _annotate(conn, [ticket]).get(ticket["code"])
     _show(
         ticket,
-        args.json,
+        args.json or args.compact,
         session_id,
         compact=getattr(args, "compact", False),
     )

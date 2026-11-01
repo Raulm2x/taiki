@@ -106,16 +106,16 @@ def build_parser() -> argparse.ArgumentParser:
         default="code",
         help="Orden: código descendente (defecto) o prioridad",
     )
-    p.add_argument("--json", action="store_true")
+    p.add_argument("--json", action="store_true", help="Emite JSON")
     p.add_argument(
         "--json-summary",
         action="store_true",
-        help="Con --json, emite el resumen lean sin historial",
+        help="Emite el resumen lean sin historial (implica --json)",
     )
     p.add_argument(
         "--compact",
         action="store_true",
-        help="Con --json, emite JSON compacto sin sangría",
+        help="Emite JSON compacto sin sangría (implica --json)",
     )
     p.set_defaults(func=cmd_list)
 
@@ -132,11 +132,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("show", help="Muestra un ticket")
     p.add_argument("code")
-    p.add_argument("--json", action="store_true")
+    p.add_argument("--json", action="store_true", help="Emite JSON")
     p.add_argument(
         "--compact",
         action="store_true",
-        help="Con --json, emite JSON compacto sin sangría",
+        help="Emite JSON compacto sin sangría (implica --json)",
     )
     p.set_defaults(func=cmd_show)
 

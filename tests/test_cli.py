@@ -192,6 +192,42 @@ def run(h: Harness) -> None:
         "\n" not in shown and json.loads(shown)["code"] == c1["code"],
         "show --json --compact emite JSON en una línea",
     )
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        cli.main(["show", c1["code"], "--compact"])
+    shown = out.getvalue().strip()
+    h.ok(
+        "\n" not in shown and json.loads(shown)["code"] == c1["code"],
+        "show --compact implica --json y no se ignora en silencio",
+    )
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        cli.main(["show", c1["code"], "--json"])
+    h.ok(
+        "\n" in out.getvalue().strip(),
+        "show --json emite JSON con sangría por defecto",
+    )
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        cli.main(["list", "--json", "--limit", "5"])
+    pretty = out.getvalue().strip()
+    pretty_data = json.loads(pretty)
+    h.ok(
+        "\n" in pretty
+        and all("session_id" in ticket for ticket in pretty_data["tickets"]),
+        "list --json emite JSON con sangría y sesión por ticket",
+    )
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        cli.main(["list", "--json-summary", "--limit", "5"])
+    summary_data = json.loads(out.getvalue().strip())
+    h.ok(
+        all(
+            "body" not in ticket and "session_id" not in ticket
+            for ticket in summary_data["tickets"]
+        ),
+        "list --json-summary implica --json y omite sesiones y cuerpo",
+    )
 
     # ── Wrapper del CLI ─────────────────────────────────────────────────
     root = Path(__file__).resolve().parent.parent
