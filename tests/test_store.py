@@ -193,6 +193,46 @@ def run(h: Harness) -> None:
         "la proyección lean cachea las columnas",
     )
 
+    # ── Filtros en tabla: una fila por combinación ──────────────────────
+    matrix = db.connect(":memory:")
+    try:
+        alpha = repo.create_ticket(
+            matrix, title="Alfa", kind="bug", priority="alta",
+            project="matriz", tags=["uno"],
+        )
+        beta = repo.create_ticket(
+            matrix, title="Beta", kind="funcionalidad", priority="baja",
+            project="matriz", tags=["dos"],
+        )
+        gamma = repo.create_ticket(
+            matrix, title="Gamma", kind="bug", priority="media", project="otro",
+        )
+        filter_cases = (
+            (repo.TicketFilter(project="matriz"), {alpha["code"], beta["code"]}),
+            (repo.TicketFilter(kind="bug"), {alpha["code"], gamma["code"]}),
+            (repo.TicketFilter(priority="alta"), {alpha["code"]}),
+            (repo.TicketFilter(tag="dos"), {beta["code"]}),
+            (repo.TicketFilter(tags=["uno", "dos"]), {alpha["code"], beta["code"]}),
+            (repo.TicketFilter(query="Gamma"), {gamma["code"]}),
+            (
+                repo.TicketFilter(statuses=["nuevo"], project="matriz"),
+                {alpha["code"], beta["code"]},
+            ),
+        )
+        for filt, expected in filter_cases:
+            h.eq(
+                {
+                    ticket["code"]
+                    for ticket in repo.list_tickets(
+                        matrix, filters=filt, limit=None
+                    )
+                },
+                expected,
+                f"filtro de tabla {filt}",
+            )
+    finally:
+        matrix.close()
+
     # ── Renumerado estructurado con fallback a la nota antigua ──────────
     structured = db.connect(":memory:")
     try:

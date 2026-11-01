@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 import cli
 from mcp_layer import handlers
-from ticketlib import audit as audit_lib, domain, githook, gitutil, render, repo
+from ticketlib import audit as audit_lib, domain, githook, gitutil, render, repo, util
 from ticketlib.store import workflow
 from tui import detail as tui_detail
 from tests.seeds import completed, git_repo
@@ -99,6 +99,49 @@ def run(h: Harness) -> None:
     h.ok(reopened["status"] == "en_progreso", "reabrir debe volver a en_progreso")
     h.ok(reopened["confirmed_at"] is None, "reabrir debe limpiar confirmed_at")
     h.ok(reopened["completed_at"] is None, "reabrir debe limpiar completed_at")
+
+    # ── Invariantes de dominio en tablas ────────────────────────────────
+    expected_transitions = {
+        "nuevo": {"pendiente", "en_progreso", "cancelado"},
+        "pendiente": {"en_progreso", "bloqueado", "cancelado"},
+        "en_progreso": {"completado", "bloqueado", "pendiente", "cancelado"},
+        "bloqueado": {"pendiente", "en_progreso", "cancelado"},
+        "completado": {"confirmado", "en_progreso"},
+        "confirmado": {"en_progreso"},
+        "cancelado": {"pendiente"},
+    }
+    h.eq(
+        domain.TRANSITIONS,
+        expected_transitions,
+        "la tabla de transiciones es la esperada",
+    )
+    h.eq(
+        set(domain.TRANSITIONS),
+        set(domain.STATUSES),
+        "cada estado tiene una fila en la tabla de transiciones",
+    )
+    enum_tables = (
+        ("estado", domain.STATUSES),
+        ("tipo", domain.KINDS),
+        ("prioridad", domain.PRIORITIES),
+        ("enlace", domain.LINK_KINDS),
+        ("actor", domain.ACTOR_TYPES),
+    )
+    h.ok(
+        all(
+            all(util.check_enum(value, allowed, field) is None for value in allowed)
+            for field, allowed in enum_tables
+        ),
+        "check_enum acepta todos los valores de la tabla de enums",
+    )
+    for field, allowed in enum_tables:
+        h.raises(
+            domain.ValidationError,
+            lambda allowed=allowed, field=field: util.check_enum(
+                "inventado", allowed, field
+            ),
+            f"check_enum rechaza un valor fuera de {field}",
+        )
 
     second = repo.create_ticket(
         conn,
