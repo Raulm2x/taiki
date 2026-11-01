@@ -26,6 +26,7 @@ from ticketlib.githook import (  # noqa: F401
     git,
     install_commit_msg_hook,
     install_post_commit_hook,
+    install_pre_commit_hook,
     install_pre_push_hook,
 )
 

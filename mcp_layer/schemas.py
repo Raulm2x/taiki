@@ -86,6 +86,11 @@ TOOLS = [
                 "type": "string",
                 "description": "Ruta relevante. Por defecto, el directorio actual.",
             },
+            "paths": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Rutas o globs que posee el ticket",
+            },
             "tags": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -169,7 +174,11 @@ TOOLS = [
         "claim",
         "Reclama un ticket y lo pasa a 'en_progreso', asignándolo al agente. "
         "Llámalo antes de empezar a modificar código.",
-        {"code": CODE, "agent": AGENT},
+        {"code": CODE, "agent": AGENT, "steal": {
+            "type": "boolean",
+            "description": "Recupera un claim caducado de otra sesión",
+            "default": False,
+        }},
         ("code",),
     ),
     _tool(
@@ -183,6 +192,11 @@ TOOLS = [
             "priority": {"type": "string", "enum": list(PRIORITIES)},
             "project": {"type": "string"},
             "path": {"type": "string"},
+            "paths": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Rutas o globs que posee el ticket",
+            },
             "tags": {
                 "type": "array",
                 "items": {"type": "string"},

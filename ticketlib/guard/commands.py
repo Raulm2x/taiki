@@ -159,6 +159,54 @@ def command_touches_home(command: str, cwd: str | Path | None = None) -> bool:
     return not all(item.startswith(exempt) for item in paths)
 
 
+def risky_git(command: str) -> str | None:
+    """Operación Git de alcance global que puede arrastrar cambios ajenos.
+
+    Con varias sesiones sobre el mismo checkout, ``git add -A``, ``git stash``
+    o ``git reset`` mezclan el trabajo de todas. Devuelve una etiqueta corta
+    (``"git add -A"``) o ``None`` si el comando está acotado a rutas.
+    """
+    for segment in split_commands(command or ""):
+        try:
+            tokens = shlex.split(segment, posix=True)
+        except ValueError:
+            tokens = segment.split()
+        if "git" not in tokens:
+            continue
+        rest = tokens[tokens.index("git") + 1 :]
+        while rest and rest[0].startswith("-"):
+            rest = rest[1:]
+        if not rest:
+            continue
+        sub, args = rest[0], rest[1:]
+        if sub == "add":
+            if not args or any(
+                arg in {"-A", "--all", "-a", "-u", "--update", "."}
+                for arg in args
+            ):
+                return "git add -A"
+        elif sub == "commit":
+            if any(
+                arg in {"-a", "--all"}
+                or (
+                    arg.startswith("-")
+                    and not arg.startswith("--")
+                    and "a" in arg[1:]
+                )
+                for arg in args
+            ):
+                return "git commit -a"
+        elif sub in {"stash", "reset", "clean"}:
+            return f"git {sub}"
+        elif sub == "checkout" and "--" in args:
+            tail = args[args.index("--") + 1 :]
+            if not tail or "." in tail:
+                return "git checkout -- ."
+        elif sub == "restore" and (not args or "." in args):
+            return "git restore ."
+    return None
+
+
 def _strip_heredocs(text: str) -> str:
     """Elimina el cuerpo de los heredocs (puede contener ``>`` o ``;``)."""
     lines = text.splitlines()

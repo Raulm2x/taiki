@@ -32,13 +32,23 @@ def find_active(
     if chain:
         row = conn.execute(
             "SELECT * FROM tickets WHERE archived = 0 AND status = 'en_progreso' "
-            "AND id IN ("
+            "AND owner_session IN ("
+            + _placeholders(chain)
+            + ") ORDER BY updated_at DESC LIMIT 1",
+            tuple(chain),
+        ).fetchone()
+    else:
+        row = None
+    if row is None and chain:
+        row = conn.execute(
+            "SELECT * FROM tickets WHERE archived = 0 AND status = 'en_progreso' "
+            "AND owner_session IS NULL AND id IN ("
             "  SELECT ticket_id FROM events WHERE session_id IN ("
             + _placeholders(chain)
             + ")) ORDER BY updated_at DESC LIMIT 1",
             tuple(chain),
         ).fetchone()
-    else:
+    if row is None and not chain:
         row = conn.execute(
             "SELECT * FROM tickets WHERE archived = 0 AND status = 'en_progreso' "
             "AND assigned_to = ? ORDER BY updated_at DESC LIMIT 1",

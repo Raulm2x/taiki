@@ -46,6 +46,16 @@ PRE_PUSH_BLOCK = (
 )
 LEGACY_PRE_PUSH = ("# >>> tickets pre-push >>>", "# <<< tickets pre-push <<<")
 
+PRE_COMMIT_BEGIN = "# >>> taiki pre-commit >>>"
+PRE_COMMIT_END = "# <<< taiki pre-commit <<<"
+PRE_COMMIT_BLOCK = (
+    f"{PRE_COMMIT_BEGIN}\n"
+    "if command -v taiki >/dev/null 2>&1; then\n"
+    "    taiki hook-check-index || exit 1\n"
+    "fi\n"
+    f"{PRE_COMMIT_END}\n"
+)
+
 BYPASS_TOKEN = "[sin-ticket]"
 DISABLED_VALUES = {"0", "off", "false", "no", "disabled"}
 
@@ -119,6 +129,11 @@ def install_pre_push_hook(repo: str | Path = ".") -> Path:
     return _install(
         repo, "pre-push", PRE_PUSH_BEGIN, PRE_PUSH_BLOCK, LEGACY_PRE_PUSH
     )
+
+
+def install_pre_commit_hook(repo: str | Path = ".") -> Path:
+    """Instala (idempotente) la validación del índice contra el ticket."""
+    return _install(repo, "pre-commit", PRE_COMMIT_BEGIN, PRE_COMMIT_BLOCK)
 
 
 def check_push(

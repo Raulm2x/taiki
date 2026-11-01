@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from typing import Any
@@ -16,7 +17,7 @@ from ..domain import (
     TOMBSTONE_TAG,
     ValidationError,
 )
-from ..util import check_enum, clean_tags, normalize_agent, now
+from ..util import check_enum, clean_paths, clean_tags, normalize_agent, now
 from .common import UNSET, event, row_by_code
 from .queries import get_ticket, missing_codes
 
@@ -104,6 +105,7 @@ def create_ticket(
     project: str | None = None,
     path: str | None = None,
     tags: Any = None,
+    paths: Any = None,
     parent_id: Any = None,
     created_by: str = "agente",
     actor_type: str = "agente",
@@ -140,6 +142,7 @@ def create_ticket(
     )
 
     tags = clean_tags(tags)
+    scope = clean_paths(paths)
     ts = now()
 
     with db.tx(conn):
@@ -173,8 +176,8 @@ def create_ticket(
             code = allocate_code(conn, prefix)
         cur = conn.execute(
             "INSERT INTO tickets(code, title, body, kind, status, priority, project, path, "
-            "created_by, assigned_to, parent_id, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, 'nuevo', ?, ?, ?, ?, ?, ?, ?, ?)",
+            "created_by, assigned_to, parent_id, paths, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, 'nuevo', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 code,
                 title,
@@ -186,6 +189,7 @@ def create_ticket(
                 created_by,
                 (assigned_to or "").strip() or None,
                 parent,
+                json.dumps(scope, ensure_ascii=False) if scope else None,
                 ts,
                 ts,
             ),
@@ -221,6 +225,7 @@ def update_ticket(
     project: Any = UNSET,
     path: Any = UNSET,
     tags: Any = UNSET,
+    paths: Any = UNSET,
     assigned_to: Any = UNSET,
     parent_id: Any = UNSET,
     actor: str = "agente",
@@ -255,6 +260,12 @@ def update_ticket(
     if path is not UNSET:
         changes.append(("path", path or None))
         touched.append("path")
+    if paths is not UNSET:
+        scope = clean_paths(paths)
+        changes.append(
+            ("paths", json.dumps(scope, ensure_ascii=False) if scope else None)
+        )
+        touched.append("paths")
     if assigned_to is not UNSET:
         agent = (assigned_to or "").strip() or None
         changes.append(("assigned_to", agent))

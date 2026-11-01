@@ -186,6 +186,7 @@ def cmd_new(args: argparse.Namespace) -> int:
             project=project,
             path=path,
             tags=args.tags,
+            paths=getattr(args, "paths", None),
             parent_id=args.parent,
             created_by="usuario",
             actor_type="usuario",
@@ -241,7 +242,16 @@ def cmd_renumber(args: argparse.Namespace) -> int:
 def cmd_update(args: argparse.Namespace) -> int:
     fields = {
         key: getattr(args, key)
-        for key in ("title", "body", "kind", "priority", "project", "path", "tags")
+        for key in (
+            "title",
+            "body",
+            "kind",
+            "priority",
+            "project",
+            "path",
+            "paths",
+            "tags",
+        )
         if getattr(args, key) is not None
     }
     if not fields:
@@ -258,7 +268,12 @@ def cmd_update(args: argparse.Namespace) -> int:
 def cmd_claim(args: argparse.Namespace) -> int:
     with _conn() as conn:
         ticket = repo.claim_ticket(
-            conn, args.code, agent=args.agent, actor_type="usuario"
+            conn,
+            args.code,
+            agent=args.agent,
+            actor_type="usuario",
+            force=getattr(args, "force", False),
+            steal=getattr(args, "steal", False),
         )
     print(f"{ticket['code']} en progreso, asignado a {ticket['assigned_to']}")
     return 0

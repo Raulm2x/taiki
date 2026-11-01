@@ -22,7 +22,14 @@ from .queries import (
     subtask_progress,
 )
 from .relations import auto_link_commit, comment_ticket, link_ticket
-from .workflow import claim_ticket, complete_ticket, confirm_tickets, transition
+from .workflow import (
+    claim_ticket,
+    complete_ticket,
+    confirm_tickets,
+    heartbeat_ticket,
+    stale_claims,
+    transition,
+)
 
 __all__ = [
     "activity_by_day",
@@ -39,6 +46,7 @@ __all__ = [
     "fill_gaps",
     "export_all",
     "get_ticket",
+    "heartbeat_ticket",
     "link_ticket",
     "list_tickets",
     "next_ticket",
@@ -46,6 +54,7 @@ __all__ = [
     "renumber_children",
     "renumber_plan",
     "search_codes",
+    "stale_claims",
     "stats",
     "subtask_progress",
     "transition",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Any
 
@@ -16,6 +17,15 @@ def row_to_ticket(row: sqlite3.Row) -> dict[str, Any]:
     tags_csv = data.pop("tags_csv", None)
     data["archived"] = bool(data["archived"])
     data["tags"] = [tag for tag in (tags_csv or "").split(",") if tag]
+    raw_paths = data.get("paths")
+    if isinstance(raw_paths, str) and raw_paths.strip():
+        try:
+            parsed = json.loads(raw_paths)
+        except json.JSONDecodeError:
+            parsed = [raw_paths]
+        data["paths"] = parsed if isinstance(parsed, list) else [str(parsed)]
+    else:
+        data["paths"] = []
     return data
 
 

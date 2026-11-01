@@ -81,6 +81,9 @@ taiki/
 │   ├── guard.py           taiki guard (¿hay ticket activo para esta acción?)
 │   ├── mcp.py             instala/retira el MCP solo en el proyecto actual
 │   ├── servers.py         taiki servers (inventario y limpieza de MCP)
+│   ├── worktree.py        taiki worktree (aislamiento por tarea)
+│   ├── commit.py          taiki commit y hook-check-index
+│   ├── status.py          taiki status (sesiones y claims)
 │   └── system.py          open, scheme-install, scheme-uninstall, tui
 ├── tui/                   TUI en curses
 │   ├── state.py           estado, filtros y geometría (sin curses)
@@ -107,6 +110,10 @@ taiki/
 │   ├── test_tui_render.py mapa, panel de detalle y dibujo
 │   ├── test_hierarchy.py  épicas, tareas y renumeración
 │   ├── test_guard.py      guard de escritura y tickets scratch
+│   ├── test_claims.py     claims por sesión, leases y --steal
+│   ├── test_worktrees.py  worktrees, bootstrap y resolución de DB
+│   ├── test_commit.py     commit por rutas y solapamientos
+│   ├── test_status.py     estado de sesiones y modal de la TUI
 │   ├── test_servers.py    inventario y limpieza de servidores MCP
 │   ├── test_herdr.py      integración con herdr
 │   ├── test_githook.py    commit-msg, pre-push y auditoría
@@ -122,6 +129,10 @@ taiki/
     ├── util.py            validación, normalización, resolución Git y FTS
     ├── db.py              conexión, transacciones reentrantes (BEGIN IMMEDIATE) y esquema
     ├── workspace.py       resolución de .taiki, configuración e init
+    ├── worktree.py        worktrees por tarea y bootstrap
+    ├── commits.py         validación de rutas y commit seguro
+    ├── status.py          snapshot de sesiones, claims y solapamientos
+    ├── env.py             variables TAIKI_* con alias TICKETS_*
     ├── render.py          presentación en texto, tablas ANSI/OSC 8, subtareas y JSON
     ├── agents.py          nombres y colores de agente (presentación compartida)
     ├── sessions/          sesiones de agente
@@ -250,6 +261,7 @@ taiki list --flat              # todas las tareas, sin plegar
 taiki list --parent T-0014     # solo las tareas de una épica
 taiki show T-0001              # detalle completo (incluye jerarquía de subtareas)
 taiki new -t "Revisar backups" -k mantenimiento -p alta --tags backup infra
+taiki new -t "Migrar API" --paths src/api/ tests/api/  # rutas que posee el ticket
 taiki new -t "Subtarea" --parent T-0014  # crea T-0014.01, T-0014.02…
 taiki attach T-0014 T-0008 T-0009   # agrupa tickets existentes bajo una épica
 taiki detach T-0008                  # la devuelve a la raíz
@@ -258,6 +270,13 @@ taiki renumber --apply              # renombra los códigos planos
 taiki repair-gaps                   # simula cubrir T-XXXX que nunca existieron
 taiki repair-gaps --apply           # los cubre con tickets genéricos cancelados
 taiki claim T-0001
+taiki claim T-0001 --steal     # recupera un claim caducado de otra sesión
+taiki status                   # sesiones, claims, worktrees y solapamientos
+taiki status --sessions        # solo las sesiones activas
+taiki worktree create T-0001  # .worktrees/T-0001 + rama agent/T-0001-…
+taiki worktree list
+taiki worktree remove T-0001 --delete-branch
+taiki commit -m "..."          # commitea solo las rutas del ticket activo
 taiki complete T-0001 -r "Qué se hizo y cómo se verificó" --commit abc1234
 taiki confirm T-0001           # solo usuario
 taiki confirm T-0003 T-0004    # varios a la vez, atómico
@@ -542,7 +561,7 @@ enlazar un commit y abrir la sesión del agente.
   `renumerar` o lo marca como «sin rastro».
 - `scripts/tickets-backup.sh` usa `sqlite3 .backup` (seguro con la DB abierta)
   y conserva 14 días en `~/.local/share/tickets/backups/`. El timer de usuario
-  `tickets-backup.timer` lo ejecuta a diario.
+  `taiki-backup.timer` lo ejecuta a diario.
 
 ### Revisión, iteraciones y confirmación
 
@@ -613,7 +632,7 @@ pasan; solo bloquea escrituras reales (redirección a un fichero, `sed -i`,
 Así `cd ~/.config && git push 2>&1 | tail` funciona sin ticket, y la puerta de
 los commits sigue siendo `commit-msg` (T-XXXX confirmado) y `pre-push`.
 
-El plugin global `~/.config/opencode/plugins/tickets-guard.js` engancha
+El plugin global `~/.config/opencode/plugins/taiki-guard.js` engancha
 `ctx.tool.hook("execute.before")` en OpenCode 2 (y `tool.execute.before` en V1)
 y consulta al guard antes de `write`, `edit`, `patch`, `bash` y `execute`. Si el guard bloquea, lanza el mensaje como error para que el
 modelo lo vea; cachea la autorización 30 s por sesión y falla abierto si el CLI
@@ -629,6 +648,42 @@ El `commit-msg` instalado por `taiki hook-install` exige un `T-XXXX` existente
 **en el asunto**. Los códigos del cuerpo se avisan sin bloquear, para poder
 explicar renumeraciones o historia. Para commits que no son trabajo de un
 ticket, escribe `[sin-ticket]` o usa `TAIKI_HOOK=off`.
+
+### Agentes en paralelo (worktrees)
+
+Varias sesiones pueden trabajar a la vez sin pisarse:
+
+- **Un worktree por tarea**: `taiki worktree create T-0001` crea
+  `.worktrees/T-0001` con la rama `agent/T-0001-<slug>` (ignorada por Git).
+  Copia `opencode.json` y `.opencode/`, nunca la base de datos.
+- **DB compartida**: desde un worktree, `.taiki/taiki.db` se resuelve en el
+  checkout principal con `git rev-parse --git-common-dir`; no hay una DB por
+  worktree. Con `TAIKI_WORKTREE_ROOT` puedes cambiar la ubicación y con
+  `taiki worktree adopt <ruta>` registrar uno creado por OpenCode.
+- **Claim por sesión**: el ticket queda ligado a `owner_session` con un lease de
+  30 min (`TAIKI_LEASE_MINUTES`). Otra sesión no puede reclamarlo; si el agente
+  muere, `taiki claim T-XXXX --steal` lo recupera y `taiki audit` lo señala.
+- **Un ticket activo por sesión**, con heartbeat en cada acción del guard.
+- **Commits acotados**: declara las rutas del ticket con `--paths` y usa
+  `taiki commit -m "..."`. Rechaza el índice fuera de alcance o que solapa con
+  otro ticket activo; el hook `pre-commit` (`taiki hook-check-index`) aplica la
+  misma regla.
+- **Estado**: `taiki status` (o la tecla `S` en la TUI) muestra sesiones,
+  leases, ramas, worktrees y solapamientos. El plugin de recarga del MCP se
+  aplaza si hay otra sesión con actividad reciente.
+- **Reglas**: con otra sesión activa no uses `git add -A`, `git add .` ni
+  `git stash`; fusiona de una rama a la vez (rebase + tests + `merge --ff-only`).
+
+```bash
+taiki claim T-0001
+taiki worktree create T-0001
+cd .worktrees/T-0001 && opencode
+# ...trabajo en el worktree...
+taiki commit -m "cambio acotado"
+taiki complete T-0001 -r "Qué se hizo y cómo se verificó"
+# el usuario confirma y fusiona la rama
+taiki worktree remove T-0001 --delete-branch
+```
 
 ### Tickets temporales (scratch)
 
@@ -677,7 +732,7 @@ procesos del servidor MCP están vivos y con quién:
 - **duplicado**: varios procesos vivos con el mismo nombre y padre.
 
 Al arrancar, el MCP borra del registro las filas de procesos que ya no
-existen (autohigiene, sin matar nada). `tickets-servers.timer` ejecuta
+existen (autohigiene, sin matar nada). `taiki-servers.timer` ejecuta
 `taiki servers --prune --apply` a diario.
 
 `taiki servers --prune` simula la limpieza y `--apply` termina huérfanos y
@@ -701,7 +756,7 @@ desactualizados con el comando para arreglarlo.
 
 ### Guard en otros agentes
 
-OpenCode usa el plugin `tickets-guard.js`. Para cualquier agente con hooks de
+OpenCode usa el plugin `taiki-guard.js`. Para cualquier agente con hooks de
 pre-herramienta, el contrato es un JSON por stdin:
 
 ```bash
@@ -774,7 +829,7 @@ TAIKI_DB=/tmp/opencode/taiki.db python3 cli.py list
 Cada módulo de la suite crea su propia base de datos temporal y restaura las
 variables de entorno al terminar; `--failfast` detiene la ejecución en el primer
 fallo y, sin él, un módulo roto no impide ejecutar los demás. El runner imprime
-el total real de comprobaciones, que cubre filtros de tags, subtareas, concurrencia de transacciones reentrantes, resolución Git, confirmación en lote atómica, sesiones de agente (existencia, fallback, colores, directorio validado, flags por terminal y fallo de arranque con stderr), enlaces `ticket://`, estado de la TUI (ámbito de atención por defecto y ciclo de ámbitos con cerrados, atajo `M` de alternancia, hijos cerrados visibles si el padre sigue activo, contador de urgentes pendientes, filtros combinables, toasts, novedades, paginación, panel de detalle con directorio, mapa de actividad con calendario/cuartiles/métricas, snapshot y sondeo, búsqueda FTS con comentarios y resaltado, épicas, jerarquía y códigos T-XXXX.N), acciones de administración, guard (auto-creación, reutilización de pendientes, bypass y heurística de comandos), hooks y auditoría, renumeración de códigos planos, inventario y limpieza de servidores MCP, apertura en herdr, iteraciones y bloqueo de commit/push sin confirmar, y despacho MCP.
+el total real de comprobaciones, que cubre filtros de tags, subtareas, concurrencia de transacciones reentrantes, claims por sesión y leases, worktrees y resolución de la DB compartida, commit acotado por rutas y solapamientos, estado de sesiones, resolución Git, confirmación en lote atómica, sesiones de agente (existencia, fallback, colores, directorio validado, flags por terminal y fallo de arranque con stderr), enlaces `ticket://`, estado de la TUI (ámbito de atención por defecto y ciclo de ámbitos con cerrados, atajo `M` de alternancia, hijos cerrados visibles si el padre sigue activo, contador de urgentes pendientes, filtros combinables, toasts, novedades, paginación, panel de detalle con directorio, mapa de actividad con calendario/cuartiles/métricas, snapshot y sondeo, búsqueda FTS con comentarios y resaltado, épicas, jerarquía y códigos T-XXXX.N), acciones de administración, guard (auto-creación, reutilización de pendientes, bypass y heurística de comandos), hooks y auditoría, renumeración de códigos planos, inventario y limpieza de servidores MCP, apertura en herdr, iteraciones y bloqueo de commit/push sin confirmar, y despacho MCP.
 
 ### Presupuesto y cuarentena
 

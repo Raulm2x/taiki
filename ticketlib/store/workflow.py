@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timedelta
 from typing import Any
 
-from .. import db
+from .. import db, env
 from ..domain import (
     ACTOR_TYPES,
     PARENT_CONFIRMED_STATUSES,
@@ -22,6 +23,31 @@ from ..util import normalize_agent, as_list, check_enum, now, normalize_code
 from .common import UNSET, event, row_by_code
 from .relations import link_ticket
 from .tickets import get_ticket
+
+DEFAULT_LEASE_MINUTES = 30
+
+
+def _lease_minutes() -> int:
+    try:
+        return max(1, int(str(env.get("LEASE_MINUTES", ""))))
+    except (TypeError, ValueError):
+        return DEFAULT_LEASE_MINUTES
+
+
+def _future(minutes: int) -> str:
+    moment = datetime.now().astimezone() + timedelta(minutes=minutes)
+    return moment.isoformat(timespec="seconds")
+
+
+def _expired(value: str | None, at: str | None = None) -> bool:
+    """¿El lease venció? Sin fecha se considera vigente (compatibilidad)."""
+    if not value:
+        return False
+    try:
+        reference = datetime.fromisoformat(at or now())
+        return datetime.fromisoformat(value) <= reference
+    except ValueError:
+        return False
 
 
 def transition(
@@ -109,6 +135,10 @@ def transition(
         changes.append(("assigned_to", assigned_to))
     if resolution is not UNSET:
         changes.append(("resolution", resolution))
+    # Al cambiar de estado el claim deja de ser válido: se libera la sesión.
+    changes.append(("owner_session", None))
+    changes.append(("lease_until", None))
+    changes.append(("heartbeat_at", None))
 
     with db.tx(conn):
         sets = ", ".join(f"{name} = ?" for name, _ in changes)
@@ -138,6 +168,7 @@ def claim_ticket(
     actor_type: str = "agente",
     session_id: str | None = None,
     force: bool = False,
+    steal: bool = False,
 ) -> dict[str, Any]:
     agent = normalize_agent(agent)
     with db.tx(conn):
@@ -147,7 +178,12 @@ def claim_ticket(
                 f"No se puede reclamar {row['code']} porque está '{row['status']}'. "
                 "Reábrelo primero."
             )
-        if row["assigned_to"] and row["assigned_to"] != agent and not force:
+        if (
+            row["assigned_to"]
+            and row["assigned_to"] != agent
+            and not force
+            and not steal
+        ):
             raise TransitionError(
                 f"{row['code']} ya está asignado a '{row['assigned_to']}'"
             )
@@ -160,10 +196,37 @@ def claim_ticket(
             )
 
         ts = now()
+        owner = row["owner_session"]
+        if (
+            row["status"] == "en_progreso"
+            and owner
+            and (session_id is None or owner != session_id)
+            and not force
+            and not steal
+        ):
+            raise TransitionError(
+                f"{row['code']} está en progreso en la sesión {owner}. "
+                "Espera a que termine o usa --steal para recuperarlo."
+            )
+        if session_id and not force:
+            other = conn.execute(
+                "SELECT code FROM tickets WHERE archived = 0 "
+                "AND status = 'en_progreso' AND owner_session = ? "
+                "AND id != ? LIMIT 1",
+                (session_id, row["id"]),
+            ).fetchone()
+            if other is not None:
+                raise TransitionError(
+                    f"La sesión ya tiene {other['code']} en progreso; "
+                    "complétalo antes de reclamar otro ticket."
+                )
+        lease_until = _future(_lease_minutes())
         if row["status"] == "en_progreso":
             conn.execute(
-                "UPDATE tickets SET assigned_to = ?, updated_at = ? WHERE id = ?",
-                (agent, ts, row["id"]),
+                "UPDATE tickets SET assigned_to = ?, updated_at = ?, "
+                "owner_session = ?, heartbeat_at = ?, lease_until = ? "
+                "WHERE id = ?",
+                (agent, ts, session_id, ts, lease_until, row["id"]),
             )
             event(
                 conn,
@@ -188,8 +251,61 @@ def claim_ticket(
                 session_id=session_id,
                 assigned_to=agent,
             )
+            conn.execute(
+                "UPDATE tickets SET owner_session = ?, heartbeat_at = ?, "
+                "lease_until = ? WHERE id = ?",
+                (session_id, ts, lease_until, row["id"]),
+            )
+            ticket = get_ticket(conn, code)
 
     return ticket
+
+
+def heartbeat_ticket(
+    conn: sqlite3.Connection,
+    code: Any,
+    session_id: str | None = None,
+    *,
+    minutes: int | None = None,
+    min_interval: int = 60,
+) -> bool:
+    """Renueva el lease del ticket activo (si la sesión es la dueña)."""
+    row = row_by_code(conn, code)
+    if row["status"] != "en_progreso":
+        return False
+    owner = row["owner_session"]
+    if owner and session_id and owner != session_id:
+        return False
+    last = row["heartbeat_at"]
+    if last:
+        try:
+            elapsed = (
+                datetime.fromisoformat(now()) - datetime.fromisoformat(last)
+            ).total_seconds()
+            if elapsed < min_interval:
+                return False
+        except ValueError:
+            pass
+    ts = now()
+    with db.tx(conn):
+        conn.execute(
+            "UPDATE tickets SET heartbeat_at = ?, lease_until = ?, "
+            "updated_at = ? WHERE id = ?",
+            (ts, _future(minutes or _lease_minutes()), ts, row["id"]),
+        )
+    return True
+
+
+def stale_claims(
+    conn: sqlite3.Connection, at: str | None = None
+) -> list[dict[str, Any]]:
+    """Tickets en progreso cuyo lease venció (agente muerto o colgado)."""
+    rows = conn.execute(
+        "SELECT * FROM tickets WHERE archived = 0 AND status = 'en_progreso' "
+        "AND owner_session IS NOT NULL AND lease_until IS NOT NULL "
+        "ORDER BY lease_until"
+    ).fetchall()
+    return [dict(row) for row in rows if _expired(row["lease_until"], at)]
 
 
 def complete_ticket(

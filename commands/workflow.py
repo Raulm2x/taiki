@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from ticketlib import repo
+from ticketlib import repo, workspace, worktree
 
 from .common import _conn, _read_body
 
@@ -28,6 +28,30 @@ def cmd_confirm(args: argparse.Namespace) -> int:
     note = args.note or "Confirmado por el usuario"
     with _conn() as conn:
         report = repo.confirm_tickets(conn, args.code, note=note)
+        entries = []
+        for code in args.code:
+            try:
+                ticket = repo.get_ticket(conn, code)
+            except Exception:  # noqa: BLE001 - el error se informa abajo
+                continue
+            for link in ticket.get("links", []):
+                if link["kind"] == "worktree":
+                    entries.append(
+                        {
+                            "code": ticket["code"],
+                            "path": link["ref"],
+                            "branch": next(
+                                (
+                                    item["ref"]
+                                    for item in ticket["links"]
+                                    if item["kind"] == "rama"
+                                ),
+                                None,
+                            ),
+                        }
+                    )
+    for warning in worktree.warnings(workspace.project_root(), entries):
+        print(f"aviso: {warning}", file=sys.stderr)
 
     for code in report["confirmed"]:
         print(f"{code} confirmado")

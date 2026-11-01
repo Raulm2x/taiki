@@ -29,10 +29,14 @@ MODULES = (
     "test_tui_render",
     "test_hierarchy",
     "test_guard",
+    "test_claims",
+    "test_commit",
+    "test_status",
     "test_servers",
     "test_herdr",
     "test_githook",
     "test_hygiene",
+    "test_worktrees",
     "test_workspace",
 )
 

@@ -108,6 +108,7 @@ def _handle_create(
         project=project,
         path=path,
         tags=args.get("tags"),
+        paths=args.get("paths"),
         parent_id=args.get("parent_id"),
         created_by=actor,
         actor_type="agente",
@@ -186,7 +187,13 @@ def _handle_claim(
     code = args.get("code")
     if not code:
         raise domain.ValidationError("El parámetro 'code' es obligatorio")
-    return repo.claim_ticket(conn, code, agent=actor, session_id=session)
+    return repo.claim_ticket(
+        conn,
+        code,
+        agent=actor,
+        session_id=session,
+        steal=bool(args.get("steal")),
+    )
 
 
 def _handle_update(
@@ -207,6 +214,7 @@ def _handle_update(
             "priority",
             "project",
             "path",
+            "paths",
             "tags",
             "parent_id",
         )

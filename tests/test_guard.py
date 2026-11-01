@@ -593,3 +593,86 @@ def run(h: Harness) -> None:
         code == 0 and promoted["code"] in listed_text,
         "ticket list muestra el ticket promovido",
     )
+
+    # ── Agentes en paralelo: operaciones git de alcance global ─────────
+    h.eq(
+        guard.risky_git("git add -A"),
+        "git add -A",
+        "risky_git detecta git add -A",
+    )
+    h.ok(
+        guard.risky_git("git add src/app.py") is None
+        and guard.risky_git("git add -p") is None,
+        "risky_git deja pasar el staging por rutas",
+    )
+    h.ok(
+        guard.risky_git("git commit -am 'x'") == "git commit -a"
+        and guard.risky_git("git commit -m 'x'") is None,
+        "risky_git distingue commit -a de -m",
+    )
+    h.ok(
+        guard.risky_git("cd repo && git stash") == "git stash"
+        and guard.risky_git("git reset --soft HEAD~1") == "git reset",
+        "risky_git detecta stash y reset",
+    )
+
+    parallel_dir = Path.home() / "proyecto-paralelo"
+    with h.env(TAIKI_DB=str(Path(tmp) / "paralelo.db")):
+        pconn = db.connect()
+        try:
+            other = repo.create_ticket(
+                pconn, title="Trabajo de otra sesión", project=".config"
+            )
+            repo.claim_ticket(
+                pconn, other["code"], agent="opencode", session_id="ses_otra"
+            )
+            blocked = guard.evaluate(
+                tool="bash",
+                session="ses_mia",
+                agent="opencode",
+                command="git add -A",
+                cwd=str(parallel_dir),
+            )
+            h.ok(
+                blocked["action"] == "parallel" and not blocked["allow"],
+                "git add -A se bloquea si otra sesión tiene un ticket activo",
+            )
+            scoped = guard.evaluate(
+                tool="bash",
+                session="ses_mia",
+                agent="opencode",
+                command="git add docs/a.md",
+                cwd=str(parallel_dir),
+            )
+            h.ok(
+                scoped["allow"],
+                "stagear una ruta concreta no se bloquea",
+            )
+            repo.transition(
+                pconn,
+                other["code"],
+                "cancelado",
+                note="fin del escenario",
+                actor="usuario",
+                actor_type="usuario",
+                session_id="ses_otra",
+            )
+            mine = repo.create_ticket(
+                pconn, title="Trabajo propio", project=".config"
+            )
+            repo.claim_ticket(
+                pconn, mine["code"], agent="opencode", session_id="ses_mia"
+            )
+            allowed = guard.evaluate(
+                tool="bash",
+                session="ses_mia",
+                agent="opencode",
+                command="git add -A",
+                cwd=str(parallel_dir),
+            )
+            h.ok(
+                allowed["allow"],
+                "sin otras sesiones activas git add -A sigue permitido",
+            )
+        finally:
+            pconn.close()

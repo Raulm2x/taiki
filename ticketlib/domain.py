@@ -30,7 +30,7 @@ KINDS = (
 PRIORITIES = ("baja", "media", "alta", "urgente")
 PRIORITY_RANK = {"urgente": 0, "alta": 1, "media": 2, "baja": 3}
 
-LINK_KINDS = ("commit", "archivo", "url", "sesion", "otro")
+LINK_KINDS = ("commit", "archivo", "url", "sesion", "worktree", "rama", "otro")
 ACTOR_TYPES = ("agente", "usuario")
 
 TRANSITIONS: dict[str, set[str]] = {

@@ -15,6 +15,7 @@ from ticketlib.githook import (
     check_push,
     install_commit_msg_hook,
     install_post_commit_hook,
+    install_pre_commit_hook,
     install_pre_push_hook,
 )
 from ticketlib.githook import git as _git
@@ -65,9 +66,11 @@ def cmd_hook_install(args: argparse.Namespace) -> int:
     post = install_post_commit_hook(repo)
     message = install_commit_msg_hook(repo)
     push = install_pre_push_hook(repo)
+    index = install_pre_commit_hook(repo)
     print(f"Hook post-commit listo: {post}")
     print(f"Hook commit-msg listo: {message}")
     print(f"Hook pre-push listo: {push}")
+    print(f"Hook pre-commit listo: {index}")
     return 0
 
 
@@ -157,6 +160,18 @@ def cmd_audit(args: argparse.Namespace) -> int:
     if not stalled:
         print("  ninguno")
     print()
+    stale = data.get("stale_claims") or []
+    print(f"Claims caducados ({len(stale)})")
+    for item in stale:
+        print(
+            f"  {item['code']}  {item.get('owner_session') or '?'}  "
+            f"lease {item.get('lease_until') or '-'}"
+        )
+    if stale:
+        print("  Recupéralos con: taiki claim <código> --steal")
+    else:
+        print("  ninguno")
+    print()
     unresolved = data["unresolved"]
     print(f"Cerrados sin resolución ({len(unresolved)})")
     for item in unresolved:
@@ -190,6 +205,29 @@ def cmd_audit(args: argparse.Namespace) -> int:
     for item in hidden:
         print(f"  {item['code']}  [{item['status']}]  {item['reason']}")
     if not hidden:
+        print("  ninguno")
+    print()
+    overlaps = data.get("overlaps") or []
+    print(f"Solapamientos entre tickets activos ({len(overlaps)})")
+    for item in overlaps:
+        print(f"  {item['a']} ~ {item['b']}: {', '.join(item['patterns'])}")
+    if not overlaps:
+        print("  ninguno")
+    print()
+    dirty = data.get("dirty") or []
+    print(f"Ficheros sin stagear o sin seguimiento ({len(dirty)})")
+    for item in dirty[:10]:
+        print(f"  {item}")
+    if len(dirty) > 10:
+        print(f"  … y {len(dirty) - 10} más")
+    if not dirty:
+        print("  ninguno")
+    print()
+    fixes = data.get("worktrees") or []
+    print(f"Avisos de worktrees ({len(fixes)})")
+    for item in fixes:
+        print(f"  {item}")
+    if not fixes:
         print("  ninguno")
     print()
     fleet = data["servers"]

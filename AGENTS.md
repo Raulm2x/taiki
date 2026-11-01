@@ -21,6 +21,27 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
 4. La confirmación es del usuario: `taiki confirm T-0001`. Nunca la ejecutes tú.
 5. El asunto del commit debe incluir `T-XXXX`; el hook `commit-msg` lo exige.
 
+## Agentes en paralelo
+
+Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
+
+- **Reclama antes de escribir** y mantén **un solo ticket activo por sesión**.
+  Si otra sesión ya tiene el ticket, no lo reclames a la fuerza.
+- **Un worktree por escritor.** Cada tarea que modifique código debe vivir en su
+  propio `git worktree` (`.worktrees/<T-XXXX>`, ignorado por Git) con la DB
+  compartida de `.taiki/`. Las lecturas sí pueden compartir el árbol.
+- **Stagea rutas concretas** (`git add <ruta>`). Si otra sesión tiene un ticket
+  activo, el guard bloquea `git add -A`, `git add .`, `git commit -a`,
+  `git stash`, `git reset`, `git clean` y `git checkout -- .`.
+- **Nunca uses `git stash` a pelo**: el stash es único para todos los worktrees
+  y puede aplicarte cambios de otra sesión. Commitea el WIP en tu rama.
+- **Commitea solo lo tuyo** con `taiki commit -m "..."`: respeta las rutas del
+  ticket (`taiki new --paths src/`) y rechaza el índice que solapa con otro
+  ticket activo. Fusiona de una rama a la vez: rebase sobre la rama principal,
+  tests de nuevo y `merge --ff-only`.
+- Si el guard bloquea y no hay conflicto real, el bypass manual es
+  `TAIKI_GUARD=off`.
+
 ## Comandos útiles
 
 ```bash

@@ -15,6 +15,7 @@ from .commands import (
     command_is_mutating,
     command_touches_home,
     path_guarded,
+    risky_git,
     split_commands,
 )
 from .context import (
@@ -30,6 +31,7 @@ from .policy import auto_mode, disabled, evaluate
 __all__ = [
     "command_is_mutating",
     "command_touches_home",
+    "risky_git",
     "disabled",
     "auto_mode",
     "auto_title",

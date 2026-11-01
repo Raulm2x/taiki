@@ -38,6 +38,14 @@ from .git import (
 from .guard import cmd_guard
 from .mcp import cmd_mcp_install, cmd_mcp_uninstall
 from .servers import cmd_servers
+from .commit import cmd_commit, cmd_hook_check_index
+from .status import cmd_status
+from .worktree import (
+    cmd_worktree_adopt,
+    cmd_worktree_create,
+    cmd_worktree_list,
+    cmd_worktree_remove,
+)
 from .system import (
     cmd_open,
     cmd_scheme_install,
@@ -77,6 +85,13 @@ __all__ = [
     "cmd_mcp_install",
     "cmd_mcp_uninstall",
     "cmd_servers",
+    "cmd_commit",
+    "cmd_hook_check_index",
+    "cmd_status",
+    "cmd_worktree_adopt",
+    "cmd_worktree_create",
+    "cmd_worktree_list",
+    "cmd_worktree_remove",
     "cmd_open",
     "cmd_scheme_install",
     "cmd_scheme_uninstall",

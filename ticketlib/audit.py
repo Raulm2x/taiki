@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from . import githook, runtime, servers
+from . import commits, githook, runtime, servers
 from .domain import TicketError
 from .store.mutations import renumber_plan
 from .store.queries import hidden_codes, missing_codes
 from .store.relations import TICKET_CODE_RE
+from .store.workflow import stale_claims
+from . import worktree as worktree_lib
 
 
 def _cutoff(days: int) -> str:
@@ -70,6 +73,53 @@ def hidden(conn: Any) -> list[dict[str, str]]:
     return hidden_codes(conn)
 
 
+def overlaps(conn: Any) -> list[dict[str, Any]]:
+    """Pares de tickets en progreso con rutas potencialmente solapadas."""
+    rows = conn.execute(
+        "SELECT code, paths FROM tickets WHERE archived = 0 "
+        "AND status = 'en_progreso' ORDER BY code"
+    ).fetchall()
+    tickets = []
+    for row in rows:
+        raw = row["paths"]
+        try:
+            paths = json.loads(raw) if raw else []
+        except (TypeError, json.JSONDecodeError):
+            paths = [raw] if raw else []
+        if paths:
+            tickets.append({"code": row["code"], "paths": paths})
+    result: list[dict[str, Any]] = []
+    for index, left in enumerate(tickets):
+        for right in tickets[index + 1 :]:
+            hits = commits.overlaps(left["paths"], right["paths"])
+            if hits:
+                result.append(
+                    {"a": left["code"], "b": right["code"], "patterns": hits}
+                )
+    return result
+
+
+def dirty(repo: str | Path) -> list[str]:
+    """Ficheros sin stagear o sin seguimiento en el checkout."""
+    try:
+        return commits.unstaged(repo)
+    except TicketError:
+        return []
+
+
+def worktrees(conn: Any, repo: str | Path) -> list[str]:
+    """Avisos de worktrees registrados (sucios, ausentes o sin mergear)."""
+    rows = conn.execute(
+        "SELECT t.code AS code, l.ref AS ref FROM links l "
+        "JOIN tickets t ON t.id = l.ticket_id WHERE l.kind = 'worktree'"
+    ).fetchall()
+    entries = [{"code": row["code"], "path": row["ref"]} for row in rows]
+    try:
+        return worktree_lib.warnings(Path(repo), entries)
+    except TicketError:
+        return []
+
+
 def unresolved(conn: Any) -> list[dict[str, Any]]:
     """Tickets cerrados sin resolución escrita."""
     rows = conn.execute(
@@ -107,11 +157,15 @@ def audit(
         "days": days,
         "commits": commits_without_ticket(repo, days=days, limit=limit),
         "stalled": stalled(conn, days=stalled_days),
+        "stale_claims": stale_claims(conn),
         "unresolved": unresolved(conn),
         "uncommitted": uncommitted(conn),
         "misnumbered": renumber_plan(conn),
         "gaps": code_gaps(conn),
         "hidden": hidden(conn),
+        "overlaps": overlaps(conn),
+        "dirty": dirty(repo),
+        "worktrees": worktrees(conn, repo),
         "mcp": runtime.status(conn),
         "servers": {"summary": servers.summary(fleet), "items": fleet},
         "hooks": githook.hooks_installed(repo),

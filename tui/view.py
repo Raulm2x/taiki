@@ -50,6 +50,7 @@ HELP_LINES = (
     "  x                 Limpiar filtros",
     "  s                 Ciclar ámbito: atención → todos → completados → abiertos → cerrados",
     "  M                 Alternar vista de cerrados (vuelve al ámbito anterior)",
+    "  S                 Estado de sesiones, claims y solapamientos",
     "  O                 Cambiar el orden: código / prioridad",
     "  n                 Cargar más tickets (al llegar al final)",
     "  r                 Recargar desde la base de datos",
@@ -787,6 +788,11 @@ def choose(
 
 def help_modal(win) -> None:
     modal(win, list(HELP_LINES), title="Ayuda")
+
+
+def status_modal(win, lines: list[str]) -> None:
+    """Modal con el estado de sesiones, claims y solapamientos."""
+    modal(win, list(lines), title="Sesiones y claims")
 
 
 def prompt(win, label: str, initial: str = "") -> str:

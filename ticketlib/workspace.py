@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -77,8 +78,47 @@ def _base(start: str | Path | None = None) -> Path:
     return base
 
 
+def _git_output(root: Path, *args: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), *args],
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def main_worktree(start: str | Path | None = None) -> Path | None:
+    """Checkout principal del repositorio, también desde un worktree ligado."""
+    base = _base(start)
+    root = find_git_root(base)
+    if root is None:
+        return None
+    common = _git_output(
+        base, "rev-parse", "--path-format=absolute", "--git-common-dir"
+    )
+    if common:
+        path = Path(common)
+        return path.parent if path.name == ".git" else path
+    common = _git_output(base, "rev-parse", "--git-common-dir")
+    if not common:
+        return root
+    path = Path(common)
+    if not path.is_absolute():
+        path = (base / path).resolve()
+    return path.parent if path.name == ".git" else root
+
+
 def find_workspace(start: str | Path | None = None) -> Path | None:
-    """Primer ``.taiki/`` subiendo desde ``start``, sin llegar a ``$HOME``."""
+    """Primer ``.taiki/`` subiendo desde ``start``, sin llegar a ``$HOME``.
+
+    Si ``start`` está en un worktree fuera del repositorio, se usa el ``.taiki``
+    del checkout principal: la base de datos es compartida.
+    """
     base = _base(start)
     home = Path.home().resolve()
     stop = {home, Path(home.anchor)}
@@ -88,11 +128,22 @@ def find_workspace(start: str | Path | None = None) -> Path | None:
         marker = candidate / MARKER
         if marker.is_dir():
             return marker
+    main = main_worktree(base)
+    if main is not None:
+        marker = main / MARKER
+        if marker.is_dir():
+            return marker
     return None
 
 
 def project_root(start: str | Path | None = None) -> Path:
-    """Raíz Git del proyecto, o el directorio actual si no hay repositorio."""
+    """Raíz del checkout principal, o el directorio actual sin repositorio."""
+    base = _base(start)
+    return main_worktree(base) or find_git_root(base) or base
+
+
+def checkout_root(start: str | Path | None = None) -> Path:
+    """Raíz del checkout actual (el worktree si estamos dentro de uno)."""
     base = _base(start)
     return find_git_root(base) or base
 

@@ -7,7 +7,7 @@ import sqlite3
 import time
 from typing import Any
 
-from ticketlib import db, domain, repo, workspace
+from ticketlib import db, domain, repo, status as status_lib, workspace
 from ticketlib.domain import OPEN_STATUSES, PRIORITIES, STATUSES
 from ticketlib.domain import KINDS
 
@@ -37,6 +37,7 @@ from .view import (
     prompt,
     put,
     set_redraw,
+    status_modal,
 )
 
 FILTER_ITEMS = (
@@ -541,6 +542,13 @@ def main_loop(
             state.notify(
                 f"Ámbito: {SCOPE_LABELS.get(scope, scope)}.", "info", ttl=3
             )
+        elif key == ord("S"):
+            try:
+                data = status_lib.snapshot()
+            except Exception as exc:  # noqa: BLE001 - la TUI no debe caerse
+                state.notify(f"Error: {exc}", "error")
+            else:
+                status_modal(stdscr, status_lib.lines(data))
         elif key == ord("m"):
             actions_ui.run_action(stdscr, state, state.current(), refresh)
         elif key == ord("o"):

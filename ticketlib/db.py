@@ -33,6 +33,10 @@ CREATE TABLE IF NOT EXISTS tickets (
     iterations   INTEGER NOT NULL DEFAULT 0,
     parent_id    INTEGER REFERENCES tickets(id),
     archived     INTEGER NOT NULL DEFAULT 0,
+    owner_session TEXT,
+    heartbeat_at  TEXT,
+    lease_until   TEXT,
+    paths         TEXT,
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL,
     started_at   TEXT,
@@ -176,6 +180,19 @@ def connect(
 
 def migrate(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
+    # Columnas aditivas: se añaden antes de crear índices sobre ellas.
+    columns = {col["name"] for col in conn.execute("PRAGMA table_info(tickets)")}
+    if "iterations" not in columns:
+        conn.execute(
+            "ALTER TABLE tickets ADD COLUMN iterations INTEGER NOT NULL DEFAULT 0"
+        )
+    for column in ("owner_session", "heartbeat_at", "lease_until", "paths"):
+        if column not in columns:
+            conn.execute(f"ALTER TABLE tickets ADD COLUMN {column} TEXT")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tickets_owner ON tickets(owner_session)"
+    )
+
     row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
     if row is None:
         meta_set(conn, "schema_version", str(SCHEMA_VERSION))
@@ -188,12 +205,6 @@ def migrate(conn: sqlite3.Connection) -> None:
         raise TicketError(
             f"La base de datos usa el esquema v{version}, más reciente que v{SCHEMA_VERSION}. "
             "Actualiza taiki y vuelve a intentarlo."
-        )
-    # Migraciones incrementales (aditivas, sin romper procesos antiguos).
-    columns = {col["name"] for col in conn.execute("PRAGMA table_info(tickets)")}
-    if "iterations" not in columns:
-        conn.execute(
-            "ALTER TABLE tickets ADD COLUMN iterations INTEGER NOT NULL DEFAULT 0"
         )
     server_columns = {
         col["name"] for col in conn.execute("PRAGMA table_info(mcp_servers)")

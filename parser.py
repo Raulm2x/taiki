@@ -16,12 +16,14 @@ from commands import (
     cmd_auto_link,
     cmd_claim,
     cmd_comment,
+    cmd_commit,
     cmd_complete,
     cmd_detach,
     cmd_confirm,
     cmd_export,
     cmd_guard,
     cmd_hook_check_msg,
+    cmd_hook_check_index,
     cmd_hook_check_push,
     cmd_hook_install,
     cmd_init,
@@ -43,9 +45,14 @@ from commands import (
     cmd_scheme_uninstall,
     cmd_show,
     cmd_stats,
+    cmd_status,
     cmd_transition,
     cmd_tui,
     cmd_update,
+    cmd_worktree_adopt,
+    cmd_worktree_create,
+    cmd_worktree_list,
+    cmd_worktree_remove,
 )
 from ticketlib import domain
 from ticketlib.domain import KINDS, LINK_KINDS, PRIORITIES, STATUSES
@@ -124,6 +131,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--project")
     p.add_argument("--path")
     p.add_argument("--tags", nargs="*")
+    p.add_argument(
+        "--paths",
+        nargs="+",
+        help="rutas o globs que posee el ticket (para commits seguros)",
+    )
     p.add_argument("--parent")
     p.set_defaults(func=cmd_new)
 
@@ -153,6 +165,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("claim", help="Reclama un ticket")
     p.add_argument("code")
     p.add_argument("--agent", default="usuario")
+    p.add_argument("--force", action="store_true", help="ignora asignación y sesión")
+    p.add_argument(
+        "--steal",
+        action="store_true",
+        help="recupera un claim caducado de otra sesión",
+    )
     p.set_defaults(func=cmd_claim)
 
     p = sub.add_parser("update", help="Actualiza campos")
@@ -163,6 +181,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-p", "--priority", choices=PRIORITIES)
     p.add_argument("--project")
     p.add_argument("--path")
+    p.add_argument(
+        "--paths",
+        nargs="+",
+        help="rutas o globs que posee el ticket",
+    )
     p.add_argument("--tags", nargs="*")
     p.set_defaults(func=cmd_update)
 
@@ -296,6 +319,41 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mcp_rm.set_defaults(func=cmd_mcp_uninstall)
 
+    p = sub.add_parser("worktree", help="Worktrees por tarea (aislamiento)")
+    wt_sub = p.add_subparsers(dest="worktree_action", required=True)
+    wt_create = wt_sub.add_parser(
+        "create", help="crea un worktree para un ticket"
+    )
+    wt_create.add_argument("code")
+    wt_create.add_argument("--branch", help="rama a crear (por defecto agent/T-XXXX-slug)")
+    wt_create.add_argument("--path", help="ruta alternativa del worktree")
+    wt_create.add_argument("--from", dest="start", default="HEAD", help="referencia base")
+    wt_create.add_argument("--force", action="store_true", help="permite otro worktree")
+    wt_create.add_argument("--json", action="store_true")
+    wt_create.set_defaults(func=cmd_worktree_create)
+    wt_list = wt_sub.add_parser("list", help="lista worktrees de tareas")
+    wt_list.add_argument("--json", action="store_true")
+    wt_list.set_defaults(func=cmd_worktree_list)
+    wt_rm = wt_sub.add_parser("remove", help="retira un worktree")
+    wt_rm.add_argument("code", nargs="?")
+    wt_rm.add_argument("--path", help="ruta concreta del worktree")
+    wt_rm.add_argument("--force", action="store_true", help="descarta cambios")
+    wt_rm.add_argument(
+        "--delete-branch",
+        action="store_true",
+        help="elimina también la rama del agente",
+    )
+    wt_rm.add_argument("--json", action="store_true")
+    wt_rm.set_defaults(func=cmd_worktree_remove)
+    wt_adopt = wt_sub.add_parser(
+        "adopt", help="registra un worktree existente (por ejemplo de OpenCode)"
+    )
+    wt_adopt.add_argument("code")
+    wt_adopt.add_argument("path")
+    wt_adopt.add_argument("--force", action="store_true")
+    wt_adopt.add_argument("--json", action="store_true")
+    wt_adopt.set_defaults(func=cmd_worktree_adopt)
+
     p = sub.add_parser("link", help="Enlaza una referencia a un ticket")
     p.add_argument("code")
     p.add_argument("kind", choices=LINK_KINDS)
@@ -353,6 +411,44 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("file", help="Fichero con el mensaje de commit")
     p.set_defaults(func=cmd_hook_check_msg)
+
+    p = sub.add_parser(
+        "hook-check-index",
+        help="Valida el índice contra el ticket (lo usa el hook pre-commit)",
+    )
+    p.add_argument("--ticket", help="Código del ticket (o TAIKI_TICKET)")
+    p.set_defaults(func=cmd_hook_check_index)
+
+    p = sub.add_parser(
+        "status",
+        help="Sesiones activas, claims, worktrees y solapamientos",
+    )
+    p.add_argument("--json", action="store_true")
+    p.add_argument(
+        "--sessions", action="store_true", help="Solo la tabla de sesiones"
+    )
+    p.add_argument(
+        "--window",
+        type=int,
+        default=600,
+        help="Segundos para considerar reciente un latido",
+    )
+    p.add_argument(
+        "--no-servers", action="store_true", help="No consultar el inventario MCP"
+    )
+    p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser(
+        "commit",
+        help="Commitea solo las rutas del ticket activo",
+        description="Rechaza ficheros stageados fuera del alcance del ticket "
+        "o que solapen con otro ticket activo.",
+    )
+    p.add_argument("-m", "--message", help="Mensaje del commit")
+    p.add_argument("-t", "--ticket", help="Código del ticket (o TAIKI_TICKET)")
+    p.add_argument("--dry-run", action="store_true", help="Solo comprueba")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_commit)
 
     p = sub.add_parser(
         "servers",

@@ -61,6 +61,16 @@ def clean_tags(tags: Any) -> list[str]:
     return out
 
 
+def clean_paths(paths: Any) -> list[str]:
+    """Rutas o globs de propiedad de un ticket, sin duplicados ni vacíos."""
+    out: list[str] = []
+    for item in as_list(paths):
+        value = str(item).strip().lstrip("./")
+        if value and value not in out:
+            out.append(value)
+    return out
+
+
 def normalize_code(value: Any) -> int | str:
     """Acepta T-0001, t-1, S-0001 o 1. Devuelve código normalizado o id."""
     if isinstance(value, bool):

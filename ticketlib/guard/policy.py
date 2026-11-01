@@ -9,7 +9,7 @@ from typing import Any
 from .. import db, env, repo, scratch, workspace
 from ..domain import TicketError
 from ..util import normalize_agent, resolve_scope
-from .commands import command_touches_home, path_guarded
+from .commands import command_touches_home, path_guarded, risky_git
 from .context import auto_title, find_active, find_pending, find_session_epic, session_chain
 from .hook import is_mutating
 
@@ -172,6 +172,41 @@ def _message(
     )
 
 
+def _parallel_message(action: str, others: list[dict[str, Any]]) -> str:
+    codes = ", ".join(item["code"] for item in others[:5])
+    extra = "" if len(others) <= 5 else f" y {len(others) - 5} más"
+    return (
+        f"Operación compartida bloqueada: `{action}` afecta a todo el índice o "
+        f"árbol y hay otras sesiones con tickets en progreso ({codes}{extra}).\n"
+        "Trabaja en tu worktree o stagea rutas concretas (`git add <ruta>`); "
+        "si no hay conflicto real, usa TAIKI_GUARD=off."
+    )
+
+
+def other_active_sessions(
+    conn: Any, chain: list[str], agent: str
+) -> list[dict[str, Any]]:
+    """Tickets en progreso que no pertenecen a esta sesión."""
+    rows = conn.execute(
+        "SELECT t.code, t.assigned_to, t.updated_at, "
+        "COALESCE(t.owner_session, ("
+        "  SELECT e.session_id FROM events e "
+        "  WHERE e.ticket_id = t.id AND e.session_id IS NOT NULL "
+        "  ORDER BY e.id DESC LIMIT 1)) AS sid "
+        "FROM tickets t WHERE t.archived = 0 AND t.status = 'en_progreso' "
+        "ORDER BY t.updated_at DESC"
+    ).fetchall()
+    others: list[dict[str, Any]] = []
+    for row in rows:
+        sid = row["sid"]
+        if sid is not None:
+            if sid not in chain:
+                others.append(dict(row))
+        elif row["assigned_to"] and row["assigned_to"] != agent:
+            others.append(dict(row))
+    return others
+
+
 def evaluate(
     *,
     tool: str,
@@ -187,7 +222,9 @@ def evaluate(
     agent = normalize_agent(agent)
     if disabled(environ):
         return _allowed("disabled", session)
-    if not is_mutating(tool, path, command):
+    mutating = is_mutating(tool, path, command)
+    risky = risky_git(command) if command else None
+    if not mutating and not risky:
         return _allowed("skipped", session)
     if path and not path_guarded(path):
         return _allowed("outside", session)
@@ -216,8 +253,19 @@ def evaluate(
     conn = db.connect(target)
     try:
         chain = session_chain(session)
+        if risky:
+            others = other_active_sessions(conn, chain, agent)
+            if others:
+                return _blocked(
+                    "parallel", session, _parallel_message(risky, others)
+                )
+            if not mutating:
+                return _allowed("skipped", session)
         active = find_active(conn, chain, agent)
         if active is not None:
+            repo.heartbeat_ticket(
+                conn, active["code"], chain[0] if chain else None
+            )
             return _allowed("active", session, active["code"])
 
         pending = find_pending(conn, chain)
