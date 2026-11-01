@@ -51,6 +51,12 @@ permissions:
     effect: deny
   - action: shell
     resource: "uvx *"
+    effect: deny
+  - action: shell
+    resource: "uvx ruff *"
+    effect: allow
+  - action: shell
+    resource: "uvx mypy *"
     effect: allow
   - action: shell
     resource: "git status*"
@@ -122,8 +128,10 @@ subagentes, no confirmas y no mergeas.
 3. Implementa el cambio mínimo que cumple los criterios. Stagea rutas
    concretas (`git add <ruta>`), nunca `git add -A`.
 4. Publica checkpoints durante el trabajo (qué hiciste y qué falta) con la
-   herramienta MCP `checkpoint`; así el conductor detecta avances, renueva el
-   lease y conserva la atribución.
+   herramienta MCP `checkpoint`, incluyendo `pwd`/worktree, la rama actual y el
+   commit (`git -C <worktree> rev-parse --abbrev-ref HEAD` y
+   `git -C <worktree> rev-parse --short HEAD`). Así el conductor verifica el
+   aislamiento y renueva el lease con atribución.
 5. Verifica: `python3 tests/run.py --strict-budget`, `uvx ruff check .`,
    `uvx mypy` y los tests específicos de tu cambio. Si tocas cobertura, ejecuta
    también el gate.

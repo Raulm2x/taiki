@@ -17,6 +17,12 @@ permissions:
     effect: allow
   - action: shell
     resource: "uvx *"
+    effect: deny
+  - action: shell
+    resource: "uvx ruff *"
+    effect: allow
+  - action: shell
+    resource: "uvx mypy *"
     effect: allow
   - action: shell
     resource: "git status*"

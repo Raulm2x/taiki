@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Any
 
-from . import audit, db, servers, workspace
+from . import audit, db, servers, sessions as sessions_lib, workspace
 from .domain import DEPENDENCY_DONE_STATUSES
 from .store.workflow import stale_claims
 
@@ -38,6 +38,8 @@ def _queue(conn: Any) -> dict[str, int]:
     ready = conn.execute(
         "SELECT COUNT(*) FROM tickets t WHERE t.archived = 0 "
         "AND t.status IN ('nuevo', 'pendiente') "
+        "AND NOT EXISTS (SELECT 1 FROM tickets ch "
+        "WHERE ch.parent_id = t.id AND ch.archived = 0) "
         "AND NOT EXISTS (SELECT 1 FROM links dl "
         "JOIN tickets dt ON dt.code = dl.ref AND dt.archived = 0 "
         "WHERE dl.ticket_id = t.id AND dl.kind = 'depende' "
@@ -177,6 +179,9 @@ def snapshot(
         overlaps = audit.overlaps(conn)
         queue = _queue(conn)
         metrics = _metrics(conn, metrics_days)
+        activity = sessions_lib.ticket_activity(
+            conn, [row["code"] for row in rows]
+        )
         worktree_count = conn.execute(
             "SELECT COUNT(*) FROM links WHERE kind = 'worktree'"
         ).fetchone()[0]
@@ -204,6 +209,7 @@ def snapshot(
                 "recent": _recent(row["heartbeat_at"], window),
                 "stale": code in stale,
                 "paths": _paths(row["paths"]),
+                "directory": activity.get(code, {}).get("directory"),
                 "worktree": related.get("worktree"),
                 "branch": related.get("rama"),
             }
@@ -287,6 +293,10 @@ def lines(data: dict[str, Any]) -> list[str]:
         )
         if item.get("paths"):
             out.append(f"    rutas: {', '.join(item['paths'])}")
+        if item.get("directory"):
+            out.append(f"    dir: {item['directory']}")
+        if item.get("worktree"):
+            out.append(f"    worktree: {item['worktree']}")
     out.append("")
     overlaps = data.get("overlaps") or []
     out.append(f"Solapamientos ({len(overlaps)})")

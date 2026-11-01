@@ -95,8 +95,11 @@ agentes escriben el estado con las herramientas MCP (`claim`, `complete`,
 `actor_type=agente` y `owner_session`; el CLI queda para el usuario y
 atribuye sus acciones como tales. Tras `claim` con worktree, el worker llama
 a `session_move` con la ruta devuelta; el conductor comprueba que la sesión
-hija está en el worktree. Los permisos de shell solo dejan a los agentes
-lecturas de `taiki` y `taiki commit`; cualquier write de estado va por MCP.
+hija está en el worktree y que el commit vive en `agent/T-XXXX-*`, no en
+`main`. Los permisos de shell solo dejan a los agentes lecturas de `taiki` y
+`taiki commit`; cualquier write de estado va por MCP. `uvx` queda limitado a
+`ruff` y `mypy`: `python3 tests/run.py --verify` los ejecuta internamente,
+pero edit/shell/uvx/tests no son un sandbox de seguridad.
 
 Routing de modelos: `documentacion` → `low`; mantenimiento/funcionalidad →
 `medium`; `bug`/`seguridad` → `high`. Todos los perfiles worker usan
@@ -113,11 +116,16 @@ paths); las migraciones y los merges nunca van en paralelo.
 `taiki status` (y el modal `S` de la TUI) muestra la cola del orquestador
 (listos, en curso, verificando, bloqueados y por confirmar), los worktrees y
 métricas: lead time, intentos medios, fallos de verificación y paralelismo
-máximo observado. La supervisión usa `taiki status` y la herramienta MCP
-`health` (no existe `taiki health`). «Por confirmar» suma `completado` y
+máximo observado. `status.sessions[].directory` expone el directorio de la
+sesión viva para compararlo con el worktree. La supervisión usa `taiki
+status` y la herramienta MCP `health` (no existe `taiki health`). «Por confirmar» suma `completado` y
 `verificado`;
 «verificando» es el subconjunto que el conductor ya validó. El coste y los
 tokens quedan como `no disponible` mientras no haya telemetría del proveedor.
+
+El smoke opt-in `python3 tests/live_orchestrator.py` crea un repo temporal,
+dos tareas con worktree y verifica rama/commit/health; no se ejecuta en CI y
+`session_move` queda como paso manual de OpenCode.
 
 Una tarea con dependencias no está lista hasta que el prerrequisito está
 `verificado` (o `confirmado`/`cancelado`): `completado` aún puede fallar la

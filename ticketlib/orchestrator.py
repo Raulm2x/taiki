@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 from typing import Any
 
 from . import agents, commits, env, repo
@@ -332,3 +333,37 @@ def parallel_plan(
         "limit": maximum,
         "requires_worktree": True,
     }
+
+
+def isolation_problems(
+    code: str,
+    *,
+    worktree: str | None,
+    directory: str | None,
+    branch: str | None,
+    commit: str | None,
+) -> list[str]:
+    """Comprueba que el worker está aislado y commiteó en su rama.
+
+    Devuelve una lista de problemas legibles; vacía si el aislamiento es
+    correcto. No ejecuta git: el conductor le pasa la rama actual y el commit.
+    """
+    problems: list[str] = []
+    if not worktree:
+        problems.append("el ticket no tiene worktree")
+    if not directory:
+        problems.append("la sesión no publica directorio")
+    elif worktree:
+        try:
+            same = Path(directory).resolve() == Path(worktree).resolve()
+        except OSError:
+            same = False
+        if not same:
+            problems.append("directory de la sesión != worktree del ticket")
+    if not branch:
+        problems.append("la sesión no publica rama")
+    elif branch == "main" or not branch.startswith(f"agent/{code}-"):
+        problems.append(f"la rama {branch!r} no es agent/{code}-*")
+    if not commit:
+        problems.append("falta el commit en el checkpoint")
+    return problems

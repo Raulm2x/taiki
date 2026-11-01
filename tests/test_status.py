@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import sqlite3
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from commands.status import cmd_status
 from ticketlib import repo, status
@@ -206,4 +208,60 @@ def run(h: Harness) -> None:
         completed_ready == blocked_ready
         and verified_ready == blocked_ready + 1,
         "la cola no cuenta una dependencia completada como lista",
+    )
+
+
+    # ── Directorio de la sesión viva ────────────────────────────────────
+    oc_db = Path(h.tmp) / "status-opencode.db"
+    oc = sqlite3.connect(oc_db)
+    oc.execute(
+        "CREATE TABLE session_v2 (id TEXT PRIMARY KEY, directory TEXT, title TEXT)"
+    )
+    live_dir = Path(h.tmp) / "worktree-live"
+    oc.execute(
+        "INSERT INTO session_v2 VALUES ('ses_dir', ?, 'dir')",
+        (str(live_dir),),
+    )
+    oc.commit()
+    oc.close()
+    dir_ticket = repo.create_ticket(
+        conn, title="Con directorio", project="taiki"
+    )
+    repo.claim_ticket(
+        conn, dir_ticket["code"], agent="worker", session_id="ses_dir"
+    )
+    repo.link_ticket(
+        conn, dir_ticket["code"], "worktree", str(live_dir)
+    )
+    with h.env(OPENCODE_DB=str(oc_db)):
+        dir_data = status.snapshot(with_servers=False)
+    entry = next(
+        item
+        for item in dir_data["sessions"]
+        if item["code"] == dir_ticket["code"]
+    )
+    dir_text = "\n".join(status.lines(dir_data))
+    h.ok(
+        entry["directory"] == str(live_dir)
+        and entry["worktree"] == str(live_dir)
+        and "dir: " in dir_text
+        and "worktree: " in dir_text,
+        "status expone el directorio de la sesión viva y lines lo muestra",
+    )
+
+
+    # ── La cola no cuenta épicas como listas ────────────────────────────
+    ready_before = status.snapshot(with_servers=False)["queue"]["ready"]
+    queue_epic = repo.create_ticket(conn, title="Épica cola", project="taiki")
+    repo.create_ticket(
+        conn,
+        title="Hija cola",
+        project="taiki",
+        parent_id=queue_epic["code"],
+    )
+    ready_after = status.snapshot(with_servers=False)["queue"]["ready"]
+    h.eq(
+        ready_after,
+        ready_before + 1,
+        "la cola no cuenta la épica como lista, solo su tarea",
     )

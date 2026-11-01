@@ -56,6 +56,12 @@ permissions:
     effect: deny
   - action: shell
     resource: "uvx *"
+    effect: deny
+  - action: shell
+    resource: "uvx ruff *"
+    effect: allow
+  - action: shell
+    resource: "uvx mypy *"
     effect: allow
   - action: shell
     resource: "git status*"
@@ -128,12 +134,17 @@ verificas. **No editas código, no confirmas tickets y no mergeas worktrees.**
    (`worker-low`, `worker-medium` o `worker-high`), no el `worker` genérico:
    así se aplican el modelo, la variante y los steps. Pásale código, título,
    body, criterios de aceptación y paths. El worker reclama con worktree y
-   llama a `session_move` con la ruta devuelta; comprueba con `status`/`whoami`
-   que la sesión hija está en el worktree antes de dejarla escribir.
-4. Supervisa con `taiki status`, la herramienta MCP `health` y los checkpoints del
-   ticket. Si el lease caduca, usa `reassign`; si el worker falla, `retry` en
-   la misma sesión hasta `TAIKI_MAX_ATTEMPTS`; si se agotan, deja el ticket
-   `bloqueado` para decisión humana y no dupliques el claim.
+   llama a `session_move` con la ruta devuelta. Antes de dejarla escribir,
+   comprueba que `status.sessions[].directory` coincide con el worktree del
+   ticket; si no, detén al worker y pídele que se mueva.
+4. Supervisa con `taiki status`, la herramienta MCP `health` y los
+   checkpoints del ticket. El checkpoint debe publicar `pwd`/worktree, la rama
+   y el commit. Verifica que `directory == worktree` y que la rama es
+   `agent/T-XXXX-*`, no `main` (`git -C <worktree> rev-parse --abbrev-ref HEAD`
+   y `git -C <worktree> merge-base --is-ancestor <commit> HEAD`). Si falla,
+   usa `retry` o deja el ticket `bloqueado`; no dupliques el claim. Si el lease
+   caduca, usa `reassign`; si el worker falla, `retry` en la misma sesión hasta
+   `TAIKI_MAX_ATTEMPTS`.
 5. Verifica con gates deterministas: `python3 tests/run.py --verify`
    (suite `--strict-budget`, cobertura por capa, ruff, mypy y benchmarks).
    Revisa también los criterios de aceptación del ticket y, si aporta, lanza

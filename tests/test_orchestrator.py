@@ -108,12 +108,10 @@ def run(h: Harness) -> None:
         reviewer["mode"] == "subagent"
         and _rule(reviewer, "edit", "*") == "deny"
         and _rule(reviewer, "shell", "*") == "deny"
-        and _rule(reviewer, "shell", "python3 tests/*") == "allow",
-        "el reviewer es de solo lectura y solo ejecuta tests",
-    )
-    h.ok(
-        "hallazgos" in reviewer_body.lower() and "No editas" in reviewer_body,
-        "el reviewer devuelve hallazgos sin editar",
+        and _rule(reviewer, "shell", "python3 tests/*") == "allow"
+        and "hallazgos" in reviewer_body.lower()
+        and "No editas" in reviewer_body,
+        "el reviewer es de solo lectura, ejecuta tests y devuelve hallazgos",
     )
 
     # ── Flujo: conductor delega, verifica y no confirma ─────────────────
@@ -757,17 +755,6 @@ def run(h: Harness) -> None:
         and item.get("effect") == "allow"
     }
     plans = {kind: agents_lib.assign(kind) for kind in domain.KINDS}
-    h.ok(
-        all(
-            plan["agent"] in agent_files
-            and plan["agent"] in conductor_allowed
-            and plan["model"]
-            and (plan["variant"] or plan["fallback"])
-            and plan["steps"] > 0
-            for plan in plans.values()
-        ),
-        "todos los tipos enrutan a un agente existente, permitido y con modelo",
-    )
     profile_ok = True
     for profile in ("worker-low", "worker-medium", "worker-high"):
         meta, _ = _frontmatter(f"{profile}.md")
@@ -782,10 +769,18 @@ def run(h: Harness) -> None:
             and meta["steps"] == cap["steps"]
         )
     h.ok(
-        profile_ok,
-        "los perfiles declaran el modelo, variante y steps del registro",
+        all(
+            plan["agent"] in agent_files
+            and plan["agent"] in conductor_allowed
+            and plan["model"]
+            and (plan["variant"] or plan["fallback"])
+            and plan["steps"] > 0
+            for plan in plans.values()
+        )
+        and profile_ok,
+        "todos los tipos y perfiles son lanzables y declaran modelo/steps",
     )
-    medium_plan = agents_lib.assign("mantenimiento")
+    medium_plan = plans["mantenimiento"]
     h.ok(
         medium_plan["agent"] == "worker-medium"
         and medium_plan["model"] == "opencode-go/deepseek-v4.1-flash"
@@ -987,4 +982,53 @@ def run(h: Harness) -> None:
         and _rule(conductor, "shell", "taiki commit *") is None
         and "--agent worker" in worker_body,
         "los writes de taiki solo van por MCP; el commit se atribuye",
+    )
+    h.ok(
+        "pwd" in worker_body
+        and "directory == worktree" in conductor_body
+        and "agent/T-XXXX-*" in conductor_body
+        and "merge-base --is-ancestor" in conductor_body,
+        "el protocolo publica y verifica directorio, rama y commit",
+    )
+    profiles = {
+        name: _frontmatter(name)[0]
+        for name in (
+            "conductor.md",
+            "worker.md",
+            "worker-low.md",
+            "worker-medium.md",
+            "worker-high.md",
+            "reviewer.md",
+        )
+    }
+    h.ok(
+        all(
+            _rule(meta, "shell", "uvx *") == "deny"
+            and _rule(meta, "shell", "uvx ruff *") == "allow"
+            and _rule(meta, "shell", "uvx mypy *") == "allow"
+            for meta in profiles.values()
+        ),
+        "uvx solo permite ruff y mypy en todos los perfiles",
+    )
+    problems = orchestrator.isolation_problems(
+        "T-0001",
+        worktree="/wt",
+        directory="/main",
+        branch="main",
+        commit=None,
+    )
+    h.ok(
+        orchestrator.isolation_problems(
+            "T-0001",
+            worktree="/wt",
+            directory="/wt",
+            branch="agent/T-0001-x",
+            commit="abc",
+        )
+        == []
+        and len(problems) == 3
+        and any("directory" in item for item in problems)
+        and any("rama" in item for item in problems)
+        and any("commit" in item for item in problems),
+        "el helper valida el aislamiento y detecta directory/rama/commit malos",
     )

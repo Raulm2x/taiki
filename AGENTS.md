@@ -31,7 +31,9 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    agentes escriben estado por MCP (claim/complete/transition/checkpoint)
    para conservar actor, actor_type y owner_session; el CLI es del usuario.
    Tras claim con worktree, usa `session_move` a la ruta devuelta. El shell
-   de los agentes solo permite lecturas de taiki y `taiki commit`. `taiki status`
+   de los agentes solo permite lecturas de taiki y `taiki commit`; `uvx` solo
+   ruff/mypy. El smoke opt-in es `python3 tests/live_orchestrator.py`.
+   Merge de la épica: .03 → .04 → … → .13. `taiki status`
    muestra la cola (listos, en curso, verificando, bloqueados) y métricas.
    Una dependencia solo se cierra al `verificado`/`confirmado`, no al
    `completado`.
