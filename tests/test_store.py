@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import threading
+import time
+
 from ticketlib import db, domain, render, repo
+from ticketlib.store import relations, workflow
 from tests.support import Harness
 
 
@@ -119,6 +123,58 @@ def run(h: Harness) -> None:
             for row in conn.execute("PRAGMA index_list(tags)")
         ),
         "no se añade un índice redundante para tags(tag)",
+    )
+
+    # ── complete resuelve git fuera de la transacción ────────────────────
+    slow = repo.create_ticket(conn, title="Cierre con git lento")
+    repo.claim_ticket(conn, slow["code"], agent="opencode")
+    resolving = threading.Event()
+    original_workflow = workflow.resolve_commit
+    original_relations = relations.resolve_commit
+
+    def slow_resolve(ref, cwd=None):
+        resolving.set()
+        time.sleep(0.25)
+        return "f" * 40
+
+    workflow.resolve_commit = slow_resolve
+    relations.resolve_commit = slow_resolve
+    outcome: dict[str, object] = {}
+
+    def closer() -> None:
+        worker = db.connect()
+        try:
+            outcome["ticket"] = repo.complete_ticket(
+                worker, slow["code"], resolution="listo", commit="abc1234"
+            )
+        finally:
+            worker.close()
+
+    thread = threading.Thread(target=closer)
+    try:
+        thread.start()
+        h.ok(resolving.wait(timeout=2), "el cierre llega a resolver el commit")
+        other = db.connect()
+        started = time.perf_counter()
+        other.execute("BEGIN IMMEDIATE")
+        waited = time.perf_counter() - started
+        other.execute("ROLLBACK")
+        other.close()
+        thread.join(timeout=5)
+    finally:
+        workflow.resolve_commit = original_workflow
+        relations.resolve_commit = original_relations
+    h.ok(
+        waited < 0.1,
+        f"complete no retiene el lock durante git ({waited * 1000:.0f} ms)",
+    )
+    closed_slow = outcome.get("ticket") or {}
+    h.ok(
+        closed_slow.get("status") == "completado"
+        and any(
+            link["kind"] == "commit" for link in closed_slow.get("links", [])
+        ),
+        "complete enlaza el commit resuelto",
     )
 
     # Atomicidad en claim_ticket

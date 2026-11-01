@@ -19,6 +19,7 @@ from ..domain import (
     TransitionError,
     ValidationError,
 )
+from ..gitutil import resolve_commit
 from ..util import (
     as_list,
     check_enum,
@@ -362,6 +363,11 @@ def complete_ticket(
     if not resolution:
         raise ValidationError("La resolución es obligatoria al completar un ticket")
 
+    # Resolver git antes de abrir la transacción: rev-parse puede tardar y no
+    # debe mantener el lock de escritura mientras otro proceso espera.
+    if commit:
+        commit = resolve_commit(commit) or commit
+
     # Una sola transacción: o se completa y se enlazan commit/archivos, o no
     # queda nada. ``db.tx`` es reentrante, así que transition/link_ticket se
     # suman a esta transacción en vez de abrir la suya.
@@ -386,6 +392,7 @@ def complete_ticket(
                 actor=actor,
                 actor_type=actor_type,
                 session_id=session_id,
+                resolve=False,
             )
         for file_ref in as_list(files):
             link_ticket(

@@ -56,12 +56,20 @@ def link_ticket(
     actor: str = "agente",
     actor_type: str = "agente",
     session_id: str | None = None,
+    *,
+    resolve: bool = True,
 ) -> dict[str, Any]:
+    """Enlaza una referencia a un ticket.
+
+    Con ``kind="commit"`` se resuelve el hash completo **antes** de abrir la
+    transacción. Los llamantes que ya lo resolvieron pasan ``resolve=False``
+    para no ejecutar git con el lock de escritura tomado.
+    """
     check_enum(kind, LINK_KINDS, "tipo de enlace")
     ref = (ref or "").strip()
     if not ref:
         raise ValidationError("La referencia del enlace es obligatoria")
-    if kind == "commit":
+    if kind == "commit" and resolve:
         full = resolve_commit(ref)
         if full:
             ref = full
@@ -117,6 +125,9 @@ def auto_link_commit(
     commit = (commit or "").strip()
     if not commit:
         raise ValidationError("La referencia del commit es obligatoria")
+    full = resolve_commit(commit)
+    if full:
+        commit = full
 
     codes = list(dict.fromkeys(TICKET_CODE_RE.findall(message or "")))
     linked: list[str] = []
@@ -131,6 +142,7 @@ def auto_link_commit(
                 actor=actor,
                 actor_type=actor_type,
                 session_id=session_id,
+                resolve=False,
             )
         except NotFoundError:
             missing.append(code)
