@@ -771,7 +771,7 @@ def run(h: Harness) -> None:
             plan["agent"] in agent_files
             and plan["agent"] in conductor_allowed
             and plan["model"]
-            and plan["variant"]
+            and (plan["variant"] or plan["fallback"])
             and plan["steps"] > 0
             for plan in plans.values()
         ),
@@ -781,13 +781,26 @@ def run(h: Harness) -> None:
     for profile in ("worker-low", "worker-medium", "worker-high"):
         meta, _ = _frontmatter(f"{profile}.md")
         cap = agents_lib.capability(profile)
+        expected_model = (
+            cap["model"]
+            if cap["variant"] is None
+            else f"{cap['model']}#{cap['variant']}"
+        )
         profile_ok = profile_ok and (
-            meta["model"] == f"{cap['model']}#{cap['variant']}"
+            meta["model"] == expected_model
             and meta["steps"] == cap["steps"]
         )
     h.ok(
         profile_ok,
         "los perfiles declaran el modelo, variante y steps del registro",
+    )
+    medium_plan = agents_lib.assign("mantenimiento")
+    h.ok(
+        medium_plan["agent"] == "worker-medium"
+        and medium_plan["model"] == "opencode-go/deepseek-v4.1-flash"
+        and medium_plan["variant"] is None
+        and medium_plan["fallback"] is True,
+        "worker-medium usa deepseek por defecto, sin variante medium",
     )
     h.ok(
         _rule(worker, "shell", "git add -A*") == "deny"

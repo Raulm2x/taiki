@@ -1,7 +1,7 @@
 ---
 description: Implementa tareas normales de mantenimiento o funcionalidad
 mode: subagent
-model: opencode-go/gemini-4-argon#medium
+model: opencode-go/deepseek-v4.1-flash
 steps: 24
 permissions:
   - action: subagent

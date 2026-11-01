@@ -109,14 +109,6 @@ DEFAULT_CONCURRENCY = 3
 # sobrescribirlo en ``models``; un modelo/variante fuera del catálogo falla.
 DEFAULT_MODELS: dict[str, list[str]] = {
     "opencode-go/deepseek-v4.1-flash": ["low", "high", "max"],
-    "opencode-go/gemini-4-argon": ["low", "medium", "high"],
-    "opencode-go/minimax-m3.1-flash": [
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max",
-    ],
 }
 
 DEFAULT_AGENTS: dict[str, dict[str, Any]] = {
@@ -156,8 +148,10 @@ DEFAULT_AGENTS: dict[str, dict[str, Any]] = {
         "steps": 12,
     },
     "worker-medium": {
-        "model": "opencode-go/gemini-4-argon",
-        "variant": "medium",
+        # deepseek no expone variante "medium": se usa el default del cliente
+        # en vez de un modelo más caro por tokens.
+        "model": "opencode-go/deepseek-v4.1-flash",
+        "variant": None,
         "strengths": ["mantenimiento", "funcionalidad", "otro"],
         "max_parallel": 2,
         "paths": [],
