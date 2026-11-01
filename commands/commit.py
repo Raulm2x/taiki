@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from typing import Any
 
@@ -105,7 +106,18 @@ def cmd_commit(args: argparse.Namespace) -> int:
             return 0
         message = args.message or ticket["title"]
         message = _with_code(message, ticket["code"])
-        sha = commits.commit(root, message)
+        # El hook pre-commit lee TAIKI_TICKET: sin exportarlo, con varios
+        # tickets activos el subproceso de git no sabe a cuál pertenece el
+        # índice aunque `--ticket` venga explícito.
+        previous = os.environ.get("TAIKI_TICKET")
+        os.environ["TAIKI_TICKET"] = ticket["code"]
+        try:
+            sha = commits.commit(root, message)
+        finally:
+            if previous is None:
+                os.environ.pop("TAIKI_TICKET", None)
+            else:
+                os.environ["TAIKI_TICKET"] = previous
         actor = (getattr(args, "agent", None) or "agente").strip() or "agente"
         repo.link_ticket(
             conn,

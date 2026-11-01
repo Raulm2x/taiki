@@ -42,12 +42,9 @@ def run(h: Harness) -> None:
         "clean_paths solo retira el prefijo ./",
     )
     h.ok(
-        commits.matches(".github/workflows/ci.yml", [".github/workflows/"]),
-        "matches reconoce rutas ocultas",
-    )
-    h.ok(
-        bool(commits.overlaps([".github/workflows/"], [".github/workflows/ci.yml"])),
-        "overlaps detecta solapes en rutas ocultas",
+        commits.matches(".github/workflows/ci.yml", [".github/workflows/"])
+        and bool(commits.overlaps([".github/workflows/"], [".github/workflows/ci.yml"])),
+        "matches y overlaps reconocen rutas ocultas",
     )
     h.eq(
         commits.overlaps([".env"], ["env"]),
@@ -64,7 +61,7 @@ def run(h: Harness) -> None:
     _git(root, "commit", "-m", "inicio")
 
     info = workspace.init_workspace(root, name="Repo")
-    with h.env(TAIKI_DB=str(info["db"])):
+    with h.env(TAIKI_DB=str(info["db"]), TAIKI_TICKET=None):
         conn = db.connect()
         try:
             ticket = repo.create_ticket(
@@ -108,6 +105,15 @@ def run(h: Harness) -> None:
                 report["ok"] and report["staged"] == ["src/a.py"],
                 "el staging dentro del alcance pasa la comprobación",
             )
+            # El hook pre-commit exige TAIKI_TICKET: con dos tickets activos,
+            # `taiki commit --ticket` debe exportarlo al subproceso de git.
+            hook = root / ".git" / "hooks" / "pre-commit"
+            hook.write_text(
+                '#!/bin/sh\n[ -n "$TAIKI_TICKET" ] || '
+                '{ echo "pre-commit: define TAIKI_TICKET" >&2; exit 1; }\n',
+                encoding="utf-8",
+            )
+            hook.chmod(0o755)
             args = argparse.Namespace(
                 message="cambio en src",
                 ticket=ticket["code"],
@@ -120,7 +126,7 @@ def run(h: Harness) -> None:
                 io.StringIO()
             ), contextlib.redirect_stderr(io.StringIO()):
                 code = cmd_commit(args)
-            h.eq(code, 0, "taiki commit acepta las rutas del ticket")
+            h.eq(code, 0, "taiki commit exporta TAIKI_TICKET y el hook lo acepta")
             subject = _git(root, "log", "-1", "--format=%s").strip()
             h.ok(
                 ticket["code"] in subject,
@@ -139,6 +145,26 @@ def run(h: Harness) -> None:
                 and link_event["actor_type"] == "agente"
                 and link_event["session_id"] == "ses_commit",
                 "el commit queda enlazado y atribuido al agente",
+            )
+
+            # ── Sin --ticket y varios activos: no adivina ──────────────
+            stderr = io.StringIO()
+            with contextlib.chdir(root), contextlib.redirect_stdout(
+                io.StringIO()
+            ), contextlib.redirect_stderr(stderr):
+                sin_ticket = cmd_commit(
+                    argparse.Namespace(
+                        message="sin ticket",
+                        ticket=None,
+                        agent="worker",
+                        session="ses_commit",
+                        dry_run=False,
+                        json=False,
+                    )
+                )
+            h.ok(
+                sin_ticket == 1 and "varios tickets activos" in stderr.getvalue(),
+                "sin --ticket y varios activos, taiki commit falla con el mensaje esperado",
             )
 
             # ── Índice fuera del alcance ────────────────────────────────
