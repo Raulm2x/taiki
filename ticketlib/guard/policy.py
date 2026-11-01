@@ -8,7 +8,7 @@ from typing import Any
 
 from .. import db, env, repo, scratch, workspace
 from ..domain import TicketError
-from ..util import normalize_agent, resolve_scope
+from ..util import lease_expired, normalize_agent, resolve_scope
 from .commands import command_touches_home, path_guarded, risky_git
 from .context import auto_title, find_active, find_pending, find_session_epic, session_chain
 from .hook import is_mutating
@@ -188,7 +188,7 @@ def other_active_sessions(
 ) -> list[dict[str, Any]]:
     """Tickets en progreso que no pertenecen a esta sesión."""
     rows = conn.execute(
-        "SELECT t.code, t.assigned_to, t.updated_at, "
+        "SELECT t.code, t.assigned_to, t.updated_at, t.lease_until, "
         "COALESCE(t.owner_session, ("
         "  SELECT e.session_id FROM events e "
         "  WHERE e.ticket_id = t.id AND e.session_id IS NOT NULL "
@@ -198,11 +198,16 @@ def other_active_sessions(
     ).fetchall()
     others: list[dict[str, Any]] = []
     for row in rows:
+        # Un lease vencido es una sesión muerta: no debe bloquear a las vivas.
+        if lease_expired(row["lease_until"]):
+            continue
         sid = row["sid"]
         if sid is not None:
             if sid not in chain:
                 others.append(dict(row))
-        elif row["assigned_to"] and row["assigned_to"] != agent:
+        elif row["assigned_to"]:
+            # Sin sesión no se puede distinguir entre dos sesiones del mismo
+            # agente; se trata como ajena para no compartir el árbol a ciegas.
             others.append(dict(row))
     return others
 
@@ -295,7 +300,12 @@ def evaluate(
     conn = db.connect(target)
     try:
         chain = session_chain(session)
+        active = find_active(conn, chain, agent)
         others = other_active_sessions(conn, chain, agent) if mutating or risky else []
+        if active is not None:
+            # El ticket propio nunca es "otra sesión", aunque no tenga sesión
+            # explícita y su fila aparezca en la consulta de activos.
+            others = [item for item in others if item["code"] != active["code"]]
         if risky:
             if others:
                 return _blocked(
@@ -303,7 +313,6 @@ def evaluate(
                 )
             if not mutating:
                 return _allowed("skipped", session)
-        active = find_active(conn, chain, agent)
         if active is not None:
             if (
                 mutating

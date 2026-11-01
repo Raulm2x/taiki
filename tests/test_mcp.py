@@ -174,7 +174,19 @@ def run(h: Harness) -> None:
     )
     h.ok(len(mcp_linked["links"]) == 1, "call_tool('link') registra enlace")
 
-    # call_tool('complete')
+    # call_tool('complete'): otra sesión no puede cerrar el ticket
+    h.raises(
+        domain.PermissionDenied,
+        lambda: handlers.call_tool(
+            "complete",
+            {
+                "code": mcp_created["code"],
+                "resolution": "cierre ajeno",
+            },
+            meta={"sessionId": "session-otra"},
+        ),
+        "call_tool('complete') rechaza a otra sesión",
+    )
     mcp_completed = handlers.call_tool(
         "complete",
         {
@@ -182,6 +194,7 @@ def run(h: Harness) -> None:
             "resolution": "Implementado y verificado en suite MCP.",
             "commit": "mcp9876",
         },
+        meta={"sessionId": "session-claim-111"},
     )
     h.ok(mcp_completed["status"] == "completado", "call_tool('complete') pasa estado a completado")
 

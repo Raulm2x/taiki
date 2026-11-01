@@ -19,7 +19,14 @@ from ..domain import (
     TransitionError,
     ValidationError,
 )
-from ..util import normalize_agent, as_list, check_enum, now, normalize_code
+from ..util import (
+    as_list,
+    check_enum,
+    lease_expired,
+    normalize_agent,
+    normalize_code,
+    now,
+)
 from .common import UNSET, event, row_by_code
 from .relations import link_ticket
 from .tickets import get_ticket
@@ -40,14 +47,8 @@ def _future(minutes: int) -> str:
 
 
 def _expired(value: str | None, at: str | None = None) -> bool:
-    """¿El lease venció? Sin fecha se considera vigente (compatibilidad)."""
-    if not value:
-        return False
-    try:
-        reference = datetime.fromisoformat(at or now())
-        return datetime.fromisoformat(value) <= reference
-    except ValueError:
-        return False
+    """Alias histórico de ``util.lease_expired``."""
+    return lease_expired(value, at)
 
 
 def transition(
@@ -60,6 +61,7 @@ def transition(
     session_id: str | None = None,
     assigned_to: Any = UNSET,
     resolution: Any = UNSET,
+    force: bool = False,
 ) -> dict[str, Any]:
     row = row_by_code(conn, code)
     current = row["status"]
@@ -67,6 +69,17 @@ def transition(
 
     check_enum(status, STATUSES, "estado")
     check_enum(actor_type, ACTOR_TYPES, "actor_type")
+
+    owner = row["owner_session"]
+    if current == "en_progreso" and owner and not force and actor_type != "usuario":
+        same = session_id == owner or (
+            session_id is None and owner == f"agent:{actor}"
+        )
+        if not same:
+            raise PermissionDenied(
+                f"{row['code']} está reclamado por otra sesión ({owner}); "
+                "usa force=true si de verdad debes cambiarlo."
+            )
 
     if status == "confirmado" and actor_type != "usuario":
         raise PermissionDenied(
@@ -169,6 +182,7 @@ def claim_ticket(
     session_id: str | None = None,
     force: bool = False,
     steal: bool = False,
+    anonymous_owner: bool = False,
 ) -> dict[str, Any]:
     agent = normalize_agent(agent)
     with db.tx(conn):
@@ -197,35 +211,43 @@ def claim_ticket(
 
         ts = now()
         owner = row["owner_session"]
+        # En el camino MCP, un agente sin sesión usa un dueño estable por
+        # nombre. Así dos claims anónimos del mismo agente no se pisan en
+        # silencio. El API interno/CLI conserva el comportamiento histórico.
+        owner_key = session_id or (
+            f"agent:{agent}"
+            if anonymous_owner and actor_type == "agente"
+            else None
+        )
         if (
             row["status"] == "en_progreso"
             and owner
-            and (session_id is None or owner != session_id)
+            and (owner_key is None or owner != owner_key)
             and not force
             and not steal
         ):
             raise TransitionError(
                 f"{row['code']} está en progreso en la sesión {owner}. "
-                "Espera a que termine o usa --steal para recuperarlo."
+                "Espera a que termine o usa steal=true si el lease caducó."
             )
         if (
             steal
             and row["status"] == "en_progreso"
             and owner
-            and (session_id is None or owner != session_id)
+            and (owner_key is None or owner != owner_key)
             and not force
             and not _expired(row["lease_until"], now())
         ):
             raise TransitionError(
                 f"{row['code']} tiene un lease vigente hasta "
-                f"{row['lease_until']}; usa --force para forzarlo."
+                f"{row['lease_until']}; usa force=true para forzarlo."
             )
-        if session_id and not force:
+        if owner_key and not force:
             other = conn.execute(
                 "SELECT code FROM tickets WHERE archived = 0 "
                 "AND status = 'en_progreso' AND owner_session = ? "
                 "AND id != ? LIMIT 1",
-                (session_id, row["id"]),
+                (owner_key, row["id"]),
             ).fetchone()
             if other is not None:
                 raise TransitionError(
@@ -238,7 +260,7 @@ def claim_ticket(
                 "UPDATE tickets SET assigned_to = ?, updated_at = ?, "
                 "owner_session = ?, heartbeat_at = ?, lease_until = ? "
                 "WHERE id = ?",
-                (agent, ts, session_id, ts, lease_until, row["id"]),
+                (agent, ts, owner_key, ts, lease_until, row["id"]),
             )
             event(
                 conn,
@@ -266,7 +288,7 @@ def claim_ticket(
             conn.execute(
                 "UPDATE tickets SET owner_session = ?, heartbeat_at = ?, "
                 "lease_until = ? WHERE id = ?",
-                (session_id, ts, lease_until, row["id"]),
+                (owner_key, ts, lease_until, row["id"]),
             )
             ticket = get_ticket(conn, code)
 
@@ -329,6 +351,7 @@ def complete_ticket(
     actor: str = "agente",
     actor_type: str = "agente",
     session_id: str | None = None,
+    force: bool = False,
 ) -> dict[str, Any]:
     resolution = (resolution or "").strip()
     if not resolution:
@@ -343,6 +366,7 @@ def complete_ticket(
         actor_type=actor_type,
         session_id=session_id,
         resolution=resolution,
+        force=force,
     )
     if commit:
         link_ticket(

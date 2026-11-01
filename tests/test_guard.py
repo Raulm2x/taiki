@@ -7,6 +7,7 @@ import io
 import json
 import os
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 import cli
 from ticketlib import audit as audit_lib, db, guard, repo, scratch
@@ -719,6 +720,84 @@ def run(h: Harness) -> None:
             h.ok(
                 allowed["allow"],
                 "sin otras sesiones activas git add -A sigue permitido",
+            )
+
+            # Un claim caducado no debe bloquear a una sesión viva.
+            stale = repo.create_ticket(
+                pconn, title="Sesión muerta", project=".config"
+            )
+            repo.claim_ticket(
+                pconn, stale["code"], agent="opencode", session_id="ses_muerta"
+            )
+            past = (
+                datetime.now().astimezone() - timedelta(minutes=10)
+            ).isoformat(timespec="seconds")
+            pconn.execute(
+                "UPDATE tickets SET heartbeat_at = ?, lease_until = ? "
+                "WHERE code = ?",
+                (past, past, stale["code"]),
+            )
+            pconn.execute(
+                "DELETE FROM links WHERE kind IN ('worktree', 'rama') "
+                "AND ticket_id = (SELECT id FROM tickets WHERE code = ?)",
+                (mine["code"],),
+            )
+            pconn.commit()
+            h.ok(
+                any(item["code"] == stale["code"] for item in repo.stale_claims(pconn)),
+                "stale_claims detecta el lease vencido del escenario",
+            )
+            stale_ignored = guard.evaluate(
+                tool="write",
+                session="ses_mia",
+                agent="opencode",
+                path=str(parallel_dir / "nota.txt"),
+                cwd=str(parallel_dir),
+            )
+            h.ok(
+                stale_ignored["allow"] and stale_ignored["action"] == "active",
+                "un claim caducado no exige worktree a la sesión viva",
+            )
+
+            # Sin sesión, el ticket propio (sin dueño) no es "otra sesión".
+            for code in (mine["code"], stale["code"]):
+                repo.transition(
+                    pconn,
+                    code,
+                    "cancelado",
+                    note="fin del escenario sin sesión",
+                    actor="usuario",
+                    actor_type="usuario",
+                )
+            legacy = repo.create_ticket(
+                pconn, title="Ticket sin dueño", project=".config"
+            )
+            repo.claim_ticket(
+                pconn, legacy["code"], agent="opencode", session_id=None
+            )
+            no_session = guard.evaluate(
+                tool="write",
+                session=None,
+                agent="opencode",
+                path=str(parallel_dir / "nota.txt"),
+                cwd=str(parallel_dir),
+            )
+            h.ok(
+                no_session["allow"]
+                and no_session["action"] == "active"
+                and no_session["ticket"] == legacy["code"],
+                "el ticket propio sin sesión no se cuenta como otra sesión",
+            )
+            no_session_git = guard.evaluate(
+                tool="bash",
+                session=None,
+                agent="opencode",
+                command="git add -A",
+                cwd=str(parallel_dir),
+            )
+            h.ok(
+                no_session_git["allow"],
+                "el ticket propio sin sesión no bloquea git add -A",
             )
         finally:
             pconn.close()

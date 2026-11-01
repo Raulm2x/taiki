@@ -49,10 +49,13 @@ def find_active(
             tuple(chain),
         ).fetchone()
     if row is None and not chain:
+        # Nunca adoptar un ticket reclamado por una sesión real. Solo se
+        # heredan los tickets sin dueño o el claim anónimo del mismo agente.
         row = conn.execute(
             "SELECT * FROM tickets WHERE archived = 0 AND status = 'en_progreso' "
+            "AND (owner_session IS NULL OR owner_session = ?) "
             "AND assigned_to = ? ORDER BY updated_at DESC LIMIT 1",
-            (agent,),
+            (f"agent:{agent}", agent),
         ).fetchone()
     return dict(row) if row else None
 

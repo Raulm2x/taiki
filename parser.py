@@ -210,6 +210,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("code")
     p.add_argument("status", choices=STATUSES)
     p.add_argument("--note")
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="Cambia el estado aunque el ticket esté reclamado",
+    )
     p.set_defaults(func=cmd_transition)
 
     p = sub.add_parser(
@@ -245,6 +250,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-r", "--resolution", required=True)
     p.add_argument("--commit")
     p.add_argument("--file", action="append")
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="Completa aunque el ticket esté reclamado por otra sesión",
+    )
     p.set_defaults(func=cmd_complete)
 
     p = sub.add_parser("comment", help="Añade un comentario")

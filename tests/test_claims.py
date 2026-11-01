@@ -10,6 +10,7 @@ from pathlib import Path
 
 from ticketlib import db, domain, repo
 from ticketlib.guard.context import find_active
+from ticketlib.util import lease_expired
 from tests.support import Harness
 
 
@@ -40,6 +41,68 @@ def run(h: Harness) -> None:
         again["status"] == "en_progreso",
         "la sesión dueña puede refrescar su claim",
     )
+    h.ok(
+        find_active(conn, [], "opencode") is None,
+        "sin sesión no se adopta un ticket reclamado por una sesión real",
+    )
+
+    # ── Claim anónimo: dueño estable por agente ─────────────────────────
+    anon = repo.create_ticket(conn, title="Claim anónimo")
+    first_anon = repo.claim_ticket(
+        conn,
+        anon["code"],
+        agent="opencode",
+        session_id=None,
+        anonymous_owner=True,
+    )
+    h.eq(
+        first_anon["owner_session"],
+        "agent:opencode",
+        "un claim sin sesión usa un dueño estable agent:<nombre>",
+    )
+    h.raises(
+        domain.TransitionError,
+        lambda: repo.claim_ticket(
+            conn,
+            anon["code"],
+            agent="claude",
+            session_id=None,
+            anonymous_owner=True,
+        ),
+        "otro agente no puede quedarse un claim anónimo ajeno",
+    )
+    h.eq(
+        repo.claim_ticket(
+            conn,
+            anon["code"],
+            agent="opencode",
+            session_id=None,
+            anonymous_owner=True,
+        )["owner_session"],
+        "agent:opencode",
+        "el mismo agente refresca su claim anónimo",
+    )
+    h.eq(
+        find_active(conn, [], "opencode")["code"],
+        anon["code"],
+        "find_active recupera el claim anónimo del propio agente",
+    )
+    h.ok(
+        find_active(conn, [], "claude") is None,
+        "find_active no adopta el claim de otro agente",
+    )
+    repo.complete_ticket(
+        conn,
+        anon["code"],
+        resolution="anónimo cerrado",
+        actor="opencode",
+        session_id=None,
+    )
+    h.ok(
+        lease_expired("2020-01-01T00:00:00"),
+        "lease_expired admite fechas naive (compatibilidad)",
+    )
+    h.ok(not lease_expired(None), "sin lease no se considera vencido")
 
     # ── Un solo ticket activo por sesión ────────────────────────────────
     second = repo.create_ticket(conn, title="Segundo trabajo")
@@ -50,7 +113,9 @@ def run(h: Harness) -> None:
         ),
         "una sesión no puede tener dos tickets en progreso",
     )
-    repo.complete_ticket(conn, shared["code"], resolution="listo")
+    repo.complete_ticket(
+        conn, shared["code"], resolution="listo", session_id="ses_a"
+    )
     claimed = repo.claim_ticket(
         conn, second["code"], agent="opencode", session_id="ses_a"
     )
@@ -193,8 +258,29 @@ def run(h: Harness) -> None:
         "las sesiones ajenas no heredan el ticket por eventos",
     )
 
+    # ── Cerrar exige la sesión dueña (o force) ──────────────────────────
+    h.raises(
+        domain.PermissionDenied,
+        lambda: repo.complete_ticket(
+            conn,
+            second["code"],
+            resolution="cierre ajeno",
+            session_id="ses_c",
+        ),
+        "otra sesión no puede completar el ticket",
+    )
+    h.raises(
+        domain.PermissionDenied,
+        lambda: repo.complete_ticket(
+            conn, second["code"], resolution="cierre sin sesión"
+        ),
+        "una sesión sin identificar no completa un ticket reclamado",
+    )
+
     # ── Cerrar libera el claim ──────────────────────────────────────────
-    repo.complete_ticket(conn, second["code"], resolution="terminado")
+    repo.complete_ticket(
+        conn, second["code"], resolution="terminado", session_id="ses_b"
+    )
     closed = repo.get_ticket(conn, second["code"])
     h.ok(
         closed["owner_session"] is None and closed["lease_until"] is None,

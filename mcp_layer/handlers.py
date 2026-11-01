@@ -193,6 +193,8 @@ def _handle_claim(
         agent=actor,
         session_id=session,
         steal=bool(args.get("steal")),
+        force=bool(args.get("force")),
+        anonymous_owner=True,
     )
 
 
@@ -249,6 +251,7 @@ def _handle_transition(
         actor=actor,
         actor_type="agente",
         session_id=session,
+        force=bool(args.get("force")),
     )
 
 
@@ -273,6 +276,7 @@ def _handle_complete(
         actor=actor,
         actor_type="agente",
         session_id=session,
+        force=bool(args.get("force")),
     )
 
 

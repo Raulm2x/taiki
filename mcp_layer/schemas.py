@@ -53,6 +53,15 @@ STATUS = {
     "enum": list(STATUSES),
     "description": "Estado del ticket",
 }
+SESSION = {
+    "type": "string",
+    "description": "Identificador de sesión. Solo si tu cliente no lo envía en _meta.",
+}
+FORCE = {
+    "type": "boolean",
+    "default": False,
+    "description": "Fuerza la operación aunque el ticket esté reclamado por otra sesión.",
+}
 
 TOOLS = [
     _tool(
@@ -173,12 +182,19 @@ TOOLS = [
     _tool(
         "claim",
         "Reclama un ticket y lo pasa a 'en_progreso', asignándolo al agente. "
-        "Llámalo antes de empezar a modificar código.",
-        {"code": CODE, "agent": AGENT, "steal": {
-            "type": "boolean",
-            "description": "Recupera un claim caducado de otra sesión",
-            "default": False,
-        }},
+        "Llámalo antes de empezar a modificar código. No reclames una épica: "
+        "reclama una de sus tareas.",
+        {
+            "code": CODE,
+            "agent": AGENT,
+            "session_id": SESSION,
+            "steal": {
+                "type": "boolean",
+                "description": "Recupera un claim caducado de otra sesión",
+                "default": False,
+            },
+            "force": FORCE,
+        },
         ("code",),
     ),
     _tool(
@@ -207,6 +223,7 @@ TOOLS = [
                 "description": "Épica de la tarea; null la devuelve a la raíz",
             },
             "agent": AGENT,
+            "session_id": SESSION,
         },
         ("code",),
     ),
@@ -222,6 +239,8 @@ TOOLS = [
                 "description": "Motivo o contexto. Obligatorio al reabrir.",
             },
             "agent": AGENT,
+            "session_id": SESSION,
+            "force": FORCE,
         },
         ("code", "status"),
     ),
@@ -242,13 +261,20 @@ TOOLS = [
                 "description": "Archivos modificados",
             },
             "agent": AGENT,
+            "session_id": SESSION,
+            "force": FORCE,
         },
         ("code", "resolution"),
     ),
     _tool(
         "comment",
         "Añade un comentario al historial del ticket (decisiones, bloqueos, hallazgos).",
-        {"code": CODE, "body": {"type": "string"}, "agent": AGENT},
+        {
+            "code": CODE,
+            "body": {"type": "string"},
+            "agent": AGENT,
+            "session_id": SESSION,
+        },
         ("code", "body"),
     ),
     _tool(
@@ -263,6 +289,7 @@ TOOLS = [
             },
             "ref": {"type": "string", "description": "Commit, ruta, URL o id de sesión"},
             "agent": AGENT,
+            "session_id": SESSION,
         },
         ("code", "kind", "ref"),
     ),

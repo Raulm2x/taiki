@@ -19,6 +19,7 @@ def cmd_transition(args: argparse.Namespace) -> int:
             note=args.note,
             actor="usuario",
             actor_type="usuario",
+            force=getattr(args, "force", False),
         )
     print(f"{ticket['code']} → {ticket['status']}")
     return 0
@@ -135,6 +136,7 @@ def cmd_complete(args: argparse.Namespace) -> int:
             files=args.file,
             actor="usuario",
             actor_type="usuario",
+            force=getattr(args, "force", False),
         )
     print(f"{ticket['code']} completado")
     return 0

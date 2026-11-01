@@ -14,6 +14,34 @@ def now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def parse_datetime(value: Any) -> datetime | None:
+    """Convierte una marca ISO en ``datetime`` consciente de zona.
+
+    Las fechas históricas sin zona se interpretan como hora local para no
+    romper comparaciones entre valores naive y aware.
+    """
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.astimezone()
+    return parsed
+
+
+def lease_expired(value: Any, at: Any = None) -> bool:
+    """¿El lease venció? Sin fecha se considera vigente (compatibilidad)."""
+    if not value:
+        return False
+    moment = parse_datetime(value)
+    reference = parse_datetime(at or now())
+    if moment is None or reference is None:
+        return False
+    return moment <= reference
+
+
 # Agentes internos de OpenCode que no identifican al dueño real.
 AGENT_ALIASES = {
     "build": "opencode",
