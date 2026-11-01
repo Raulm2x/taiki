@@ -172,7 +172,9 @@ def check_push(
             except TicketError:
                 continue
             checked += 1
-            result = check_commit_message(conn, subject)
+            result = check_commit_message(
+                conn, subject, require_confirmed=True
+            )
             if result["ok"] or result.get("reason") == "no-code":
                 continue
             blocked.append(
@@ -212,11 +214,16 @@ def hooks_installed(repo: str | Path = ".") -> dict[str, bool]:
     return found
 
 
-def check_commit_message(conn: Any, message: str) -> dict[str, Any]:
-    """Exige un ticket existente en el asunto y avisa de los del cuerpo.
+def check_commit_message(
+    conn: Any, message: str, *, require_confirmed: bool = False
+) -> dict[str, Any]:
+    """Exige un ticket reclamado o cerrado en el asunto.
 
     Solo la primera línea (asunto) bloquea: el cuerpo puede citar códigos
-    antiguos o renumerados al explicar el cambio. Se puede saltar con
+    antiguos o renumerados al explicar el cambio. Se aceptan tickets en
+    ``en_progreso``, ``completado`` y ``confirmado``; un ticket ``nuevo`` o
+    ``pendiente`` no se ha reclamado y no debería tener commits. El push llama
+    con ``require_confirmed=True`` y solo acepta ``confirmado``. Se puede saltar con
     ``TAIKI_HOOK=off`` (o el alias ``TICKETS_HOOK``) o con ``[sin-ticket]`` en
     el propio mensaje.
     """
@@ -262,8 +269,13 @@ def check_commit_message(conn: Any, message: str) -> dict[str, Any]:
             "warnings": [],
         }
 
+    ready = (
+        {"confirmado"}
+        if require_confirmed
+        else {"en_progreso", "completado", "confirmado"}
+    )
     unconfirmed = [
-        code for code in subject_codes if statuses[code] != "confirmado"
+        code for code in subject_codes if statuses[code] not in ready
     ]
     if unconfirmed:
         return {

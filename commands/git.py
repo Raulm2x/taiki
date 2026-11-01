@@ -93,9 +93,10 @@ def cmd_hook_check_msg(args: argparse.Namespace) -> int:
         detail = f"Tickets inexistentes en el asunto: {', '.join(result['missing'])}."
     elif result.get("unconfirmed"):
         detail = (
-            "Tickets sin confirmar en el asunto: "
+            "Tickets no reclamados en el asunto: "
             + ", ".join(result["unconfirmed"])
-            + ". El usuario debe confirmarlos antes del commit."
+            + ". Deben estar en_progreso, completado o confirmado; "
+            "el push exige confirmación del usuario."
         )
     else:
         detail = "El asunto no cita ningún ticket."

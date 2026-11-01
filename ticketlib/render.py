@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import textwrap
+from pathlib import Path
 from typing import Any
 
 from . import agents, deeplink
@@ -160,9 +161,17 @@ def print_table(
         print(output)
 
 
+def _json_default(value: Any) -> Any:
+    if isinstance(value, Path):
+        return str(value)
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
 def to_json(data: Any) -> str:
     """Serializa estructuras de datos a JSON formateado con sangría."""
-    return json.dumps(data, ensure_ascii=False, indent=2)
+    return json.dumps(
+        data, ensure_ascii=False, indent=2, default=_json_default
+    )
 
 
 def _indent(text: str, prefix: str = "  ") -> str:

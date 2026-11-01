@@ -5,13 +5,14 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import json
 import shutil
 import subprocess
 from pathlib import Path
 
 from commands.tickets import cmd_claim
 from commands.workflow import cmd_confirm
-from ticketlib import db, repo, workspace, worktree
+from ticketlib import db, render, repo, workspace, worktree
 from ticketlib.domain import TicketError
 from tests.seeds import git_repo
 from tests.support import Harness
@@ -68,6 +69,11 @@ def run(h: Harness) -> None:
     h.ok(
         created["branch"].startswith(f"agent/{ticket['code']}"),
         "la rama usa agent/<T-XXXX>-<slug>",
+    )
+    serialized = json.loads(render.to_json(created))
+    h.ok(
+        serialized["path"] and serialized["main"],
+        "worktree create se serializa a JSON (Path incluido)",
     )
     h.ok(
         (path / "opencode.json").is_file(),

@@ -64,13 +64,21 @@ def run(h: Harness) -> None:
         body_ok["ok"] and body_ok["warnings"] == [],
         "el cuerpo no avisa de códigos que sí existen",
     )
-    blocked_commit = githook.check_commit_message(
+    allowed_commit = githook.check_commit_message(
         conn, f"arreglo {pending_commit['code']}"
     )
     h.ok(
-        not blocked_commit["ok"]
-        and blocked_commit["unconfirmed"] == [pending_commit["code"]],
-        "commit-msg exige confirmación antes del commit",
+        allowed_commit["ok"],
+        "commit-msg permite un ticket completado pendiente de confirmar",
+    )
+    draft = repo.create_ticket(conn, title="Sin reclamar")
+    blocked_draft = githook.check_commit_message(
+        conn, f"arreglo {draft['code']}"
+    )
+    h.ok(
+        not blocked_draft["ok"]
+        and blocked_draft["unconfirmed"] == [draft["code"]],
+        "commit-msg bloquea un ticket nuevo sin reclamar",
     )
     h.ok(
         githook.check_commit_message(conn, "x T-9999")["missing"]
