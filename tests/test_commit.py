@@ -10,6 +10,7 @@ from pathlib import Path
 
 from commands.commit import cmd_commit, cmd_hook_check_index
 from ticketlib import audit as audit_lib, commits, db, repo, workspace
+from ticketlib.util import clean_paths
 from tests.seeds import git_repo
 from tests.support import Harness
 
@@ -25,6 +26,35 @@ def _git(root: Path, *args: str) -> str:
 
 def run(h: Harness) -> None:
     tmp = Path(h.tmp)
+
+    # ── Rutas con punto inicial se conservan ────────────────────────────
+    h.eq(
+        clean_paths(
+            [
+                ".github/x",
+                ".env",
+                ".taiki/config.json",
+                "./src/a.py",
+                "../fuera",
+            ]
+        ),
+        [".github/x", ".env", ".taiki/config.json", "src/a.py", "../fuera"],
+        "clean_paths solo retira el prefijo ./",
+    )
+    h.ok(
+        commits.matches(".github/workflows/ci.yml", [".github/workflows/"]),
+        "matches reconoce rutas ocultas",
+    )
+    h.ok(
+        bool(commits.overlaps([".github/workflows/"], [".github/workflows/ci.yml"])),
+        "overlaps detecta solapes en rutas ocultas",
+    )
+    h.eq(
+        commits.overlaps([".env"], ["env"]),
+        [],
+        "no confunde .env con env",
+    )
+
     root = git_repo(tmp / "repo")
     (root / "src").mkdir()
     (root / "src" / "a.py").write_text("a\n", encoding="utf-8")

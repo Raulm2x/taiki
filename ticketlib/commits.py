@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .domain import TicketError
+from .util import clean_path
 
 
 def _git(root: Path, *args: str) -> str:
@@ -52,7 +53,7 @@ def unstaged(root: str | Path) -> list[str]:
 def matches(path: str, patterns: Iterable[str]) -> bool:
     """¿La ruta cae dentro de alguno de los globs/directorios del ticket?"""
     for raw in patterns or ():
-        pattern = str(raw or "").strip().lstrip("./")
+        pattern = clean_path(raw)
         if not pattern:
             continue
         if fnmatch.fnmatch(path, pattern):
@@ -64,7 +65,7 @@ def matches(path: str, patterns: Iterable[str]) -> bool:
 
 def _prefix(pattern: str) -> str:
     """Prefijo literal de un glob, para detectar solapamientos aproximados."""
-    pattern = str(pattern or "").strip().lstrip("./").rstrip("/")
+    pattern = clean_path(pattern).rstrip("/")
     cut = re.split(r"[*?\[]", pattern, maxsplit=1)[0]
     return cut.rstrip("/")
 

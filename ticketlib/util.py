@@ -89,11 +89,24 @@ def clean_tags(tags: Any) -> list[str]:
     return out
 
 
+def clean_path(value: Any) -> str:
+    """Normaliza una ruta de propiedad sin tocar puntos internos.
+
+    Solo se retira el prefijo literal ``./``. Rutas como ``.github/``,
+    ``.env`` o ``../fuera`` se conservan tal cual: el scope de git es relativo
+    al repo y nunca igualará una ruta que sale de él.
+    """
+    text = str(value or "").strip()
+    while text.startswith("./"):
+        text = text[2:]
+    return text
+
+
 def clean_paths(paths: Any) -> list[str]:
     """Rutas o globs de propiedad de un ticket, sin duplicados ni vacíos."""
     out: list[str] = []
     for item in as_list(paths):
-        value = str(item).strip().lstrip("./")
+        value = clean_path(item)
         if value and value not in out:
             out.append(value)
     return out
