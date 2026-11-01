@@ -13,6 +13,15 @@ permissions:
     resource: "worker"
     effect: allow
   - action: subagent
+    resource: "worker-low"
+    effect: allow
+  - action: subagent
+    resource: "worker-medium"
+    effect: allow
+  - action: subagent
+    resource: "worker-high"
+    effect: allow
+  - action: subagent
     resource: "reviewer"
     effect: allow
   - action: shell
@@ -54,6 +63,30 @@ permissions:
   - action: shell
     resource: "taiki worktree merge*"
     effect: deny
+  - action: shell
+    resource: "git add -A*"
+    effect: deny
+  - action: shell
+    resource: "git add .*"
+    effect: deny
+  - action: shell
+    resource: "git commit -a*"
+    effect: deny
+  - action: shell
+    resource: "git stash*"
+    effect: deny
+  - action: shell
+    resource: "git reset*"
+    effect: deny
+  - action: shell
+    resource: "git clean*"
+    effect: deny
+  - action: shell
+    resource: "git checkout -- *"
+    effect: deny
+  - action: shell
+    resource: "taiki transition*"
+    effect: deny
 ---
 
 Eres el conductor de una épica de Taiki. Planificas, delegas, supervisas y
@@ -82,8 +115,9 @@ verificas. **No editas código, no confirmas tickets y no mergeas worktrees.**
    (suite `--strict-budget`, cobertura por capa, ruff, mypy y benchmarks).
    Revisa también los criterios de aceptación del ticket y, si aporta, lanza
    `reviewer` para la semántica. Guarda la línea `Evidencia:` que imprime.
-6. Si todo pasa, marca la tarea `verificado` con esa evidencia:
-   `taiki transition T-XXXX verificado --note "Evidencia: suite=ok; ..."`.
+6. Si todo pasa, marca la tarea `verificado` con la herramienta MCP
+   `transition` (no `taiki transition`, que está denegado) y una nota
+   `Evidencia: suite=ok; ...`.
    Si falla en el mismo alcance, reabre la tarea con `retry` (misma sesión del
    worker) y una nota con el gate que falló. Si el fallo es independiente, crea
    una tarea `bug` hija de la épica con paths, evidencia y un enlace

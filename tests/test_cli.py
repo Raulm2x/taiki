@@ -7,12 +7,15 @@ import io
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import cli
 from ticketlib import domain, repo
 from tui import actions as tui_actions
 from tests.support import Harness
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def run(h: Harness) -> None:
@@ -109,6 +112,35 @@ def run(h: Harness) -> None:
     h.ok(
         repo.get_ticket(conn, t_pending["code"])["status"] == "nuevo",
         "el CLI no cambia nada en un lote inválido",
+    )
+
+    bypass = completado("bypass de confirmación")
+    with contextlib.redirect_stderr(io.StringIO()):
+        bypass_code = cli.main(
+            ["transition", bypass["code"], "confirmado"]
+        )
+    h.ok(
+        bypass_code == 1
+        and repo.get_ticket(conn, bypass["code"])["status"] == "completado",
+        "taiki transition no puede confirmar",
+    )
+    smoke = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "cli.py"),
+            "transition",
+            bypass["code"],
+            "confirmado",
+        ],
+        capture_output=True,
+        text=True,
+        env=os.environ,
+        cwd=ROOT,
+    )
+    h.ok(
+        smoke.returncode == 1
+        and repo.get_ticket(conn, bypass["code"])["status"] == "completado",
+        "el CLI real tampoco confirma por transition",
     )
 
     verified = completado("verificado por CLI")

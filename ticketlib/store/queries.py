@@ -10,9 +10,9 @@ from typing import Any, Iterable
 
 from .. import db
 from ..domain import (
+    DEPENDENCY_DONE_STATUSES,
     DEPENDENCY_KIND,
     KINDS,
-    OPEN_STATUSES,
     PARENT_CONFIRMED_STATUSES,
     PARENT_DONE_STATUSES,
     PRIORITIES,
@@ -137,7 +137,8 @@ def _dependency_fields(
     blocked_by = [
         row["code"]
         for row in rows
-        if row["status"] is None or row["status"] in OPEN_STATUSES
+        if row["status"] is None
+        or row["status"] not in DEPENDENCY_DONE_STATUSES
     ]
     return depends_on, blocked_by
 
@@ -395,10 +396,10 @@ def _build_filters(
             "NOT EXISTS (SELECT 1 FROM links dl "
             "JOIN tickets dt ON dt.code = dl.ref AND dt.archived = 0 "
             "WHERE dl.ticket_id = t.id AND dl.kind = ? "
-            f"AND dt.status IN ({', '.join('?' for _ in OPEN_STATUSES)}))"
+            f"AND dt.status NOT IN ({', '.join('?' for _ in DEPENDENCY_DONE_STATUSES)}))"
         )
         params.append(DEPENDENCY_KIND)
-        params.extend(OPEN_STATUSES)
+        params.extend(DEPENDENCY_DONE_STATUSES)
     if not filt.include_archived:
         where.append("t.archived = 0")
     if not filt.include_scratch:

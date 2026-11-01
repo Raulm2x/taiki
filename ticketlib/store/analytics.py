@@ -7,6 +7,7 @@ from typing import Any, Iterable
 
 from .. import db
 from ..domain import (
+    DEPENDENCY_DONE_STATUSES,
     DEPENDENCY_KIND,
     KINDS,
     OPEN_STATUSES,
@@ -179,7 +180,7 @@ def export_all(conn: sqlite3.Connection) -> dict[str, Any]:
             code
             for code in dependencies
             if status_by_code.get(code) is None
-            or status_by_code.get(code) in OPEN_STATUSES
+            or status_by_code.get(code) not in DEPENDENCY_DONE_STATUSES
         ]
         ticket["ready"] = not ticket["blocked_by"]
         commits: list[str] = []

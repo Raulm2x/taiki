@@ -496,12 +496,12 @@ def run(h: Harness) -> None:
         and bug["variant"] == "high",
         "docs usa low y un bug usa high",
     )
-    limited = agents_lib.capability("reviewer")
-    unsupported = agents_lib.route("bug", limited)
+    limited = agents_lib.capability("worker-medium")
+    unsupported = agents_lib.route("bug", limited, level="xhigh")
     h.ok(
         unsupported["fallback"] is True
         and unsupported["variant"] is None
-        and unsupported["level"] == "high",
+        and unsupported["level"] == "xhigh",
         "una variante no soportada cae al default del cliente",
     )
     plan = agents_lib.assign("bug")
@@ -753,4 +753,106 @@ def run(h: Harness) -> None:
         }
         and repo.get_ticket(conn, e2e_epic["code"])["status"] == "confirmado",
         "el usuario confirma el e2e completo",
+    )
+
+    # ── Consistencia estática: agentes lanzables y permisos ─────────────
+    agent_files = {
+        path.stem for path in AGENTS_DIR.glob("*.md")
+    }
+    conductor_allowed = {
+        item["resource"]
+        for item in conductor["permissions"]
+        if item.get("action") == "subagent"
+        and item.get("effect") == "allow"
+    }
+    plans = {kind: agents_lib.assign(kind) for kind in domain.KINDS}
+    h.ok(
+        all(
+            plan["agent"] in agent_files
+            and plan["agent"] in conductor_allowed
+            and plan["model"]
+            and plan["variant"]
+            and plan["steps"] > 0
+            for plan in plans.values()
+        ),
+        "todos los tipos enrutan a un agente existente, permitido y con modelo",
+    )
+    profile_ok = True
+    for profile in ("worker-low", "worker-medium", "worker-high"):
+        meta, _ = _frontmatter(f"{profile}.md")
+        cap = agents_lib.capability(profile)
+        profile_ok = profile_ok and (
+            meta["model"] == f"{cap['model']}#{cap['variant']}"
+            and meta["steps"] == cap["steps"]
+        )
+    h.ok(
+        profile_ok,
+        "los perfiles declaran el modelo, variante y steps del registro",
+    )
+    h.ok(
+        _rule(worker, "shell", "git add -A*") == "deny"
+        and _rule(worker, "shell", "git add .*") == "deny"
+        and _rule(worker, "shell", "git commit -a*") == "deny"
+        and _rule(worker, "shell", "git stash*") == "deny"
+        and _rule(worker, "shell", "git reset*") == "deny"
+        and _rule(worker, "shell", "git clean*") == "deny"
+        and _rule(worker, "shell", "git checkout -- *") == "deny"
+        and _rule(worker, "shell", "taiki transition*") == "deny",
+        "el worker no stagea todo, no commitea -a y no usa transition",
+    )
+
+    # ── Scheduler con tareas activas y tope por agente ──────────────────
+    active_sched = repo.create_ticket(
+        conn, title="Activa sched", project="sched2",
+        paths=["src/shared.py"],
+    )
+    repo.claim_ticket(
+        conn, active_sched["code"], agent="worker-medium",
+        session_id="ses_active",
+    )
+    ready_sched = repo.create_ticket(
+        conn, title="Lista sched", project="sched2",
+        paths=["src/shared.py"],
+    )
+    plan = orchestrator.parallel_plan(conn, project="sched2", limit=3)
+    reasons = {item["code"]: item["reason"] for item in plan["serial"]}
+    h.ok(
+        plan["parallel"] == []
+        and "activa" in reasons[ready_sched["code"]],
+        "una tarea activa bloquea el mismo path",
+    )
+
+    for index in range(3):
+        repo.create_ticket(
+            conn, title=f"Bug {index}", project="sched3", kind="bug",
+            priority="alta", paths=[f"src/bug{index}.py"],
+        )
+    high_plan = orchestrator.parallel_plan(conn, project="sched3", limit=3)
+    h.ok(
+        len(high_plan["parallel"]) == 1
+        and len(high_plan["deferred"]) == 2,
+        "worker-high limita a un writer simultáneo",
+    )
+
+    for index in range(2):
+        running = repo.create_ticket(
+            conn, title=f"Activa {index}", project="sched4",
+            paths=[f"src/act{index}.py"],
+        )
+        repo.claim_ticket(
+            conn, running["code"], agent="worker",
+            session_id=f"ses_act{index}",
+        )
+    for index in range(2):
+        repo.create_ticket(
+            conn, title=f"Libre {index}", project="sched4",
+            priority="alta", paths=[f"src/lib{index}.py"],
+        )
+    global_plan = orchestrator.parallel_plan(
+        conn, project="sched4", limit=3
+    )
+    h.ok(
+        len(global_plan["parallel"]) == 1
+        and len(global_plan["deferred"]) == 1,
+        "las tareas activas consumen el presupuesto global",
     )

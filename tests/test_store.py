@@ -470,10 +470,21 @@ def run(h: Harness) -> None:
     repo.transition(conn, base["code"], "en_progreso", actor="test")
     repo.complete_ticket(conn, base["code"], resolution="base lista")
     h.ok(
+        not repo.get_ticket(conn, dependent["code"])["ready"],
+        "completar no desbloquea: falta la verificación",
+    )
+    repo.transition(
+        conn,
+        base["code"],
+        "verificado",
+        note="gates verdes",
+        actor="conductor",
+    )
+    h.ok(
         repo.get_ticket(conn, dependent["code"])["ready"]
         and repo.next_ticket(conn, project="deps", ready=True)["code"]
         == dependent["code"],
-        "al cerrar la dependencia la tarea pasa a lista",
+        "al verificar la dependencia la tarea pasa a lista",
     )
 
     cycle_a = repo.create_ticket(conn, title="Ciclo A", project="deps")
@@ -518,8 +529,11 @@ def run(h: Harness) -> None:
         "la configuración sobrescribe el registro",
     )
     h.ok(
-        agents.recommend("documentacion")["name"] == "gemini",
-        "recomendar elige el agente más barato que cubre el tipo",
+        agents.recommend("documentacion")["name"] == "worker-low"
+        and agents.assign("bug")["agent"] == "worker-high"
+        and agents.assign("bug")["model"]
+        and agents.assign("bug")["steps"] == 40,
+        "recomendar elige un perfil existente con modelo y steps reales",
     )
     h.raises(
         domain.ValidationError,

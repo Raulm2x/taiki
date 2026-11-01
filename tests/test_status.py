@@ -130,8 +130,9 @@ def run(h: Harness) -> None:
         data["queue"]["verifying"] == 1
         and data["queue"]["blocked"] == 1
         and data["queue"]["ready"] == 1
-        and data["queue"]["in_progress"] == 2,
-        "la cola cuenta listos, en curso, verificando y bloqueados",
+        and data["queue"]["in_progress"] == 2
+        and data["queue"]["pending_confirmation"] == 1,
+        "la cola cuenta listos, en curso, verificando, bloqueados y por confirmar",
     )
     h.eq(
         data["worktrees"]["count"],
@@ -167,4 +168,18 @@ def run(h: Harness) -> None:
         and "Métricas" in text
         and "coste/tokens" in text,
         "lines muestra la cola y las métricas",
+    )
+
+    # ── Escala del sweep line ───────────────────────────────────────────
+    from datetime import datetime as _dt, timedelta as _td
+    import time as _time
+
+    base = _dt.now()
+    intervals = [(base, base + _td(seconds=1)) for _ in range(2000)]
+    started = _time.perf_counter()
+    maximum = status._max_overlap(intervals)
+    elapsed = _time.perf_counter() - started
+    h.ok(
+        maximum == 2000 and elapsed < 0.1,
+        f"el sweep line escala a 2k intervalos ({elapsed:.3f}s)",
     )

@@ -8,6 +8,7 @@ límite; agotado el límite, el ticket queda bloqueado para decisión humana.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Any
 
@@ -207,6 +208,19 @@ SERIAL_PATTERNS = (
 )
 
 
+def _paths(raw: Any) -> list[str]:
+    """Normaliza la columna ``paths`` (JSON o lista) de un ticket."""
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return [str(item) for item in raw]
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return [str(raw)]
+    return [str(item) for item in parsed] if isinstance(parsed, list) else [str(parsed)]
+
+
 def _serial_paths(paths: list[str]) -> str | None:
     """Motivo por el que una tarea no puede correr en paralelo, o None."""
     if not paths:
@@ -226,13 +240,35 @@ def parallel_plan(
 ) -> dict[str, Any]:
     """Scheduler: qué tareas listas pueden correr a la vez sin pisarse.
 
-    Una tarea entra en ``parallel`` solo si tiene paths declarados, no toca
-    zonas seriales y no solapa con las ya elegidas. El resto va a ``serial``
-    (ejecutar de una en una) o a ``deferred`` (presupuesto agotado).
+    Cuenta los writers ya activos (``en_progreso``): sus paths bloquean
+    solapes y consumen el presupuesto global. Cada perfil recomendado impone
+    además su propio ``max_parallel``. El resto va a ``serial`` (una a una) o
+    ``deferred`` (presupuesto agotado).
     """
     maximum = limit if limit is not None else agents.concurrency_budget(config)
     if isinstance(maximum, bool) or not isinstance(maximum, int) or maximum < 1:
         raise ValidationError("El límite de paralelismo debe ser un entero >= 1")
+    active_sql = (
+        "SELECT code, assigned_to, paths FROM tickets "
+        "WHERE archived = 0 AND status = 'en_progreso'"
+    )
+    active_params: tuple[Any, ...] = ()
+    if project:
+        active_sql += " AND project = ?"
+        active_params = (project,)
+    active_rows = conn.execute(active_sql, active_params).fetchall()
+    active = [
+        {
+            "code": row["code"],
+            "agent": row["assigned_to"] or "",
+            "paths": _paths(row["paths"]),
+        }
+        for row in active_rows
+    ]
+    active_by_agent: dict[str, int] = {}
+    for item in active:
+        active_by_agent[item["agent"]] = active_by_agent.get(item["agent"], 0) + 1
+
     candidates = repo.list_tickets(
         conn,
         statuses=["pendiente", "nuevo"],
@@ -245,14 +281,24 @@ def parallel_plan(
     parallel: list[dict[str, Any]] = []
     serial: list[dict[str, Any]] = []
     deferred: list[str] = []
+    parallel_by_agent: dict[str, int] = {}
     for task in candidates:
-        paths = list(task.get("paths") or [])
+        paths = _paths(task.get("paths"))
         reason = _serial_paths(paths)
         if reason is not None:
             serial.append({"code": task["code"], "reason": reason})
             continue
-        if len(parallel) >= maximum:
-            deferred.append(task["code"])
+        active_clash: list[str] = []
+        for item in active:
+            active_clash.extend(commits.overlaps(paths, item["paths"]))
+        if active_clash:
+            serial.append(
+                {
+                    "code": task["code"],
+                    "reason": "solapa con tarea activa: "
+                    + ", ".join(sorted(active_clash)),
+                }
+            )
             continue
         clash: list[str] = []
         for other in parallel:
@@ -265,11 +311,24 @@ def parallel_plan(
                 }
             )
             continue
+        plan = agents.assign(task["kind"], config)
+        profile = plan["agent"]
+        agent_limit = int(plan["max_parallel"])
+        if (
+            len(active) + len(parallel) >= maximum
+            or parallel_by_agent.get(profile, 0)
+            + active_by_agent.get(profile, 0)
+            >= agent_limit
+        ):
+            deferred.append(task["code"])
+            continue
         parallel.append({"code": task["code"], "paths": paths})
+        parallel_by_agent[profile] = parallel_by_agent.get(profile, 0) + 1
     return {
         "parallel": [item["code"] for item in parallel],
         "serial": serial,
         "deferred": deferred,
+        "active": [item["code"] for item in active],
         "limit": maximum,
         "requires_worktree": True,
     }

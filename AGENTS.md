@@ -28,6 +28,8 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    routing de variantes y el presupuesto de concurrencia con la herramienta
    MCP `agents` y `schedule` (paralelismo seguro por paths). `taiki status`
    muestra la cola (listos, en curso, verificando, bloqueados) y métricas.
+   Una dependencia solo se cierra al `verificado`/`confirmado`, no al
+   `completado`.
 
 ## Agentes en paralelo
 

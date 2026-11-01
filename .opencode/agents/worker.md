@@ -48,6 +48,30 @@ permissions:
   - action: shell
     resource: "taiki worktree merge*"
     effect: deny
+  - action: shell
+    resource: "git add -A*"
+    effect: deny
+  - action: shell
+    resource: "git add .*"
+    effect: deny
+  - action: shell
+    resource: "git commit -a*"
+    effect: deny
+  - action: shell
+    resource: "git stash*"
+    effect: deny
+  - action: shell
+    resource: "git reset*"
+    effect: deny
+  - action: shell
+    resource: "git clean*"
+    effect: deny
+  - action: shell
+    resource: "git checkout -- *"
+    effect: deny
+  - action: shell
+    resource: "taiki transition*"
+    effect: deny
 ---
 
 Implementas **una** tarea de Taiki. No planificas la épica, no lanzas
@@ -82,4 +106,4 @@ subagentes, no confirmas y no mergeas.
 - No hagas `git push`, `git merge`, `taiki confirm` ni
   `taiki worktree merge`.
 - Si necesitas una decisión humana, bloquea el ticket
-  (`taiki transition T-XXXX bloqueado --note "..."`) y explica por qué.
+  (herramienta MCP `transition` a `bloqueado`) y explica por qué.

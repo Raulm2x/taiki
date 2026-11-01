@@ -2,8 +2,10 @@
 # (lo usa la CI); en local solo avisa. `baseline_checks` es un TECHO: pasarse
 # por arriba avisa, bajar nunca (la poda es válida si la cobertura se mantiene).
 [suite]
-max_seconds = 4.0
-baseline_checks = 1029
+# P4 (T-0028) añadió integración real (dependencias, orquestador, scheduler,
+# status a escala y smoke CLI). Techo revisado una vez; a partir de aquí, podar.
+max_seconds = 4.5
+baseline_checks = 1039
 checks_tolerance = 20
 
 [module]

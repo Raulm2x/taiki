@@ -20,6 +20,10 @@ FINAL_STATUSES = ("confirmado", "cancelado")
 # Una épica puede cerrarse cuando sus tareas están en alguno de estos estados.
 PARENT_DONE_STATUSES = ("completado", "verificado", "confirmado", "cancelado")
 PARENT_CONFIRMED_STATUSES = ("confirmado", "cancelado")
+# Una dependencia solo se considera cerrada cuando el conductor la ha
+# validado (verificado) o el usuario la ha confirmado. ``completado`` aún
+# puede fallar la verificación y no debe desbloquear trabajo derivado.
+DEPENDENCY_DONE_STATUSES = ("verificado", "confirmado", "cancelado")
 
 KINDS = (
     "mantenimiento",

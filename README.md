@@ -102,8 +102,13 @@ paths); las migraciones y los merges nunca van en paralelo.
 `taiki status` (y el modal `S` de la TUI) muestra la cola del orquestador
 (listos, en curso, verificando, bloqueados y por confirmar), los worktrees y
 métricas: lead time, intentos medios, fallos de verificación y paralelismo
-máximo observado. El coste y los tokens quedan como `no disponible` mientras
-no haya telemetría del proveedor.
+máximo observado. «Por confirmar» suma `completado` y `verificado`;
+«verificando» es el subconjunto que el conductor ya validó. El coste y los
+tokens quedan como `no disponible` mientras no haya telemetría del proveedor.
+
+Una tarea con dependencias no está lista hasta que el prerrequisito está
+`verificado` (o `confirmado`/`cancelado`): `completado` aún puede fallar la
+verificación y no desbloquea trabajo derivado.
 
 ## Estructura
 

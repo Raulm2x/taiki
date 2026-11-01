@@ -11,6 +11,13 @@ from .common import _conn, _read_body
 
 
 def cmd_transition(args: argparse.Namespace) -> int:
+    if args.status == "confirmado":
+        print(
+            "Solo `taiki confirm` confirma tickets; "
+            "`taiki transition` no puede saltarse esa regla.",
+            file=sys.stderr,
+        )
+        return 1
     with _conn() as conn:
         ticket = repo.transition(
             conn,

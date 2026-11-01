@@ -49,15 +49,24 @@ def _queue(conn: Any) -> dict[str, int]:
         "in_progress": counts.get("en_progreso", 0),
         "verifying": counts.get("verificado", 0),
         "blocked": counts.get("bloqueado", 0),
-        "pending_confirmation": counts.get("completado", 0),
+        # Tanto completado como verificado esperan al usuario; verificando es
+        # el subconjunto ya validado por el conductor.
+        "pending_confirmation": counts.get("completado", 0)
+        + counts.get("verificado", 0),
     }
 
 
-def _intervals(conn: Any) -> list[tuple[datetime, datetime]]:
-    """Tramos en los que hubo tickets en progreso, según el historial."""
+def _intervals(
+    conn: Any, days: int = 30
+) -> list[tuple[datetime, datetime]]:
+    """Tramos en progreso recientes, según el historial (ventana acotada)."""
+    cutoff = (
+        datetime.now().astimezone() - timedelta(days=max(1, days))
+    ).isoformat(timespec="seconds")
     rows = conn.execute(
         "SELECT ticket_id, ts, from_status, to_status FROM events "
-        "WHERE action = 'transicion' ORDER BY ts, id"
+        "WHERE action = 'transicion' AND ts >= ? ORDER BY ts, id",
+        (cutoff,),
     ).fetchall()
     starts: dict[Any, datetime] = {}
     intervals: list[tuple[datetime, datetime]] = []
@@ -80,26 +89,42 @@ def _intervals(conn: Any) -> list[tuple[datetime, datetime]]:
     return intervals
 
 
-def _metrics(conn: Any) -> dict[str, Any]:
+def _max_overlap(intervals: list[tuple[datetime, datetime]]) -> int:
+    """Máximo de intervalos solapados con una sweep line O(n log n)."""
+    edges: list[tuple[datetime, int]] = []
+    for start, end in intervals:
+        if end <= start:
+            continue
+        edges.append((start, 1))
+        edges.append((end, -1))
+    edges.sort(key=lambda item: (item[0], item[1]))
+    current = 0
+    maximum = 0
+    for _, delta in edges:
+        current += delta
+        if current > maximum:
+            maximum = current
+    return maximum
+
+
+def _metrics(conn: Any, days: int = 30) -> dict[str, Any]:
     """Lead time, intentos, fallos de verificación y paralelismo observado."""
+    cutoff = (
+        datetime.now().astimezone() - timedelta(days=max(1, days))
+    ).isoformat(timespec="seconds")
     row = conn.execute(
         "SELECT COUNT(*) AS total, AVG(iterations) AS attempts, "
         "AVG((julianday(completed_at) - julianday(started_at)) * 24.0) AS lead "
         "FROM tickets WHERE archived = 0 AND completed_at IS NOT NULL "
-        "AND started_at IS NOT NULL"
+        "AND started_at IS NOT NULL AND completed_at >= ?",
+        (cutoff,),
     ).fetchone()
     failures = conn.execute(
         "SELECT COUNT(*) FROM events WHERE from_status = 'verificado' "
-        "AND to_status = 'en_progreso'"
+        "AND to_status = 'en_progreso' AND ts >= ?",
+        (cutoff,),
     ).fetchone()[0]
-    intervals = _intervals(conn)
-    max_parallel = max(
-        (
-            sum(1 for start, end in intervals if start <= moment < end)
-            for moment, _ in intervals
-        ),
-        default=0,
-    )
+    max_parallel = _max_overlap(_intervals(conn, days))
     return {
         "closed": row["total"] or 0,
         "lead_time_hours": (
@@ -130,6 +155,7 @@ def snapshot(
     *,
     with_servers: bool = True,
     conn: Any = None,
+    metrics_days: int = 30,
 ) -> dict[str, Any]:
     """Foto del proyecto: tickets activos, dueños, leases, worktrees y MCP."""
     info = workspace.resolve()
@@ -150,7 +176,7 @@ def snapshot(
         stale = {item["code"] for item in stale_claims(conn)}
         overlaps = audit.overlaps(conn)
         queue = _queue(conn)
-        metrics = _metrics(conn)
+        metrics = _metrics(conn, metrics_days)
         worktree_count = conn.execute(
             "SELECT COUNT(*) FROM links WHERE kind = 'worktree'"
         ).fetchone()[0]

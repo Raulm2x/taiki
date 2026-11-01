@@ -42,5 +42,24 @@
   },
   "orchestrator": {
     "max_parallel": 3
+  },
+  "models": {
+    "opencode-go/deepseek-v4.1-flash": [
+      "low",
+      "high",
+      "max"
+    ],
+    "opencode-go/gemini-4-argon": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "opencode-go/minimax-m3.1-flash": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
   }
 }
