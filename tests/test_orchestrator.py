@@ -1104,6 +1104,32 @@ def run(h: Harness) -> None:
             for name, meta in profiles.items()
             if name != "reviewer.md"
         )
+        and all(
+            _rule(meta, "shell", pattern) == "allow"
+            for meta in profiles.values()
+            for pattern in (
+                "git rev-parse*",
+                "git -C * show*",
+                "git -C * diff*",
+                "git -C * log*",
+                "git -C * rev-parse*",
+            )
+        )
+        and all(
+            _rule(profiles[name], "shell", pattern) == "allow"
+            for name in (
+                "conductor.md",
+                "worker.md",
+                "worker-low.md",
+                "worker-medium.md",
+                "worker-high.md",
+            )
+            for pattern in (
+                "TAIKI_TICKET=* taiki commit *",
+                "git add .opencode/*",
+                "timeout * python3 tests/*",
+            )
+        )
         and _rule(profiles["reviewer.md"], "shell", "*") == "deny",
         "permisos de shell: inspección sin prompt, denies críticos, borrado y fallback",
     )

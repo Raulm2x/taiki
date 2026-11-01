@@ -91,6 +91,21 @@ permissions:
     resource: "git show*"
     effect: allow
   - action: shell
+    resource: "git rev-parse*"
+    effect: allow
+  - action: shell
+    resource: "git -C * show*"
+    effect: allow
+  - action: shell
+    resource: "git -C * diff*"
+    effect: allow
+  - action: shell
+    resource: "git -C * log*"
+    effect: allow
+  - action: shell
+    resource: "git -C * rev-parse*"
+    effect: allow
+  - action: shell
     resource: "taiki show*"
     effect: allow
   - action: shell

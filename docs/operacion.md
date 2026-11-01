@@ -90,10 +90,15 @@ peligroso:
 
 - **Permitido sin preguntar**: `pwd`, `ls`, `cat`, `head`, `tail`, `sed -n`,
   `sed`, `echo`, `printf`, `md5sum`, `sha256sum`, `grep`, `rg`, `find`, `wc`,
-  `diff`, `file`, `stat`, `mkdir -p docs` y `git show`; además de
-  `python3 tests/*`, `python3 -m tests.*`, `git status/diff/log/add/commit`,
-  las lecturas de `taiki` y `taiki commit`. `echo`/`printf`/`sed`/`md5sum` son
-  para inspección puntual: la edición va por `edit`/`read`, no por shell.
+  `diff`, `file`, `stat`, `mkdir -p docs`, `git show`, `git rev-parse` y las
+  lecturas con `git -C <worktree>` (`show`, `diff`, `log`, `rev-parse`);
+  además de `python3 tests/*`, `timeout * python3 tests/*`,
+  `python3 -m tests.*`, `git status/diff/log/add/commit`,
+  `git add .opencode/*`, `TAIKI_TICKET=* taiki commit *`, las lecturas de
+  `taiki` y `taiki commit`. `echo`/`printf`/`sed`/`md5sum` son para inspección
+  puntual: la edición va por `edit`/`read`, no por shell. No uses `cd` (la
+  sesión ya está en el worktree), ni `for`, ni heredocs `python3 - <<EOF`; la
+  inspección va por `read`/`grep`/`edit`.
 - **Pide permiso (`ask`)**: comandos no clasificados, red e instalación. Es el
   fallback del conductor y de los workers.
 - **Denegado**: `git push`, `git merge` directo, `taiki confirm`,

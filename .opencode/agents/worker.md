@@ -16,6 +16,9 @@ permissions:
     resource: "taiki *"
     effect: deny
   - action: shell
+    resource: "TAIKI_TICKET=* taiki commit *"
+    effect: allow
+  - action: shell
     resource: "taiki status*"
     effect: allow
   - action: shell
@@ -100,6 +103,9 @@ permissions:
     resource: "python3 tests/*"
     effect: allow
   - action: shell
+    resource: "timeout * python3 tests/*"
+    effect: allow
+  - action: shell
     resource: "python3 -m tests.*"
     effect: allow
   - action: shell
@@ -127,6 +133,21 @@ permissions:
     resource: "git show*"
     effect: allow
   - action: shell
+    resource: "git rev-parse*"
+    effect: allow
+  - action: shell
+    resource: "git -C * show*"
+    effect: allow
+  - action: shell
+    resource: "git -C * diff*"
+    effect: allow
+  - action: shell
+    resource: "git -C * log*"
+    effect: allow
+  - action: shell
+    resource: "git -C * rev-parse*"
+    effect: allow
+  - action: shell
     resource: "git add *"
     effect: allow
   - action: shell
@@ -150,6 +171,9 @@ permissions:
   - action: shell
     resource: "git add .*"
     effect: deny
+  - action: shell
+    resource: "git add .opencode/*"
+    effect: allow
   - action: shell
     resource: "git commit -a*"
     effect: deny
@@ -267,3 +291,4 @@ ruta fuera del worktree siguen denegados: si hace falta, bloquea el ticket.
   `taiki worktree merge`.
 - Si necesitas una decisión humana, bloquea el ticket
   (herramienta MCP `transition` a `bloqueado`) y explica por qué.
+- **Shell**: no uses `cd` (la sesión ya está en el worktree), ni bucles `for` ni heredocs (`python3 - <<EOF`); usa `read`/`grep`/`edit` y rutas relativas al borrar.

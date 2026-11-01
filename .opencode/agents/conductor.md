@@ -28,6 +28,9 @@ permissions:
     resource: "taiki *"
     effect: deny
   - action: shell
+    resource: "TAIKI_TICKET=* taiki commit *"
+    effect: allow
+  - action: shell
     resource: "taiki status*"
     effect: allow
   - action: shell
@@ -109,6 +112,9 @@ permissions:
     resource: "python3 tests/*"
     effect: allow
   - action: shell
+    resource: "timeout * python3 tests/*"
+    effect: allow
+  - action: shell
     resource: "python3 -c*"
     effect: deny
   - action: shell
@@ -131,6 +137,21 @@ permissions:
     effect: allow
   - action: shell
     resource: "git show*"
+    effect: allow
+  - action: shell
+    resource: "git rev-parse*"
+    effect: allow
+  - action: shell
+    resource: "git -C * show*"
+    effect: allow
+  - action: shell
+    resource: "git -C * diff*"
+    effect: allow
+  - action: shell
+    resource: "git -C * log*"
+    effect: allow
+  - action: shell
+    resource: "git -C * rev-parse*"
     effect: allow
   - action: shell
     resource: "git add -A*"
@@ -156,6 +177,9 @@ permissions:
   - action: shell
     resource: "git add .*"
     effect: deny
+  - action: shell
+    resource: "git add .opencode/*"
+    effect: allow
   - action: shell
     resource: "git commit -a*"
     effect: deny
@@ -269,3 +293,4 @@ confirmas tickets**: la confirmación es exclusiva del usuario.
   `rm -rf`, `rm -r` ni rutas fuera del worktree. El reviewer no borra.
 - Deja evidencia concreta (comandos, salida, commit) en la nota de
   verificación.
+- **Shell**: no uses `cd` (la sesión ya está en el worktree), ni bucles `for` ni heredocs (`python3 - <<EOF`); usa `read`/`grep`/`edit` y rutas relativas al borrar.
