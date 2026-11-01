@@ -253,6 +253,7 @@ TOOLS = [
         "historial. Usa include para pedir secciones y history_limit/"
         "links_limit/subtasks_limit/commits_limit para acotarlas; "
         "events_detail=true recupera todos los campos de los eventos. "
+        "fields proyecta solo los campos pedidos. "
         "raw=true devuelve el registro íntegro, sin proyecciones ni límites.",
         {
             "code": CODE,
@@ -261,6 +262,13 @@ TOOLS = [
                 "default": False,
                 "description": "Devuelve el ticket íntegro: ignora include, "
                 "events_detail y los límites de secciones",
+            },
+            "fields": {
+                "type": "array",
+                "items": {"type": "string", "maxLength": 60},
+                "maxItems": 40,
+                "description": "Proyecta solo estos campos del ticket "
+                "(code se incluye siempre)",
             },
             "include": {
                 "type": "array",

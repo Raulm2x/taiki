@@ -533,14 +533,18 @@ def run(h: Harness) -> None:
         6,
         "get informa del total de comentarios truncados",
     )
-    traced: list[str] = []
-    conn.set_trace_callback(traced.append)
-    try:
-        handlers._handle_get(
-            conn, {"code": mcp_created["code"], "history_limit": 2}
-        )
-    finally:
-        conn.set_trace_callback(None)
+    def _traced_get(get_args: dict) -> list[str]:
+        statements: list[str] = []
+        conn.set_trace_callback(statements.append)
+        try:
+            handlers._handle_get(conn, get_args)
+        finally:
+            conn.set_trace_callback(None)
+        return statements
+
+    traced = _traced_get(
+        {"code": mcp_created["code"], "history_limit": 2}
+    )
     h.ok(
         any(
             "FROM events" in stmt and "ORDER BY id DESC LIMIT" in stmt
@@ -551,6 +555,32 @@ def run(h: Harness) -> None:
             for stmt in traced
         ),
         "get aplica history_limit en SQL para eventos y comentarios",
+    )
+    h.ok(
+        any("COUNT(*) FROM events" in stmt for stmt in traced),
+        "get con recorte cuenta el total de eventos",
+    )
+    traced = _traced_get(
+        {"code": mcp_created["code"], "history_limit": 50}
+    )
+    h.ok(
+        not any("COUNT(*) FROM events" in stmt for stmt in traced),
+        "get sin recorte no ejecuta el COUNT de eventos",
+    )
+    traced = _traced_get(
+        {"code": mcp_created["code"], "links_limit": 2}
+    )
+    h.ok(
+        any("FROM links" in stmt and "LIMIT" in stmt for stmt in traced),
+        "get aplica links_limit en SQL",
+    )
+    projected = handlers.call_tool(
+        "get", {"code": mcp_created["code"], "fields": ["title", "status"]}
+    )
+    h.eq(
+        set(projected),
+        {"code", "title", "status"},
+        "get con fields proyecta solo los campos pedidos",
     )
     h.ok(
         all(

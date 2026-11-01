@@ -237,18 +237,7 @@ def _project_rows(
     return [_summary(row) for row in rows]
 
 
-def _limit_section(ticket: dict[str, Any], key: str, limit: Any) -> None:
-    try:
-        maximum = int(limit)
-    except (TypeError, ValueError):
-        maximum = 50
-    if maximum <= 0:
-        return
-    items = ticket.get(key)
-    if isinstance(items, list) and len(items) > maximum:
-        ticket[f"{key}_total"] = len(items)
-        ticket[key] = items[-maximum:]
-
+# Los límites de secciones se aplican en SQL dentro de get_ticket.
 
 # ---------------------------------------------------------------------------
 # Manejadores Individuales de Herramientas (11 herramientas MCP)
@@ -430,7 +419,13 @@ def _handle_get(
     if args.get("raw", False):
         return repo.get_ticket(conn, code)
     ticket = repo.get_ticket(
-        conn, code, history_limit=args.get("history_limit", 15)
+        conn,
+        code,
+        history_limit=args.get("history_limit", 15),
+        links_limit=args.get("links_limit", 20),
+        subtasks_limit=args.get("subtasks_limit", 20),
+        commits_limit=args.get("commits_limit", 20),
+        fields=args.get("fields"),
     )
     include = args.get("include")
     if include is not None:
@@ -443,9 +438,6 @@ def _handle_get(
         for event in ticket.get("events", []):
             for key in ("actor_type", "from_status", "to_status", "session_id"):
                 event.pop(key, None)
-    _limit_section(ticket, "links", args.get("links_limit", 20))
-    _limit_section(ticket, "subtasks", args.get("subtasks_limit", 20))
-    _limit_section(ticket, "commits", args.get("commits_limit", 20))
     return ticket
 
 

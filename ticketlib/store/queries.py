@@ -54,15 +54,63 @@ def _history_section(
             (ticket_id,),
         )
         return [dict(row) for row in rows], None
-    total = conn.execute(
-        f"SELECT COUNT(*) FROM {table} WHERE ticket_id = ?", (ticket_id,)
-    ).fetchone()[0]
+    # Se pide una fila de más: si no aparece, no hubo recorte y no hace falta
+    # el COUNT. Si aparece, el total se consulta una sola vez.
     rows = conn.execute(
         f"SELECT {columns} FROM (SELECT {columns}, id FROM {table} "
         "WHERE ticket_id = ? ORDER BY id DESC LIMIT ?) ORDER BY id",
-        (ticket_id, maximum),
-    )
-    return [dict(row) for row in rows], total
+        (ticket_id, maximum + 1),
+    ).fetchall()
+    if len(rows) <= maximum:
+        return [dict(row) for row in rows], None
+    total = conn.execute(
+        f"SELECT COUNT(*) FROM {table} WHERE ticket_id = ?", (ticket_id,)
+    ).fetchone()[0]
+    return [dict(row) for row in rows[1:]], total
+
+
+def _limited_section(
+    conn: sqlite3.Connection,
+    sql: str,
+    params: tuple[Any, ...],
+    count_sql: str,
+    count_params: tuple[Any, ...],
+    limit: Any,
+) -> tuple[list[dict[str, Any]], int | None]:
+    """Igual que ``_history_section`` pero para consultas ya construidas."""
+    try:
+        maximum = int(limit) if limit is not None else 0
+    except (TypeError, ValueError):
+        maximum = 0
+    if maximum <= 0:
+        return [dict(row) for row in conn.execute(sql, params)], None
+    rows = conn.execute(sql + " LIMIT ?", (*params, maximum + 1)).fetchall()
+    if len(rows) <= maximum:
+        return [dict(row) for row in rows], None
+    total = conn.execute(count_sql, count_params).fetchone()[0]
+    return [dict(row) for row in rows[1:]], total
+
+
+def _subtask_progress(
+    conn: sqlite3.Connection, ticket_id: int
+) -> dict[str, int]:
+    """Progreso completo de las tareas, sin depender de su límite de carga."""
+    row = conn.execute(
+        "SELECT COUNT(*) AS total, "
+        "SUM(CASE WHEN status IN ("
+        + ", ".join("?" for _ in PARENT_DONE_STATUSES)
+        + ") THEN 1 ELSE 0 END) AS done, "
+        "SUM(CASE WHEN status IN ("
+        + ", ".join("?" for _ in PARENT_CONFIRMED_STATUSES)
+        + ") THEN 1 ELSE 0 END) AS confirmed "
+        "FROM tickets WHERE parent_id = ?",
+        (*PARENT_DONE_STATUSES, *PARENT_CONFIRMED_STATUSES, ticket_id),
+    ).fetchone()
+    return {
+        "done": row["done"] or 0,
+        "confirmed": row["confirmed"] or 0,
+        "total": row["total"] or 0,
+    }
 
 
 def get_ticket(
@@ -70,11 +118,16 @@ def get_ticket(
     code: Any,
     *,
     history_limit: Any = None,
+    links_limit: Any = None,
+    subtasks_limit: Any = None,
+    commits_limit: Any = None,
+    fields: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     """Recupera un ticket completo con etiquetas, comentarios, eventos y enlaces.
 
-    ``history_limit`` acota eventos y comentarios en la propia consulta; sin
-    él se carga el historial completo.
+    Los límites acotan cada sección en la propia consulta y solo cuentan el
+    total cuando hubo recorte. ``fields`` proyecta las columnas del ticket
+    (``code`` se conserva siempre).
     """
     row = row_by_code(conn, code)
     ticket = row_to_ticket(row)
@@ -98,21 +151,45 @@ def get_ticket(
     )
     if events_total is not None and events_total > len(ticket["events"]):
         ticket["events_total"] = events_total
-    ticket["links"] = [
-        dict(item)
-        for item in conn.execute(
-            "SELECT kind, ref, created_at FROM links WHERE ticket_id = ? ORDER BY id",
+    ticket["links"], links_total = _limited_section(
+        conn,
+        "SELECT kind, ref, created_at FROM ("
+        "SELECT kind, ref, created_at, id FROM links "
+        "WHERE ticket_id = ? ORDER BY id DESC) ORDER BY id",
+        (row["id"],),
+        "SELECT COUNT(*) FROM links WHERE ticket_id = ?",
+        (row["id"],),
+        links_limit,
+    )
+    if links_total is not None:
+        ticket["links_total"] = links_total
+        # Los enlaces se recortaron: los commits se consultan aparte para que
+        # commits_limit sea independiente de links_limit.
+        commit_rows = conn.execute(
+            "SELECT ref FROM links WHERE ticket_id = ? AND kind = 'commit' "
+            "ORDER BY id",
             (row["id"],),
         )
-    ]
+    else:
+        commit_rows = [
+            link for link in ticket["links"] if link["kind"] == "commit"
+        ]
     commits: list[str] = []
-    for link in ticket["links"]:
-        if link["kind"] != "commit":
-            continue
+    for link in commit_rows:
         ref = link["ref"]
-        if any(ref == c or ref.startswith(c) or c.startswith(ref) for c in commits):
+        if any(
+            ref == known or ref.startswith(known) or known.startswith(ref)
+            for known in commits
+        ):
             continue
         commits.append(ref)
+    try:
+        commits_maximum = int(commits_limit) if commits_limit is not None else 0
+    except (TypeError, ValueError):
+        commits_maximum = 0
+    if commits_maximum > 0 and len(commits) > commits_maximum:
+        ticket["commits_total"] = len(commits)
+        commits = commits[-commits_maximum:]
     ticket["commits"] = commits
     ticket["committed"] = bool(commits)
     if ticket["parent_id"]:
@@ -122,32 +199,36 @@ def get_ticket(
         ticket["parent_code"] = parent["code"] if parent else None
     else:
         ticket["parent_code"] = None
-    ticket["subtasks"] = [
-        {
-            "code": sub["code"],
-            "title": sub["title"],
-            "status": sub["status"],
-            "priority": sub["priority"],
-            "kind": sub["kind"],
+    ticket["subtasks"], subtasks_total = _limited_section(
+        conn,
+        "SELECT code, title, status, priority, kind FROM ("
+        "SELECT code, title, status, priority, kind, id FROM tickets "
+        "WHERE parent_id = ? ORDER BY id DESC) ORDER BY id",
+        (row["id"],),
+        "SELECT COUNT(*) FROM tickets WHERE parent_id = ?",
+        (row["id"],),
+        subtasks_limit,
+    )
+    if subtasks_total is not None:
+        ticket["subtasks_total"] = subtasks_total
+        ticket["progress"] = _subtask_progress(conn, row["id"])
+    else:
+        ticket["progress"] = {
+            "done": sum(
+                1
+                for sub in ticket["subtasks"]
+                if sub["status"] in PARENT_DONE_STATUSES
+            ),
+            "confirmed": sum(
+                1
+                for sub in ticket["subtasks"]
+                if sub["status"] in PARENT_CONFIRMED_STATUSES
+            ),
+            "total": len(ticket["subtasks"]),
         }
-        for sub in conn.execute(
-            "SELECT code, title, status, priority, kind FROM tickets WHERE parent_id = ? ORDER BY id",
-            (row["id"],)
-        )
-    ]
-    ticket["progress"] = {
-        "done": sum(
-            1
-            for sub in ticket["subtasks"]
-            if sub["status"] in PARENT_DONE_STATUSES
-        ),
-        "confirmed": sum(
-            1
-            for sub in ticket["subtasks"]
-            if sub["status"] in PARENT_CONFIRMED_STATUSES
-        ),
-        "total": len(ticket["subtasks"]),
-    }
+    if fields:
+        keep = {str(name) for name in fields} | {"code"}
+        return {key: value for key, value in ticket.items() if key in keep}
     return ticket
 
 

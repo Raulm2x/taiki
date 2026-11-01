@@ -257,7 +257,7 @@ El servidor expone 19 herramientas. El nombre real no lleva prefijo (`list`,
 | Herramienta | Uso |
 |---|---|
 | `list` | Abiertos en resumen; `include_closed`, `detail`, `fields`, `leaves_only` |
-| `get` | Detalle; `include`, `history_limit` y `raw` ajustan qué llega |
+| `get` | Detalle; `include`, `fields`, `history_limit` y `raw` ajustan qué llega |
 | `next` | Siguiente ticket en resumen; `detail=true` para el registro completo |
 | `create`, `update`, `transition`, `complete`, `comment`, `link` | Ciclo de vida |
 | `claim` | Reclama; `worktree=true`, `lease_minutes`, `steal`, `force` |
@@ -859,9 +859,10 @@ el nombre real de la herramienta es el que aparece en `tools/list`.
 
 - `list` devuelve 20 abiertos en resumen; usa `limit`/`offset`, `fields` o
   `detail` solo si necesitas más.
-- `get` acota historial (15), enlaces (20) y subtareas (20); `events_detail`
-  y los límites a `0` amplían el detalle, y `raw=true` devuelve el registro
-  íntegro (incluye el note del cierre y los enlaces commit).
+- `get` acota historial (15), enlaces (20) y subtareas (20) en SQL; `events_detail`
+  y los límites a `0` amplían el detalle, `fields` proyecta columnas y
+  `raw=true` devuelve el registro íntegro (incluye el note del cierre y los
+  enlaces commit).
 - `create`, `claim`, `update`, `transition`, `complete`, `comment` y `link`
   devuelven un recibo; `detail=true` recupera el ticket completo.
 - En CLI, prefiere `taiki list --json-summary --compact --limit 20` y
