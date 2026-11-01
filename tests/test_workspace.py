@@ -226,3 +226,28 @@ def run(h: Harness) -> None:
         if walk(module, []):
             break
     h.eq(cycle, [], "el grafo de imports de ticketlib no tiene ciclos")
+
+    # ── Fallback de DB explícito ────────────────────────────────────────
+    original_mkdir = Path.mkdir
+    original_tempdir = db.tempfile.gettempdir
+
+    def failing_mkdir(self, *args, **kwargs):
+        if str(self).endswith("sin-permiso"):
+            raise PermissionError("sin permisos")
+        return original_mkdir(self, *args, **kwargs)
+
+    Path.mkdir = failing_mkdir
+    db.tempfile.gettempdir = lambda: str(tmp)
+    try:
+        h.raises(
+            domain.TicketError,
+            lambda: db.connect(tmp / "sin-permiso" / "tickets.db"),
+            "sin permisos la DB falla con TicketError en vez de usar /tmp",
+        )
+        with h.env(TAIKI_TMP_DB="1"):
+            fallback = db.connect(tmp / "sin-permiso" / "tickets.db")
+            fallback.close()
+            h.ok(True, "TAIKI_TMP_DB=1 permite el fallback temporal explícito")
+    finally:
+        Path.mkdir = original_mkdir
+        db.tempfile.gettempdir = original_tempdir

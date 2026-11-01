@@ -135,3 +135,18 @@ def run(h: Harness) -> None:
     h.eq(dead_imports, [], "la suite no tiene imports muertos")
     h.eq(report["duplicates"], {}, "la suite no tiene mensajes duplicados")
     h.eq(report["unused_seeds"], [], "todos los seeds se usan")
+
+    import importlib
+
+    discovered = hygiene.discover_modules()
+    h.eq(
+        set(discovered),
+        {path.stem for path in Path(__file__).parent.glob("test_*.py")},
+        "el descubrimiento incluye todos los test_*.py",
+    )
+    for name in discovered:
+        module = importlib.import_module(f"tests.{name}")
+        h.ok(
+            callable(getattr(module, "run", None)),
+            f"{name} define run y entra en la suite",
+        )

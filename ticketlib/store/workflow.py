@@ -12,6 +12,7 @@ from ..domain import (
     PARENT_CONFIRMED_STATUSES,
     PARENT_DONE_STATUSES,
     REOPEN_FROM,
+    SCRATCH_TAG,
     STATUSES,
     TRANSITIONS,
     NotFoundError,
@@ -456,8 +457,8 @@ def confirm_tickets(
             already.append(row["code"])
             continue
         scratch_tag = conn.execute(
-            "SELECT 1 FROM tags WHERE ticket_id = ? AND tag = '_scratch'",
-            (row["id"],),
+            "SELECT 1 FROM tags WHERE ticket_id = ? AND tag = ?",
+            (row["id"], SCRATCH_TAG),
         ).fetchone()
         if scratch_tag:
             errors[row["code"]] = (

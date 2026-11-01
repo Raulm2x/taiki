@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from . import commits, githook, runtime, servers
-from .domain import TicketError
+from .domain import SCRATCH_TAG, TicketError
 from .store.mutations import renumber_plan
 from .store.queries import hidden_codes, missing_codes
 from .store.relations import TICKET_CODE_RE
@@ -55,10 +55,10 @@ def stalled(conn: Any, days: int = 2) -> list[dict[str, Any]]:
         "FROM tickets t LEFT JOIN events e ON e.ticket_id = t.id "
         "WHERE t.archived = 0 AND t.status = 'en_progreso' "
         "AND NOT EXISTS (SELECT 1 FROM tags st WHERE st.ticket_id = t.id "
-        "AND st.tag = '_scratch') "
+        "AND st.tag = ?) "
         "GROUP BY t.id HAVING last_ts IS NULL OR last_ts < ? "
         "ORDER BY last_ts",
-        (_cutoff(days),),
+        (SCRATCH_TAG, _cutoff(days)),
     ).fetchall()
     return [dict(row) for row in rows]
 

@@ -12,6 +12,7 @@ from ..domain import (
     PARENT_CONFIRMED_STATUSES,
     PARENT_DONE_STATUSES,
     PRIORITIES,
+    SCRATCH_TAG,
     STATUSES,
 )
 from ..util import now
@@ -31,15 +32,15 @@ def stats(conn: sqlite3.Connection) -> dict[str, Any]:
     """
     visible = (
         "NOT EXISTS (SELECT 1 FROM tags st "
-        "WHERE st.ticket_id = tickets.id AND st.tag = '_scratch')"
+        "WHERE st.ticket_id = tickets.id AND st.tag = ?)"
     )
     total = conn.execute(
-        f"SELECT COUNT(*) FROM tickets WHERE {visible}"
+        f"SELECT COUNT(*) FROM tickets WHERE {visible}", (SCRATCH_TAG,)
     ).fetchone()[0]
     open_count = conn.execute(
         f"SELECT COUNT(*) FROM tickets WHERE status IN "
         f"({', '.join('?' for _ in OPEN_STATUSES)}) AND {visible}",
-        OPEN_STATUSES,
+        (*OPEN_STATUSES, SCRATCH_TAG),
     ).fetchone()[0]
 
     def group(column: str, universe: Iterable[str] | None = None) -> dict[str, int]:
@@ -47,7 +48,8 @@ def stats(conn: sqlite3.Connection) -> dict[str, Any]:
             row[0]: row[1]
             for row in conn.execute(
                 f"SELECT {column}, COUNT(*) FROM tickets "
-                f"WHERE {visible} GROUP BY {column}"
+                f"WHERE {visible} GROUP BY {column}",
+                (SCRATCH_TAG,),
             )
         }
         if universe:
@@ -58,25 +60,29 @@ def stats(conn: sqlite3.Connection) -> dict[str, Any]:
         (row[0] or "(sin proyecto)"): row[1]
         for row in conn.execute(
             "SELECT project, COUNT(*) FROM tickets "
-            f"WHERE {visible} GROUP BY project ORDER BY COUNT(*) DESC"
+            f"WHERE {visible} GROUP BY project ORDER BY COUNT(*) DESC",
+            (SCRATCH_TAG,),
         )
     }
     sin_agente = conn.execute(
         "SELECT COUNT(*) FROM tickets "
         "WHERE (assigned_to IS NULL OR assigned_to = '') "
         "AND status NOT IN ('confirmado', 'cancelado') "
-        f"AND {visible}"
+        f"AND {visible}",
+        (SCRATCH_TAG,),
     ).fetchone()[0]
     urgentes_pendientes = conn.execute(
         "SELECT COUNT(*) FROM tickets "
         "WHERE priority = 'urgente' "
         "AND status NOT IN ('confirmado', 'cancelado') "
-        f"AND {visible}"
+        f"AND {visible}",
+        (SCRATCH_TAG,),
     ).fetchone()[0]
     scratch_count = conn.execute(
         "SELECT COUNT(*) FROM tickets t "
-        "JOIN tags tg ON tg.ticket_id = t.id AND tg.tag = '_scratch' "
-        "WHERE t.archived = 0"
+        "JOIN tags tg ON tg.ticket_id = t.id AND tg.tag = ? "
+        "WHERE t.archived = 0",
+        (SCRATCH_TAG,),
     ).fetchone()[0]
     return {
         "total": total,

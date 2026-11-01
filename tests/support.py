@@ -13,6 +13,7 @@ from ticketlib import db
 # Variables que cada módulo debe poder fijar sin filtrarse al siguiente.
 ISOLATED_ENV = (
     "TAIKI_DB",
+    "TAIKI_TMP_DB",
     "TAIKI_GUARD",
     "TAIKI_GUARD_AUTO",
     "TAIKI_HOOK",

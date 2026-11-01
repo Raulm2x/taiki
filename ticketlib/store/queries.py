@@ -363,8 +363,9 @@ def _build_filters(
     if not filt.include_scratch:
         where.append(
             "NOT EXISTS (SELECT 1 FROM tags st WHERE st.ticket_id = t.id "
-            "AND st.tag = '_scratch')"
+            "AND st.tag = ?)"
         )
+        params.append(SCRATCH_TAG)
 
     return join, where, params
 

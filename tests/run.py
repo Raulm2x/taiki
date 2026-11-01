@@ -17,30 +17,7 @@ if str(ROOT) not in sys.path:
 from tests import hygiene
 from tests.support import Harness
 
-MODULES = (
-    "test_core",
-    "test_tags_scope",
-    "test_store",
-    "test_scratch",
-    "test_mcp",
-    "test_mcp_parallel",
-    "test_sessions",
-    "test_cli",
-    "test_tui_state",
-    "test_tui_render",
-    "test_hierarchy",
-    "test_guard",
-    "test_claims",
-    "test_commit",
-    "test_status",
-    "test_parallel",
-    "test_servers",
-    "test_herdr",
-    "test_githook",
-    "test_hygiene",
-    "test_worktrees",
-    "test_workspace",
-)
+MODULES = hygiene.discover_modules()
 
 
 def _selected(only: list[str], keyword: str | None) -> list[str]:

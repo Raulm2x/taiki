@@ -155,7 +155,17 @@ def connect(
     if not memory:
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
-        except OSError:
+        except OSError as exc:
+            if os.environ.get("TAIKI_TMP_DB", "").lower() not in (
+                "1",
+                "true",
+                "yes",
+            ):
+                raise TicketError(
+                    "No se puede crear el directorio de la base de datos "
+                    f"{target.parent}: {exc}. Define TAIKI_DB a una ruta "
+                    "escribible o TAIKI_TMP_DB=1 para usar una DB temporal."
+                ) from exc
             fallback = Path(tempfile.gettempdir()) / "taiki" / "taiki.db"
             target = fallback
             target.parent.mkdir(parents=True, exist_ok=True)

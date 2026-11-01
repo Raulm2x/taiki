@@ -39,6 +39,12 @@ class ModuleSource:
     unsafe_skips: list[str] = field(default_factory=list)
 
 
+def discover_modules(path: Path | None = None) -> tuple[str, ...]:
+    """Módulos de prueba descubiertos en ``tests/test_*.py``."""
+    folder = path or CONFIG
+    return tuple(sorted(item.stem for item in folder.glob("test_*.py")))
+
+
 def load_toml(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {}
