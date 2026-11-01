@@ -84,7 +84,9 @@ def cmd_worktree_create(args: argparse.Namespace) -> int:
         print(render.to_json(result))
         return 0
     print(f"Worktree {ticket['code']}: {result['path']}")
-    print(f"Rama: {result['branch']}")
+    print(f"Rama: {result['branch']} (desde {result.get('start') or 'HEAD'})")
+    if result.get("warning"):
+        print(f"aviso: {result['warning']}", file=sys.stderr)
     if result["bootstrap"]:
         print(f"Config copiada: {', '.join(result['bootstrap'])}")
     print("La base de datos sigue siendo la del checkout principal.")
@@ -94,6 +96,7 @@ def cmd_worktree_create(args: argparse.Namespace) -> int:
 
 def cmd_worktree_list(args: argparse.Namespace) -> int:
     root = _root()
+    ref = worktree.integration_ref(root)
     with _conn() as conn:
         rows = conn.execute(
             "SELECT t.code AS code, l.ref AS path "
@@ -114,15 +117,30 @@ def cmd_worktree_list(args: argparse.Namespace) -> int:
                 "branch": item.get("branch"),
                 "dirty": state["dirty"],
                 "files": state["files"],
-                "merged": worktree.merged(root, item.get("branch") or ""),
+                "merged": worktree.merged(
+                    root, item.get("branch") or "", integration=ref["branch"]
+                ),
             }
         )
     if args.json:
-        print(render.to_json({"worktrees": items}))
+        print(
+            render.to_json(
+                {
+                    "integration_branch": ref["branch"],
+                    "fallback": ref["fallback"],
+                    "warning": ref["warning"],
+                    "worktrees": items,
+                }
+            )
+        )
         return 0
     if not items:
         print("No hay worktrees de tareas.")
         return 0
+    print(
+        f"Rama de integración: {ref['branch']}"
+        + (f" (aviso: {ref['warning']})" if ref["warning"] else "")
+    )
     print(f"{'TICKET':<10} {'RAMA':<28} {'ESTADO':<18} RUTA")
     for item in items:
         state = "sin commitear" if item["dirty"] else (
@@ -211,6 +229,9 @@ def cmd_worktree_merge(args: argparse.Namespace) -> int:
     test_cmd = None
     if not args.no_tests and (Path(target) / "tests" / "run.py").is_file():
         test_cmd = [sys.executable, "tests/run.py"]
+    ref = worktree.integration_ref(root)
+    if ref["warning"]:
+        print(f"aviso: {ref['warning']}", file=sys.stderr)
     try:
         result = worktree.merge(
             root, target, test_cmd=test_cmd, delete=args.delete
@@ -229,7 +250,10 @@ def cmd_worktree_merge(args: argparse.Namespace) -> int:
     if args.json:
         print(render.to_json(result))
         return 0
-    print(f"Merge ff-only: {result['branch']} → {result['main_branch']}")
+    print(
+        f"Merge ff-only: {result['branch']} → "
+        f"{result.get('integration_branch') or result['main_branch']}"
+    )
     if result.get("tests"):
         print("Tests: OK")
     if result.get("removed"):

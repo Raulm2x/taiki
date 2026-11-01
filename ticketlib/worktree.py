@@ -16,12 +16,14 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
-from . import env
+from . import env, workspace
 from .domain import TicketError
+from .paths import MARKER
 from .util import now
 
 DEFAULT_ROOT = ".worktrees"
 IGNORE_LINE = ".worktrees/"
+DEFAULT_INTEGRATION_BRANCH = "develop"
 BOOTSTRAP_FILES = ("opencode.json",)
 BOOTSTRAP_DIRS = (".opencode",)
 
@@ -68,6 +70,45 @@ def branch_name(code: str, title: str | None = None) -> str:
     return f"agent/{code}-{slug}" if slug else f"agent/{code}"
 
 
+def configured_integration_branch(config: dict[str, Any] | None = None) -> str:
+    """Rama configurada en ``orchestrator.integration_branch`` (o ``develop``)."""
+    raw = (config or {}).get("orchestrator")
+    value = raw.get("integration_branch") if isinstance(raw, dict) else None
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return DEFAULT_INTEGRATION_BRANCH
+
+
+def _config(main: Path) -> dict[str, Any]:
+    return workspace.load_config(main / MARKER)
+
+
+def integration_ref(main: Path, config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Rama donde se integra el trabajo diario y aviso si no existe.
+
+    Si la rama configurada no está en el repositorio se usa la rama actual con
+    un aviso, nunca un error: los repos sin ``develop`` siguen funcionando.
+    """
+    main = Path(main).expanduser().resolve()
+    config = _config(main) if config is None else config
+    wanted = configured_integration_branch(config)
+    if _git_ok(main, "rev-parse", "--verify", f"refs/heads/{wanted}"):
+        return {
+            "branch": wanted,
+            "configured": wanted,
+            "fallback": False,
+            "warning": None,
+        }
+    current = status(main).get("branch") or wanted
+    warning = f"no existe {wanted}; se usa {current}"
+    return {
+        "branch": current,
+        "configured": wanted,
+        "fallback": True,
+        "warning": warning,
+    }
+
+
 def ensure_ignored(main: Path) -> Path:
     """Añade ``.worktrees/`` al ``.gitignore`` del checkout principal."""
     path = main / ".gitignore"
@@ -108,9 +149,13 @@ def create(
     title: str | None = None,
     branch: str | None = None,
     path: str | Path | None = None,
-    start: str = "HEAD",
+    start: str | None = None,
 ) -> dict[str, Any]:
-    """Crea el worktree de un ticket y devuelve ruta, rama y bootstrap."""
+    """Crea el worktree de un ticket y devuelve ruta, rama y bootstrap.
+
+    La rama ``agent/…`` nace de la rama de integración (``develop`` por
+    defecto) salvo que se indique ``start``.
+    """
     main = Path(main).expanduser().resolve()
     if not (main / ".git").exists() and not _git_ok(main, "rev-parse", "--git-dir"):
         raise TicketError(f"{main} no es un repositorio Git")
@@ -125,14 +170,19 @@ def create(
     branch = branch or branch_name(code, title)
     if _git_ok(main, "rev-parse", "--verify", f"refs/heads/{branch}"):
         raise TicketError(f"La rama {branch} ya existe; usa --branch")
+    ref = integration_ref(main)
+    base = start or ref["branch"]
     target.parent.mkdir(parents=True, exist_ok=True)
-    _git(main, "worktree", "add", "-b", branch, str(target), start)
+    _git(main, "worktree", "add", "-b", branch, str(target), base)
     copied = _copy_bootstrap(main, target)
     return {
         "code": code,
         "main": main,
         "path": target,
         "branch": branch,
+        "start": base,
+        "integration_branch": ref["branch"],
+        "warning": ref["warning"],
         "bootstrap": copied,
         "created_at": now(),
     }
@@ -203,17 +253,27 @@ def status(path: str | Path) -> dict[str, Any]:
     }
 
 
-def merged(main: Path, branch: str) -> bool:
-    """¿La rama del worktree ya está contenida en la rama actual?"""
+def merged(main: Path, branch: str, *, integration: str | None = None) -> bool:
+    """¿La rama del worktree ya está contenida en la rama de integración?"""
     main = Path(main).expanduser().resolve()
     if not branch:
         return True
-    return _git_ok(main, "merge-base", "--is-ancestor", branch, "HEAD")
+    target = integration or integration_ref(main)["branch"]
+    return _git_ok(main, "merge-base", "--is-ancestor", branch, target)
 
 
-def warnings(main: Path, entries: list[dict[str, Any]]) -> list[str]:
+def warnings(
+    main: Path,
+    entries: list[dict[str, Any]],
+    *,
+    config: dict[str, Any] | None = None,
+) -> list[str]:
     """Avisos antes de confirmar: worktree sucio, ausente o sin mergear."""
+    main = Path(main).expanduser().resolve()
+    ref = integration_ref(main, config)
     messages: list[str] = []
+    if entries and ref["warning"]:
+        messages.append(f"integración: {ref['warning']}")
     for entry in entries:
         path = entry.get("path")
         if not path:
@@ -228,9 +288,14 @@ def warnings(main: Path, entries: list[dict[str, Any]]) -> list[str]:
                 f"({len(state['files'])} fichero(s))"
             )
         branch = state["branch"] or entry.get("branch")
-        if branch and branch.startswith("agent/") and not merged(main, branch):
+        if (
+            branch
+            and branch.startswith("agent/")
+            and not merged(main, branch, integration=ref["branch"])
+        ):
             messages.append(
-                f"{entry.get('code', '?')}: rama {branch} sin mergear en la actual"
+                f"{entry.get('code', '?')}: rama {branch} sin mergear "
+                f"en {ref['branch']}"
             )
     return messages
 
@@ -240,9 +305,11 @@ def cleanup(
     entries: list[dict[str, Any]],
     *,
     keep: bool = False,
+    config: dict[str, Any] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Retira worktrees limpios y mergeados; conserva sucios o sin mergear."""
     main = Path(main).expanduser().resolve()
+    integration = integration_ref(main, config)["branch"]
     removed: list[dict[str, Any]] = []
     kept: list[dict[str, Any]] = []
     for entry in entries:
@@ -256,7 +323,9 @@ def cleanup(
             removed.append({"code": code, "path": path, "reason": "ausente"})
             continue
         unmerged = bool(
-            branch and branch.startswith("agent/") and not merged(main, branch)
+            branch
+            and branch.startswith("agent/")
+            and not merged(main, branch, integration=integration)
         )
         if keep or state["dirty"] or unmerged:
             kept.append(
@@ -328,10 +397,13 @@ def merge(
     test_cmd: list[str] | None = None,
     delete: bool = False,
 ) -> dict[str, Any]:
-    """Rebase + tests + merge ff-only en el checkout principal.
+    """Rebase + tests + merge ff-only en la rama de integración.
 
-    Exige el worktree y el checkout principal limpios. Si el rebase o los
-    tests fallan, no se mergea nada.
+    La rama del worktree se rebasa sobre ``orchestrator.integration_branch``
+    (``develop`` por defecto) y se integra ahí, no en la rama actual. Si la
+    rama configurada no existe se usa la actual con un aviso. Exige el
+    worktree y el checkout principal limpios; si el rebase o los tests fallan,
+    no se mergea nada.
     """
     main = Path(main).expanduser().resolve()
     path = Path(target).expanduser().resolve()
@@ -346,11 +418,13 @@ def merge(
     base = status(main)
     if _tracked_dirty(main):
         raise TicketError(f"El checkout principal {main} tiene cambios sin commitear")
-    main_branch = base.get("branch")
-    if not main_branch:
+    checkout_branch = base.get("branch")
+    if not checkout_branch:
         raise TicketError("El checkout principal no está en una rama")
+    ref = integration_ref(main)
+    integration = ref["branch"]
     try:
-        _git(path, "rebase", main_branch)
+        _git(path, "rebase", integration)
     except TicketError:
         subprocess.run(
             ["git", "-C", str(path), "rebase", "--abort"],
@@ -368,12 +442,22 @@ def merge(
             detail = (result.stderr or result.stdout or "").strip().splitlines()
             tail = "\n".join(detail[-10:])
             raise TicketError(f"Los tests fallaron:\n{tail}")
-    _git(main, "merge", "--ff-only", branch)
+    switched = checkout_branch != integration
+    try:
+        if switched:
+            _git(main, "checkout", integration)
+        _git(main, "merge", "--ff-only", branch)
+    finally:
+        if switched:
+            _git(main, "checkout", checkout_branch)
     summary = {
         "path": str(path),
         "branch": branch,
         "main": str(main),
-        "main_branch": main_branch,
+        "main_branch": integration,
+        "integration_branch": integration,
+        "checkout_branch": checkout_branch,
+        "warning": ref["warning"],
         "tests": tested,
     }
     if delete:

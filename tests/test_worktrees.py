@@ -48,6 +48,15 @@ def run(h: Harness) -> None:
     info = workspace.init_workspace(root, name="Proyecto")
     folder = info["workspace"]
 
+    current = _git(root, "branch", "--show-current")
+    fallback = worktree.integration_ref(root)
+    h.ok(
+        fallback["fallback"]
+        and fallback["branch"] == current
+        and "develop" in (fallback["warning"] or ""),
+        "sin develop la integración cae a la rama actual con aviso",
+    )
+
     # ── Worktree creado por Taiki ───────────────────────────────────────
     with h.env(TAIKI_DB=str(info["db"])):
         conn = db.connect()
@@ -62,10 +71,9 @@ def run(h: Harness) -> None:
             conn.close()
 
     path = created["path"]
-    h.ok(path.is_dir(), "worktree.create crea el directorio")
     h.ok(
-        str(path).startswith(str(root / ".worktrees")),
-        "el worktree vive en .worktrees/ del checkout principal",
+        path.is_dir() and str(path).startswith(str(root / ".worktrees")),
+        "worktree.create crea el directorio en .worktrees/ del checkout principal",
     )
     h.ok(
         created["branch"].startswith(f"agent/{ticket['code']}"),
@@ -77,17 +85,13 @@ def run(h: Harness) -> None:
         "worktree create se serializa a JSON (Path incluido)",
     )
     h.ok(
-        (path / "opencode.json").is_file(),
-        "create copia la configuración de OpenCode",
+        (path / "opencode.json").is_file() and not (path / ".taiki").exists(),
+        "create copia OpenCode pero no .taiki ni la base de datos",
     )
     h.raises(
         TicketError,
         lambda: worktree.create(root, ticket["code"], title=ticket["title"]),
         "no se crea un segundo worktree para la misma tarea",
-    )
-    h.ok(
-        not (path / ".taiki").exists(),
-        "el worktree no copia .taiki ni la base de datos",
     )
 
     ignored = subprocess.run(
@@ -100,24 +104,14 @@ def run(h: Harness) -> None:
     # ── Resolución de workspace desde el worktree ───────────────────────
     with h.env(TAIKI_DB=None, TICKETS_DB=None):
         h.eq(
-            workspace.find_workspace(path),
-            folder,
-            "find_workspace encuentra el .taiki principal desde el worktree",
+            (workspace.find_workspace(path), workspace.resolve_db(path)),
+            (folder, info["db"]),
+            "find_workspace y resolve_db comparten .taiki y DB desde el worktree",
         )
         h.eq(
-            workspace.resolve_db(path),
-            info["db"],
-            "el worktree usa la base de datos compartida",
-        )
-        h.eq(
-            workspace.project_root(path),
-            root,
-            "project_root no hereda el nombre T-XXXX del worktree",
-        )
-        h.eq(
-            workspace.resolve(path)["project"],
-            "proyecto",
-            "resolve devuelve el proyecto del checkout principal",
+            (workspace.project_root(path), workspace.resolve(path)["project"]),
+            (root, "proyecto"),
+            "project_root y resolve usan el checkout principal",
         )
         # En un repo real, `.taiki/config.json` viaja al worktree por Git.
         # No debe convertir el worktree en un workspace con DB vacía.
@@ -139,19 +133,15 @@ def run(h: Harness) -> None:
 
     # ── Listado, estado y avisos ────────────────────────────────────────
     listed = worktree.list_worktrees(root)
-    h.ok(
-        any(Path(item["path"]) == path for item in listed),
-        "list_worktrees incluye el worktree creado",
-    )
     found = worktree.locate(root, ticket["code"])
-    h.ok(
-        found is not None and Path(found["path"]) == path,
-        "locate encuentra el worktree por ticket",
-    )
     clean = worktree.status(path)
     h.ok(
-        clean["exists"] and not clean["dirty"],
-        "status informa de un worktree limpio",
+        any(Path(item["path"]) == path for item in listed)
+        and found is not None
+        and Path(found["path"]) == path
+        and clean["exists"]
+        and not clean["dirty"],
+        "list_worktrees, locate y status ven el worktree limpio",
     )
     (path / "src" / "app.py").write_text("print('cambio')\n", encoding="utf-8")
     dirty = worktree.status(path)
@@ -436,3 +426,36 @@ def run(h: Harness) -> None:
             )
         finally:
             conn.close()
+
+    # ── rama de integración: develop ────────────────────────────────────
+    _git(root, "checkout", "-b", "develop")
+    (root / "develop.txt").write_text("integracion\n", encoding="utf-8")
+    _git(root, "add", "develop.txt")
+    _git(root, "commit", "-m", "base develop")
+    _git(root, "checkout", current)
+    integration_tree = worktree.create(root, "T-9001", title="Integración")
+    integration_path = Path(integration_tree["path"])
+    h.ok(
+        (integration_path / "develop.txt").is_file(),
+        "la rama agent/… nace de la rama de integración",
+    )
+    (integration_path / "feature.txt").write_text("x\n", encoding="utf-8")
+    _git(integration_path, "add", "-A")
+    _git(integration_path, "commit", "-m", "feature")
+    merged_into = worktree.merge(root, integration_path)
+    h.ok(
+        merged_into["integration_branch"] == "develop"
+        and _git(root, "show", "develop:feature.txt").strip() == "x"
+        and not (root / "feature.txt").exists()
+        and _git(root, "branch", "--show-current") == current,
+        "merge integra en develop y restaura la rama actual",
+    )
+    h.ok(
+        worktree.merged(root, merged_into["branch"])
+        and not worktree.merged(
+            root, merged_into["branch"], integration=current
+        ),
+        "merged compara contra la rama de integración",
+    )
+    worktree.remove(root, integration_path, force=True, delete_branch=True)
+    _git(root, "branch", "-D", "develop")
