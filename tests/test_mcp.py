@@ -81,13 +81,22 @@ def run(h: Harness) -> None:
         )
     finally:
         handlers.set_client_info(None)
-    h.raises(
-        domain.TransitionError,
-        lambda: handlers.call_tool(
-            "claim",
-            {"code": mcp_created["code"], "agent": "agente:mcp_runner"},
-        ),
-        "otro agente no puede reclamar un ticket ya asignado al crearlo",
+    # ``assigned_to`` es informativo: el claim ajeno se permite sin owner y
+    # solo se rechaza cuando ya hay un dueño con lease vigente.
+    def claim_ajeno(agent: str) -> dict[str, object] | bool:
+        try:
+            return handlers.call_tool(
+                "claim", {"code": from_client["code"], "agent": agent}
+            )
+        except domain.TransitionError:
+            return True
+
+    first_claim = claim_ajeno("agente:mcp_runner")
+    h.ok(
+        isinstance(first_claim, dict)
+        and first_claim["owner_session"] == "agent:agente:mcp_runner"
+        and claim_ajeno("agente:otro") is True,
+        "claim ajeno sin owner se permite; con owner vigente se rechaza",
     )
 
     # Comprobar que el evento de creación guardó la sesión
@@ -100,7 +109,6 @@ def run(h: Harness) -> None:
 
     # call_tool('list') con filtro tag
     mcp_list = handlers.call_tool("list", {"tag": "mcp-suite"})
-    h.ok(mcp_list["count"] >= 1, "call_tool('list') con filtro tag devuelve al menos 1 resultado")
     h.ok(
         any(t["code"] == mcp_created["code"] for t in mcp_list["tickets"]),
         "el ticket creado con tag 'mcp-suite' está en el listado",

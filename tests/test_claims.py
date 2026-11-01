@@ -106,6 +106,28 @@ def run(h: Harness) -> None:
     )
     h.ok(not lease_expired(None), "sin lease no se considera vencido")
 
+    # ── assigned_to informativo: otro agente reclama si no hay dueño ────
+    handed = repo.create_ticket(
+        conn, title="Asignada al conductor", assigned_to="opencode"
+    )
+    taken = repo.claim_ticket(
+        conn, handed["code"], agent="worker", session_id="ses_w"
+    )
+    try:
+        repo.claim_ticket(
+            conn, handed["code"], agent="claude", session_id="ses_x"
+        )
+        rejected = False
+    except domain.TransitionError:
+        rejected = True
+    h.ok(
+        taken["assigned_to"] == "worker"
+        and taken["owner_session"] == "ses_w"
+        and rejected,
+        "otro agente reclama sin owner aunque assigned_to sea ajeno; "
+        "con owner vigente se rechaza",
+    )
+
     # ── Un solo ticket activo por sesión ────────────────────────────────
     second = repo.create_ticket(conn, title="Segundo trabajo")
     h.raises(

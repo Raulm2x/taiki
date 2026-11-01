@@ -208,9 +208,17 @@ def claim_ticket(
                 f"No se puede reclamar {row['code']} porque está '{row['status']}'. "
                 "Reábrelo primero."
             )
+        # ``assigned_to`` es informativo (creador o reasignación), no un lock:
+        # solo bloquea cuando hay un claim real, es decir, el ticket ya está en
+        # progreso o tiene un dueño con lease vigente.
+        claimed = row["status"] == "en_progreso" or (
+            bool(row["owner_session"])
+            and not _expired(row["lease_until"], now())
+        )
         if (
             row["assigned_to"]
             and row["assigned_to"] != agent
+            and claimed
             and not force
             and not steal
         ):
