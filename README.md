@@ -820,21 +820,10 @@ echo '{"tool_name":"write_file","tool_input":{"path":"/ruta"},"session_id":"ses_
 - El primer intento crea y reclama el ticket; el segundo pasa.
 - Si el agente no tiene hooks, el `commit-msg` sigue siendo la red.
 
-## Herramientas MCP
+## Recursos y prompts MCP
 
-| Tool | Uso |
-| --- | --- |
-| `create` | Registrar trabajo nuevo (admite etiquetas y `parent_id` para tareas) |
-| `list` | Filtrar por estado, tipo, prioridad, proyecto, asignado, texto, `tag`, `only_roots` o `parent_id` |
-| `get` | Detalle con comentarios, enlaces, historial y subtareas vinculadas |
-| `claim` | Reclamar y pasar a `en_progreso` (atómico con `BEGIN IMMEDIATE`) |
-| `update` | Cambiar título, cuerpo, tipo, prioridad, proyecto, etiquetas o `parent_id` |
-| `transition` | Cambiar de estado (valida la máquina de estados) |
-| `complete` | Cerrar con resolución, commit y archivos |
-| `comment` | Añadir notas al historial |
-| `link` | Enlazar commit, archivo, URL o sesión |
-| `stats` | Resumen por estado, tipo, prioridad y proyecto |
-| `next` | Siguiente ticket pendiente |
+El catálogo de 19 herramientas está en [Herramientas MCP](#herramientas-mcp) y
+se genera desde `mcp_layer/schemas.py`. Aquí solo quedan los recursos y prompts:
 
 Recursos: `taiki://inbox`, `taiki://stats`, `taiki://ticket/{code}`.
 Prompts: `taiki:next`, `taiki:review`.

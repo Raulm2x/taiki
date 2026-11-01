@@ -23,9 +23,9 @@ def tool_schema(name: str) -> dict[str, Any] | None:
         if base.startswith(prefix):
             base = base.removeprefix(prefix)
             break
-    for tool in schemas.TOOLS:
-        if tool["name"] == base:
-            return tool
+    for spec in schemas.TOOL_SPECS:
+        if spec.name == base:
+            return spec.schema()
     return None
 
 

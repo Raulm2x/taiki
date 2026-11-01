@@ -60,6 +60,18 @@ def run(h: Harness) -> None:
         ),
         "el catálogo no emite anotaciones ni claves muertas",
     )
+    h.eq(
+        set(handlers.TOOL_DISPATCH),
+        {spec.name for spec in schemas.TOOL_SPECS},
+        "TOOL_DISPATCH se deriva del catálogo",
+    )
+    h.eq(
+        handlers.MUTATING_TOOLS,
+        frozenset(
+            spec.name for spec in schemas.TOOL_SPECS if not spec.read_only
+        ),
+        "MUTATING_TOOLS se deriva de read_only",
+    )
 
     # Precedencia en resolve_session
     # 1. meta > args > env
@@ -581,6 +593,14 @@ def run(h: Harness) -> None:
         set(projected),
         {"code", "title", "status"},
         "get con fields proyecta solo los campos pedidos",
+    )
+    from commands.tickets import _json_summary
+
+    sample = repo.get_ticket(conn, mcp_created["code"])
+    h.eq(
+        _json_summary(sample),
+        handlers._summary(sample),
+        "el resumen CLI y MCP comparten los mismos campos",
     )
     h.ok(
         all(

@@ -14,6 +14,7 @@ from ticketlib import (
     db,
     domain,
     githook,
+    presentation,
     render,
     repo,
     runtime,
@@ -26,7 +27,7 @@ from ticketlib import (
 from ticketlib.guard.context import find_active, session_chain
 from ticketlib.util import normalize_agent, resolve_scope
 
-from . import validation
+from . import schemas, validation
 
 ToolHandler = Callable[
     [sqlite3.Connection, dict[str, Any], str | None, str],
@@ -91,21 +92,6 @@ def _session(meta: Any = None, args: dict[str, Any] | None = None) -> str | None
 
 
 _CLIENT_AGENT = "agente"
-MUTATING_TOOLS = frozenset(
-    {
-        "create",
-        "claim",
-        "update",
-        "transition",
-        "complete",
-        "comment",
-        "link",
-        "heartbeat",
-        "worktree_create",
-        "promote",
-        "scratch_drop",
-    }
-)
 
 
 def set_client_info(info: Any = None) -> str:
@@ -125,18 +111,6 @@ def _actor(args: dict[str, Any]) -> str:
 
 # Campos que un agente necesita para elegir trabajo sin arrastrar el cuerpo
 # completo de cada ticket. ``get`` sigue devolviendo el detalle.
-SUMMARY_FIELDS = (
-    "code",
-    "title",
-    "status",
-    "priority",
-    "kind",
-    "project",
-    "assigned_to",
-    "parent_id",
-    "updated_at",
-)
-SUMMARY_OPTIONAL = ("paths", "tags", "progress")
 DETAIL_SECTIONS = (
     "events",
     "comments",
@@ -205,14 +179,7 @@ def _project_root() -> Path:
 
 
 def _summary(ticket: dict[str, Any], *, preview: bool = False) -> dict[str, Any]:
-    data = {key: ticket[key] for key in SUMMARY_FIELDS if key in ticket}
-    for key in SUMMARY_OPTIONAL:
-        value = ticket.get(key)
-        if not value:
-            continue
-        if key == "progress" and not (value or {}).get("total"):
-            continue
-        data[key] = value
+    data = presentation.summary(ticket)
     if preview:
         body = str(ticket.get("body") or "").strip()
         data["body_preview"] = (
@@ -907,26 +874,12 @@ def _handle_health(
 # ---------------------------------------------------------------------------
 
 TOOL_DISPATCH: dict[str, ToolHandler] = {
-    "create": _handle_create,
-    "list": _handle_list,
-    "get": _handle_get,
-    "claim": _handle_claim,
-    "update": _handle_update,
-    "transition": _handle_transition,
-    "complete": _handle_complete,
-    "comment": _handle_comment,
-    "link": _handle_link,
-    "stats": _handle_stats,
-    "next": _handle_next,
-    "status": _handle_status,
-    "whoami": _handle_whoami,
-    "heartbeat": _handle_heartbeat,
-    "worktree_create": _handle_worktree_create,
-    "worktree_list": _handle_worktree_list,
-    "promote": _handle_promote,
-    "scratch_drop": _handle_scratch_drop,
-    "health": _handle_health,
+    spec.name: globals()[f"_handle_{spec.name}"]
+    for spec in schemas.TOOL_SPECS
 }
+MUTATING_TOOLS = frozenset(
+    spec.name for spec in schemas.TOOL_SPECS if not spec.read_only
+)
 
 
 # ---------------------------------------------------------------------------

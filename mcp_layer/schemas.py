@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from ticketlib.domain import KINDS, LINK_KINDS, PRIORITIES, STATUSES
 
 INSTRUCTIONS = """\
@@ -21,29 +23,36 @@ También existen "bloqueado" y "cancelado".
 """
 
 
-def _tool(
-    name: str,
-    description: str,
-    properties: dict,
-    required: tuple[str, ...] = (),
-    *,
-    read_only: bool = False,
-) -> dict:
-    tool = {
-        "name": name,
-        "description": description,
-        "inputSchema": {
-            "type": "object",
-            "properties": properties,
-            "required": list(required),
-            "additionalProperties": False,
-        },
-    }
-    # Solo se anota lo que aporta una pista real al cliente; títulos e
-    # ``idempotentHint``/``destructiveHint`` duplicaban el catálogo sin uso.
-    if read_only:
-        tool["annotations"] = {"readOnlyHint": True}
-    return tool
+@dataclass(frozen=True)
+class ToolSpec:
+    """Fuente única de una herramienta MCP.
+
+    El esquema que ve el cliente, el despacho y el conjunto de herramientas que
+    escriben se derivan de esta definición y del nombre ``_handle_<name>``.
+    """
+
+    name: str
+    description: str
+    properties: dict
+    required: tuple[str, ...] = ()
+    read_only: bool = False
+
+    def schema(self) -> dict:
+        tool = {
+            "name": self.name,
+            "description": self.description,
+            "inputSchema": {
+                "type": "object",
+                "properties": self.properties,
+                "required": list(self.required),
+                "additionalProperties": False,
+            },
+        }
+        # Solo se anota lo que aporta una pista real al cliente; títulos e
+        # ``idempotentHint``/``destructiveHint`` duplicaban el catálogo sin uso.
+        if self.read_only:
+            tool["annotations"] = {"readOnlyHint": True}
+        return tool
 
 
 CODE = {
@@ -77,8 +86,8 @@ DETAIL = {
     "description": "Devuelve el ticket completo en vez del recibo compacto",
 }
 
-TOOLS = [
-    _tool(
+TOOL_SPECS = [
+    ToolSpec(
         "create",
         "Crea un ticket en estado 'nuevo'. Úsalo para registrar mantenimiento, "
         "funcionalidades, bugs, documentación o seguridad. Pasa 'agent' o se "
@@ -151,7 +160,7 @@ TOOLS = [
         },
         ("title",),
     ),
-    _tool(
+    ToolSpec(
         "list",
         "Lista tickets con filtros y paginación. Sin filtros devuelve solo los "
         "tickets abiertos, en resumen lean y 20 por defecto, del código más "
@@ -247,7 +256,7 @@ TOOLS = [
         },
         read_only=True,
     ),
-    _tool(
+    ToolSpec(
         "get",
         "Obtiene un ticket completo: datos, etiquetas, comentarios, enlaces e "
         "historial. Usa include para pedir secciones y history_limit/"
@@ -323,7 +332,7 @@ TOOLS = [
         ("code",),
         read_only=True,
     ),
-    _tool(
+    ToolSpec(
         "claim",
         "Reclama un ticket y lo pasa a 'en_progreso', asignándolo al agente. "
         "Llámalo antes de empezar a modificar código. No reclames una épica: "
@@ -353,7 +362,7 @@ TOOLS = [
         },
         ("code",),
     ),
-    _tool(
+    ToolSpec(
         "update",
         "Actualiza campos descriptivos de un ticket. No cambia el estado.",
         {
@@ -392,7 +401,7 @@ TOOLS = [
         },
         ("code",),
     ),
-    _tool(
+    ToolSpec(
         "transition",
         "Cambia el estado de un ticket validando la máquina de estados. "
         "No permite pasar a 'confirmado' (reservado al usuario).",
@@ -411,7 +420,7 @@ TOOLS = [
         },
         ("code", "status"),
     ),
-    _tool(
+    ToolSpec(
         "complete",
         "Marca un ticket como 'completado' con una resolución obligatoria. "
         "Adjunta commit y archivos tocados.",
@@ -440,7 +449,7 @@ TOOLS = [
         },
         ("code", "resolution"),
     ),
-    _tool(
+    ToolSpec(
         "comment",
         "Añade un comentario al historial del ticket (decisiones, bloqueos, hallazgos).",
         {
@@ -452,7 +461,7 @@ TOOLS = [
         },
         ("code", "body"),
     ),
-    _tool(
+    ToolSpec(
         "link",
         "Vincula una referencia externa al ticket.",
         {
@@ -473,13 +482,13 @@ TOOLS = [
         },
         ("code", "kind", "ref"),
     ),
-    _tool(
+    ToolSpec(
         "stats",
         "Resumen de tickets por estado, tipo, prioridad y proyecto.",
         {},
         read_only=True,
     ),
-    _tool(
+    ToolSpec(
         "next",
         "Devuelve el siguiente ticket pendiente (o nuevo) por prioridad y "
         "antigüedad, como resumen con un avance del body. Usa detail=true para "
@@ -494,7 +503,7 @@ TOOLS = [
         },
         read_only=True,
     ),
-    _tool(
+    ToolSpec(
         "status",
         "Foto del proyecto: sesiones activas, claims, leases, worktrees, "
         "solapamientos y servidores MCP. Úsalo antes de escribir si hay otros "
@@ -515,14 +524,14 @@ TOOLS = [
         },
         read_only=True,
     ),
-    _tool(
+    ToolSpec(
         "whoami",
         "Devuelve tu agente y sesión resueltos, el ticket activo, su lease y "
         "su worktree. Úsalo para comprobar quién eres antes de coordinar.",
         {},
         read_only=True,
     ),
-    _tool(
+    ToolSpec(
         "heartbeat",
         "Renueva el lease del ticket activo o del código indicado. Llámalo "
         "durante comandos largos para que otra sesión no lo tome por muerto.",
@@ -536,7 +545,7 @@ TOOLS = [
             },
         },
     ),
-    _tool(
+    ToolSpec(
         "worktree_create",
         "Crea (o reutiliza) el worktree del ticket reclamado y lo enlaza. "
         "Trabaja dentro de la ruta devuelta para no pisar el árbol compartido.",
@@ -551,27 +560,27 @@ TOOLS = [
         },
         ("code",),
     ),
-    _tool(
+    ToolSpec(
         "worktree_list",
         "Lista los worktrees del proyecto, opcionalmente filtrados por ticket.",
         {"code": CODE},
         read_only=True,
     ),
-    _tool(
+    ToolSpec(
         "promote",
         "Promueve un ticket scratch S-#### a un ticket real T-####. Úsalo "
         "cuando el trabajo temporal del guard resulta ser real.",
         {"code": CODE},
         ("code",),
     ),
-    _tool(
+    ToolSpec(
         "scratch_drop",
         "Descarta un ticket scratch S-####: lo archiva y lo deja cancelado, "
         "sin pasar por la tabla ni consumir números T-####.",
         {"code": CODE},
         ("code",),
     ),
-    _tool(
+    ToolSpec(
         "health",
         "Comprueba el estado del MCP, hooks, claims caducados, solapamientos, "
         "worktrees y servidores. Úsalo si algo no cuadra.",
@@ -607,6 +616,8 @@ RESOURCES = [
         "mimeType": "application/json",
     },
 ]
+
+TOOLS = [spec.schema() for spec in TOOL_SPECS]
 
 RESOURCE_TEMPLATES = [
     {

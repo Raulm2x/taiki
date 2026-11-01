@@ -8,7 +8,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
-from ticketlib import db, render, repo, scratch, sessions, workspace
+from ticketlib import db, presentation, render, repo, scratch, sessions, workspace
 from ticketlib.domain import OPEN_STATUSES, TicketError
 from ticketlib.util import resolve_scope
 
@@ -48,32 +48,8 @@ def _tree_rows(tickets: list[dict]) -> list[dict]:
     return rows
 
 
-SUMMARY_JSON_FIELDS = (
-    "code",
-    "title",
-    "status",
-    "priority",
-    "kind",
-    "project",
-    "assigned_to",
-    "parent_id",
-    "updated_at",
-)
-
-
 def _json_summary(ticket: dict) -> dict:
-    data = {
-        key: ticket[key]
-        for key in SUMMARY_JSON_FIELDS
-        if ticket.get(key) is not None
-    }
-    progress = ticket.get("progress") or {}
-    if progress.get("total"):
-        data["progress"] = progress
-    for key in ("paths", "tags"):
-        if ticket.get(key):
-            data[key] = ticket[key]
-    return data
+    return presentation.summary(ticket)
 
 
 def cmd_list(args: argparse.Namespace) -> int:
