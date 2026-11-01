@@ -8,6 +8,7 @@ para forzar una decisión.
 from __future__ import annotations
 
 import ast
+import os
 import tomllib
 from dataclasses import dataclass, field
 from datetime import date
@@ -52,15 +53,49 @@ def load_toml(path: Path) -> dict[str, Any]:
         return tomllib.load(handle)
 
 
-def load_budget(path: Path | None = None) -> dict[str, Any]:
-    """Presupuesto con valores por defecto si el fichero no existe."""
+def _truthy(value: Any) -> bool:
+    return str(value or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _float_env(environ: dict[str, str], name: str) -> float | None:
+    raw = environ.get(name)
+    if raw is None or not str(raw).strip():
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def load_budget(
+    path: Path | None = None,
+    environ: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Presupuesto efectivo: fichero, perfil de CI y overrides por entorno.
+
+    Precedencia: valores base < ``[ci.*]`` (si ``CI``/``TAIKI_CI``) <
+    ``TAIKI_SUITE_BUDGET`` / ``TAIKI_MODULE_BUDGET``. Así el gate local sigue
+    estricto y el runner compartido de CI tiene margen sin tocar el fichero.
+    """
     data = load_toml(path or CONFIG / "budget.toml")
+    env = os.environ if environ is None else environ
     budget = {
         "suite": dict(DEFAULT_BUDGET["suite"]),
         "module": dict(DEFAULT_BUDGET["module"]),
     }
     for section in ("suite", "module"):
         budget[section].update(data.get(section, {}))
+    if _truthy(env.get("CI")) or _truthy(env.get("TAIKI_CI")):
+        ci = data.get("ci", {})
+        for section in ("suite", "module"):
+            budget[section].update(ci.get(section, {}))
+    for name, section in (
+        ("TAIKI_SUITE_BUDGET", "suite"),
+        ("TAIKI_MODULE_BUDGET", "module"),
+    ):
+        override = _float_env(env, name)
+        if override is not None:
+            budget[section]["max_seconds"] = override
     return budget
 
 

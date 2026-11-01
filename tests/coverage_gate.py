@@ -12,13 +12,15 @@ suben: bajarlos es una decisión explícita que debe justificarse en el commit.
 
 Qué mide y qué no:
 
-- ``ticketlib`` y ``mcp_layer`` se miden completos (líneas y ramas).
+- ``ticketlib`` y ``mcp_layer`` se miden completos. El gate compara **líneas
+  cubiertas** (``covered_lines``); ``branch = true`` queda para el informe de
+  ``coverage report``, no para el umbral.
 - ``commands`` mide el CLI cuando se importa en el proceso de la suite. Los
   tests que lanzan ``bin/taiki`` como subproceso no se instrumentan, así que
   las rutas exclusivas del wrapper quedan fuera del porcentaje.
-- ``tui`` excluye ``app.py`` y ``view.py`` (curses, no testeables sin terminal);
-  se mide la lógica pura: ``state``, ``detail``, ``heatmap``, ``data`` y
-  ``actions``.
+- ``tui`` excluye ``app.py``, ``view.py`` y ``actions_ui.py`` (curses/UI sin
+  terminal); se mide la lógica pura: ``state``, ``detail``, ``heatmap``,
+  ``data`` y ``actions``.
 """
 
 from __future__ import annotations

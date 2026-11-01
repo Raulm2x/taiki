@@ -895,9 +895,9 @@ python3 tests/run.py                 # suite completa (el runner imprime el tota
 python3 tests/run.py --list          # módulos disponibles
 python3 tests/run.py --only guard    # una sola área, con su propia DB temporal
 python3 tests/run.py -k tui -v       # filtrar por nombre y ver el desglose
-python3 tests/run.py --audit         # ruido: duplicados, imports, seeds y línea base
+python3 tests/run.py --audit         # ruido, duplicados, imports y techo de checks
 python3 tests/run.py --strict-budget # falla si se supera el presupuesto de tiempo
-python3 tests/run.py --bench         # benchmarks 20k (connect <10 ms, export <500 ms)
+python3 tests/run.py --bench         # benchmarks 20k (límites según CI/local)
 python3 -m tests.benchmarks          # benchmarks por separado
 ruff check .                         # lint (corrección + ARG)
 mypy                                 # tipos de ticketlib (gradual)
@@ -926,6 +926,11 @@ el total real de comprobaciones, que cubre filtros de tags, subtareas, concurren
   **aviso accionable**; con `--strict-budget` (lo que usa la CI) el tiempo es un
   **gate duro** y la suite termina con código 1. Bajar comprobaciones no avisa:
   el contador es un techo, no un objetivo.
+- Presupuestos **runner-aware**: con `CI=true` (o `TAIKI_CI=true`) se aplica el
+  perfil `[ci.suite]`/`[ci.module]` de `budget.toml` (8 s de suite y 1,5 s por
+  módulo). `TAIKI_SUITE_BUDGET` y `TAIKI_MODULE_BUDGET` sobrescriben cualquier
+  valor. Los benchmarks usan 10 ms/500 ms en local y 25 ms/1.500 ms en CI, con
+  `TAIKI_BENCH_CONNECT_MS` / `TAIKI_BENCH_EXPORT_MS` como override.
 - Política de tests: un comportamiento, un test en la capa más baja; un bug,
   una regresión en la capa que falló; MCP/CLI solo contrato y TUI solo lógica
   pura. Borrar tests es válido si la cobertura no baja; añadir por encima del
@@ -935,15 +940,18 @@ el total real de comprobaciones, que cubre filtros de tags, subtareas, concurren
   `coverage run` + `tests/coverage_gate.py`. Así el coste de coverage no infla
   el límite de 4 s.
 - `tests/coverage_gate.py` aplica umbrales por capa definidos en
-  `[tool.coverage.taiki]` de `pyproject.toml` (ratchet: solo se suben). Mide
-  `ticketlib` y `mcp_layer` completos, `commands` tal como lo ejerce la suite
-  (los subprocesos de `bin/taiki` no se instrumentan) y `tui` sin `app.py` ni
-  `view.py` (curses); no se persigue cobertura de curses.
+  `[tool.coverage.taiki]` de `pyproject.toml` (ratchet: solo se suben). El gate
+  compara **líneas cubiertas**, no ramas (`branch = true` es solo para el
+  informe). Mide `ticketlib` y `mcp_layer` completos, `commands` tal como lo
+  ejerce la suite (los subprocesos de `bin/taiki` no se instrumentan) y `tui`
+  sin `app.py`, `view.py` ni `actions_ui.py` (curses/UI); no se persigue
+  cobertura de curses.
 - `tests/quarantine.toml` permite aparcar un módulo con `reason`, `owner` y
   `expires`. Mientras está vigente se ejecuta pero un fallo no bloquea; al
   caducar, la suite falla para forzar la revisión.
 - `--audit` informa de mensajes duplicados, imports y seeds sin uso, módulos sin
-  aserciones y desviación sobre el techo. No modifica ni elimina pruebas.
+  aserciones y desviación sobre el techo. Devuelve código 1 si hay fallos y
+  respeta `--strict-budget`. No modifica ni elimina pruebas.
 - No hay borrado automático por antigüedad: un test antiguo que protege una
   invariante sigue siendo valioso.
 

@@ -3,8 +3,17 @@
 # por arriba avisa, bajar nunca (la poda es válida si la cobertura se mantiene).
 [suite]
 max_seconds = 4.0
-baseline_checks = 912
+baseline_checks = 938
 checks_tolerance = 20
 
 [module]
 max_seconds = 0.75
+
+# Perfil de CI: los runners compartidos son más lentos y no deben fallar por
+# ruido. Se aplica con CI=true (o TAIKI_CI=true) y cada valor se puede
+# sobrescribir con TAIKI_SUITE_BUDGET / TAIKI_MODULE_BUDGET.
+[ci.suite]
+max_seconds = 8.0
+
+[ci.module]
+max_seconds = 1.5

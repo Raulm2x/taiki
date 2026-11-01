@@ -90,15 +90,41 @@ def run(h: Harness) -> None:
     budget_file = tmp / "budget.toml"
     budget_file.write_text(
         "[suite]\nmax_seconds = 1.0\nbaseline_checks = 10\nchecks_tolerance = 2\n"
-        "[module]\nmax_seconds = 0.25\n",
+        "[module]\nmax_seconds = 0.25\n"
+        "[ci.suite]\nmax_seconds = 8.0\n"
+        "[ci.module]\nmax_seconds = 1.5\n",
         encoding="utf-8",
     )
-    budget = hygiene.load_budget(budget_file)
+    budget = hygiene.load_budget(budget_file, environ={})
     h.eq(budget["suite"]["max_seconds"], 1.0, "load_budget lee el fichero")
     h.eq(
-        hygiene.load_budget(tmp / "no-existe.toml")["suite"]["max_seconds"],
+        hygiene.load_budget(tmp / "no-existe.toml", environ={})["suite"][
+            "max_seconds"
+        ],
         2.0,
         "load_budget cae a los valores por defecto",
+    )
+    ci_budget = hygiene.load_budget(budget_file, environ={"CI": "true"})
+    h.eq(
+        (ci_budget["suite"]["max_seconds"], ci_budget["module"]["max_seconds"]),
+        (8.0, 1.5),
+        "CI=true aplica el perfil holgado de budget.toml",
+    )
+    overridden = hygiene.load_budget(
+        budget_file,
+        environ={"CI": "true", "TAIKI_SUITE_BUDGET": "12"},
+    )
+    h.eq(
+        overridden["suite"]["max_seconds"],
+        12.0,
+        "TAIKI_SUITE_BUDGET tiene prioridad sobre [ci.suite]",
+    )
+    h.eq(
+        hygiene.load_budget(
+            budget_file, environ={"TAIKI_MODULE_BUDGET": "2"}
+        )["module"]["max_seconds"],
+        2.0,
+        "TAIKI_MODULE_BUDGET ajusta el límite por módulo",
     )
 
     results = [{"name": "test_x", "checks": 40, "elapsed": 1.5, "error": None}]
@@ -167,6 +193,25 @@ def run(h: Harness) -> None:
         "los umbrales por capa están en pyproject.toml",
     )
 
+    # ── Benchmarks: umbral estricto en local y holgado en CI ────────────
+    from tests import benchmarks
+
+    h.eq(
+        benchmarks.limits({}),
+        (benchmarks.CONNECT_LIMIT_MS, benchmarks.EXPORT_LIMIT_MS),
+        "los benchmarks son estrictos fuera de CI",
+    )
+    h.eq(
+        benchmarks.limits({"CI": "true"}),
+        (benchmarks.CI_CONNECT_LIMIT_MS, benchmarks.CI_EXPORT_LIMIT_MS),
+        "CI usa los umbrales holgados de benchmark",
+    )
+    h.eq(
+        benchmarks.limits({"CI": "1", "TAIKI_BENCH_EXPORT_MS": "900"})[1],
+        900.0,
+        "TAIKI_BENCH_EXPORT_MS ajusta el umbral de export",
+    )
+
     # ── --strict-budget convierte el tiempo en un gate duro ─────────────
     import contextlib
     import io
@@ -175,6 +220,8 @@ def run(h: Harness) -> None:
 
     original_runner = runner._run_module
     original_budget_loader = hygiene.load_budget
+    original_audit = hygiene.audit
+    original_format_audit = hygiene.format_audit
     tight = {
         "suite": {"max_seconds": 1.0, "baseline_checks": 0, "checks_tolerance": 20},
         "module": {"max_seconds": 0.1},
@@ -185,16 +232,49 @@ def run(h: Harness) -> None:
         "error": None,
         "elapsed": 99.0,
     }
-    hygiene.load_budget = lambda path=None: tight
+    hygiene.load_budget = lambda path=None, environ=None: tight
+    hygiene.audit = lambda names: {
+        "sources": [],
+        "duplicates": {},
+        "unused_seeds": [],
+        "baseline": tight["suite"],
+    }
+    hygiene.format_audit = lambda report, results, partial=False: []
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             strict_code = runner.main(["test_core", "--strict-budget"])
             loose_code = runner.main(["test_core"])
         h.eq(strict_code, 1, "--strict-budget falla con un módulo lento")
         h.eq(loose_code, 0, "sin --strict-budget el tiempo solo avisa")
+
+        runner._run_module = lambda name: {
+            "name": name,
+            "checks": 1,
+            "error": "boom",
+            "elapsed": 0.01,
+        }
+        with contextlib.redirect_stdout(io.StringIO()):
+            audit_failure = runner.main(["--audit", "test_core"])
+        h.eq(audit_failure, 1, "--audit devuelve 1 si hay fallos")
+
+        runner._run_module = lambda name: {
+            "name": name,
+            "checks": 1,
+            "error": None,
+            "elapsed": 99.0,
+        }
+        with contextlib.redirect_stdout(io.StringIO()):
+            audit_strict = runner.main(["--audit", "test_core", "--strict-budget"])
+        h.eq(
+            audit_strict,
+            1,
+            "--audit --strict-budget falla por tiempo",
+        )
     finally:
         runner._run_module = original_runner
         hygiene.load_budget = original_budget_loader
+        hygiene.audit = original_audit
+        hygiene.format_audit = original_format_audit
 
     quarantine_file = tmp / "quarantine.toml"
     quarantine_file.write_text(

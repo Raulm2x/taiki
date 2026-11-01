@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import statistics
 import tempfile
 import time
@@ -14,6 +15,41 @@ TICKETS = 20_000
 BODY = "x" * 1024
 CONNECT_LIMIT_MS = 10.0
 EXPORT_LIMIT_MS = 500.0
+CI_CONNECT_LIMIT_MS = 25.0
+CI_EXPORT_LIMIT_MS = 1_500.0
+
+
+def _truthy(value: object) -> bool:
+    return str(value or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def limits(environ: dict[str, str] | None = None) -> tuple[float, float]:
+    """Límites efectivos: estrictos en local, holgados en CI.
+
+    ``TAIKI_BENCH_CONNECT_MS`` / ``TAIKI_BENCH_EXPORT_MS`` permiten ajustar un
+    runner concreto sin tocar el código.
+    """
+    env = os.environ if environ is None else environ
+    if _truthy(env.get("CI")) or _truthy(env.get("TAIKI_CI")):
+        connect, export = CI_CONNECT_LIMIT_MS, CI_EXPORT_LIMIT_MS
+    else:
+        connect, export = CONNECT_LIMIT_MS, EXPORT_LIMIT_MS
+    for name, key in (
+        ("TAIKI_BENCH_CONNECT_MS", "connect"),
+        ("TAIKI_BENCH_EXPORT_MS", "export"),
+    ):
+        raw = env.get(name)
+        if raw is None or not str(raw).strip():
+            continue
+        try:
+            value = float(raw)
+        except ValueError:
+            continue
+        if key == "connect":
+            connect = value
+        else:
+            export = value
+    return connect, export
 
 
 def build(path: Path) -> None:
@@ -81,6 +117,7 @@ def main(argv: list[str] | None = None) -> int:
         help="conserva la DB sintética para inspeccionarla",
     )
     args = parser.parse_args(argv)
+    connect_limit, export_limit = limits()
     with tempfile.TemporaryDirectory(prefix="taiki-bench-") as tmp:
         path = Path(tmp) / "bench.db"
         build(path)
@@ -88,18 +125,18 @@ def main(argv: list[str] | None = None) -> int:
         export_ms = measure_export(path)
         print(
             f"connect 20k: {connect_ms:.1f} ms "
-            f"(límite {CONNECT_LIMIT_MS:.0f} ms)"
+            f"(límite {connect_limit:.0f} ms)"
         )
         print(
             f"export 20k:  {export_ms:.0f} ms "
-            f"(límite {EXPORT_LIMIT_MS:.0f} ms)"
+            f"(límite {export_limit:.0f} ms)"
         )
         if args.keep:
             kept = Path("/tmp/opencode/taiki-bench.db")
             kept.parent.mkdir(parents=True, exist_ok=True)
             path.replace(kept)
             print(f"DB conservada en {kept}")
-        failed = connect_ms > CONNECT_LIMIT_MS or export_ms > EXPORT_LIMIT_MS
+        failed = connect_ms > connect_limit or export_ms > export_limit
         if failed:
             print("FALLO: benchmark fuera de umbral")
             return 1

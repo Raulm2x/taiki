@@ -54,16 +54,16 @@ source = ["ticketlib", "mcp_layer", "commands", "tui"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
-# Red de seguridad global; los umbrales reales por capa los aplica
-# `tests/coverage_gate.py` con ratchet (no se bajan).
-fail_under = 65
 
-# Umbrales por capa (porcentaje mínimo). `commands` mide el CLI en proceso:
-# los tests que lanzan `bin/taiki` como subproceso no se instrumentan. En
-# `tui` se excluyen app.py y view.py (curses) y se mide la lógica pura.
+# Umbrales por capa (porcentaje mínimo de líneas). `commands` mide el CLI en
+# proceso: los tests que lanzan `bin/taiki` como subproceso no se instrumentan.
+# En `tui` se excluyen app.py, view.py y actions_ui.py (curses/UI) y se mide la
+# lógica pura. El gate real es `tests/coverage_gate.py`; `coverage report` es
+# solo el informe legible (sin `fail_under` global para no fallar antes con un
+# mensaje menos útil).
 [tool.coverage.taiki]
 ticketlib = 85
 mcp_layer = 80
 commands = 35
 tui = 75
-ignore = ["tui/app.py", "tui/view.py"]
+ignore = ["tui/app.py", "tui/view.py", "tui/actions_ui.py"]

@@ -26,6 +26,7 @@ jobs:
       - name: Tipos
         run: mypy
       # Gate duro de tiempo: sin coverage para que el presupuesto no se infle.
+      # CI=true aplica el perfil [ci.*] de tests/budget.toml (8 s / 1,5 s).
       - name: Suite (presupuesto estricto)
         run: python tests/run.py --strict-budget
       # La cobertura se mide aparte y no cuenta contra el presupuesto anterior.
@@ -35,5 +36,6 @@ jobs:
           coverage report
           coverage json -o coverage.json
           python tests/coverage_gate.py coverage.json
+      # CI=true también relaja los benchmarks (25 ms / 1.500 ms).
       - name: Benchmarks
         run: python -m tests.benchmarks

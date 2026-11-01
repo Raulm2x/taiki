@@ -148,8 +148,16 @@ def main(argv: list[str] | None = None) -> int:
         _print_warnings(warnings)
         for failure in failures:
             print(f"FALLO {failure}")
-        if not failures:
-            print(f"\nOK: {total} comprobaciones ({len(names)} módulos, {elapsed:.2f}s)")
+        if failures:
+            return 1
+        if args.strict_budget:
+            violations = hygiene.budget_violations(results, budget, partial=partial)
+            if violations:
+                print("\nPresupuesto incumplido:")
+                for item in violations:
+                    print(f"  - {item}")
+                return 1
+        print(f"\nOK: {total} comprobaciones ({len(names)} módulos, {elapsed:.2f}s)")
         return 0
 
     _print_warnings(warnings)
