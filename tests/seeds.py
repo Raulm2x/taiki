@@ -76,9 +76,10 @@ def git_repo(path: Path) -> Path:
 
 
 def repo_with_hooks(path: Path) -> Path:
-    """Repositorio Git con los tres hooks de tickets instalados."""
+    """Repositorio Git con los cuatro hooks de tickets instalados."""
     git_repo(path)
     cli.install_post_commit_hook(path)
     githook.install_commit_msg_hook(path)
     githook.install_pre_push_hook(path)
+    githook.install_pre_commit_hook(path)
     return path

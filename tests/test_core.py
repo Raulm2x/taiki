@@ -178,10 +178,21 @@ def run(h: Harness) -> None:
         and push_hook.read_text().count(githook.PRE_PUSH_BEGIN) == 1,
         "pre-push se instala una sola vez",
     )
+    index_hook = githook.install_pre_commit_hook(hook_repo)
+    h.ok(
+        index_hook.exists()
+        and index_hook.read_text().count(githook.PRE_COMMIT_BEGIN) == 1,
+        "pre-commit se instala",
+    )
     h.ok(
         githook.hooks_installed(hook_repo)
-        == {"post-commit": True, "commit-msg": True, "pre-push": True},
-        "hooks_installed detecta los tres hooks",
+        == {
+            "post-commit": True,
+            "commit-msg": True,
+            "pre-push": True,
+            "pre-commit": True,
+        },
+        "hooks_installed detecta los cuatro hooks",
     )
 
     summary = repo.stats(conn)

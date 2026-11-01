@@ -198,12 +198,14 @@ def hooks_installed(repo: str | Path = ".") -> dict[str, bool]:
             "post-commit": False,
             "commit-msg": False,
             "pre-push": False,
+            "pre-commit": False,
         }
     found = {}
     for name, marker in (
         ("post-commit", HOOK_BEGIN),
         ("commit-msg", COMMIT_MSG_BEGIN),
         ("pre-push", PRE_PUSH_BEGIN),
+        ("pre-commit", PRE_COMMIT_BEGIN),
     ):
         path = hooks / name
         found[name] = path.is_file() and marker in path.read_text(encoding="utf-8")

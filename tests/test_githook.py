@@ -168,8 +168,13 @@ def run(h: Harness) -> None:
     )
     h.ok(
         data["hooks"]
-        == {"post-commit": True, "commit-msg": True, "pre-push": True},
-        "audit informa de los tres hooks del repo",
+        == {
+            "post-commit": True,
+            "commit-msg": True,
+            "pre-push": True,
+            "pre-commit": True,
+        },
+        "audit informa de los cuatro hooks del repo",
     )
 
     # ── Migración de hooks históricos ticket -> taiki ──────────────────
