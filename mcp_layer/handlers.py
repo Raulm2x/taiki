@@ -10,6 +10,8 @@ from urllib.parse import unquote
 from ticketlib import db, domain, render, repo, runtime, workspace
 from ticketlib.util import normalize_agent, resolve_scope
 
+from . import validation
+
 ToolHandler = Callable[
     [sqlite3.Connection, dict[str, Any], str | None, str],
     dict[str, Any],
@@ -72,9 +74,22 @@ def _session(meta: Any = None, args: dict[str, Any] | None = None) -> str | None
     return resolve_session(meta=meta, args=args)
 
 
+_CLIENT_AGENT = "agente"
+
+
+def set_client_info(info: Any = None) -> str:
+    """Fija el agente por defecto a partir de ``clientInfo`` del handshake."""
+    global _CLIENT_AGENT
+    name = ""
+    if isinstance(info, dict):
+        name = str(info.get("name") or "").strip()
+    _CLIENT_AGENT = normalize_agent(name) or "agente"
+    return _CLIENT_AGENT
+
+
 def _actor(args: dict[str, Any]) -> str:
-    """Determina el nombre del agente ejecutor a partir de los argumentos."""
-    return normalize_agent(str(args.get("agent") or "agente"))
+    """Nombre del agente: argumento explícito o cliente MCP conectado."""
+    return normalize_agent(str(args.get("agent") or _CLIENT_AGENT))
 
 
 # Campos que un agente necesita para elegir trabajo sin arrastrar el cuerpo
@@ -477,6 +492,7 @@ def call_tool(
 ) -> dict[str, Any]:
     """Despacha la ejecución de una herramienta MCP utilizando TOOL_DISPATCH."""
     args = args or {}
+    validation.validate_arguments(name, args)
 
     handler = TOOL_DISPATCH.get(name)
     if not handler:
@@ -558,7 +574,7 @@ def _next_prompt(ticket: dict[str, Any] | None) -> str:
     if ticket is None:
         return (
             "No hay tickets pendientes ni nuevos. Si vas a hacer trabajo que no está "
-            "registrado, créalo antes con taiki_create."
+            "registrado, créalo antes con create."
         )
     body = ticket.get("body") or "(sin descripción)"
     return f"""\
@@ -571,10 +587,10 @@ Proyecto: {ticket.get('project') or '-'}
 {body}
 
 Pasos:
-1. Reclámalo con taiki_claim(code="{ticket['code']}", agent="<tu nombre>").
+1. Reclámalo con claim(code="{ticket['code']}", agent="<tu nombre>").
 2. Inspecciona el código y aplica el cambio mínimo.
 3. Verifica el resultado.
-4. Ciérralo con taiki_complete(code="{ticket['code']}", resolution="...", commit="...").
+4. Ciérralo con complete(code="{ticket['code']}", resolution="...", commit="...").
 No lo confirmes: esa transición la hace el usuario con el CLI.
 """
 
@@ -600,4 +616,5 @@ __all__ = [
     "get_prompt",
     "read_resource",
     "resolve_session",
+    "set_client_info",
 ]

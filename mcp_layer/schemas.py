@@ -8,17 +8,20 @@ INSTRUCTIONS = """\
 Sistema de tickets local compartido entre agentes y el usuario.
 
 Flujo de trabajo:
-1. Ningún cambio sin ticket. Antes de editar o ejecutar algo que escriba, comprueba que tienes un ticket en "en_progreso": si no, créalo con taiki_create y reclámalo con taiki_claim. El guard de OpenCode bloquea la primera escritura y deja un ticket temporal S-#### reclamado (oculto, no consume números T-); si el trabajo es real, promuévelo con `taiki scratch --promote` o crea el ticket adecuado.
-2. Al empezar, consulta taiki_list con status="pendiente" (o usa taiki_next) y revisa también "en_progreso" para no duplicar trabajo.
-3. Si descubres trabajo nuevo, regístralo con taiki_create; no lo dejes solo en el chat. Para objetivos con varias tareas, crea una épica y las tareas con parent_id (T-0014.01, T-0014.02…).
-4. Al terminar, usa taiki_complete con una resolución concreta y el commit o los archivos tocados.
-5. Nunca muevas un ticket a "confirmado": esa transición la hace el usuario con el CLI.
-6. Usa taiki_comment para decisiones o bloqueos y taiki_link para commits, archivos y URLs.
-7. Incluye el código T-XXXX en el asunto del commit: el hook commit-msg lo exige.
+1. Ningún cambio sin ticket. Antes de editar o ejecutar algo que escriba, comprueba que tienes un ticket en "en_progreso": si no, créalo con create y reclámalo con claim. En clientes que prefijan el servidor verás taiki_create/taiki_claim; el nombre real es create/claim. El guard de OpenCode puede crear un ticket temporal S-#### oculto; si el trabajo es real, crea el ticket adecuado.
+2. Al empezar, usa list (por defecto solo abiertos y en resumen) o next, y revisa también "en_progreso" para no duplicar trabajo. Para el detalle de un ticket usa get (include y history_limit acotan secciones).
+3. Si descubres trabajo nuevo, regístralo con create; no lo dejes solo en el chat. Para objetivos con varias tareas, crea una épica y las tareas con parent_id (T-0014.01, T-0014.02…). Declara las rutas que posee con paths.
+4. Pasa agent cuando puedas; si lo omites se usa el nombre del cliente. No reclames una épica: reclama una de sus tareas.
+5. Al terminar, usa complete con una resolución concreta y el commit o los archivos tocados.
+6. Nunca muevas un ticket a "confirmado": esa transición la hace el usuario con el CLI.
+7. Usa comment para decisiones o bloqueos y link para commits, archivos y URLs. Incluye el código T-XXXX en el asunto del commit: el hook commit-msg lo exige.
 
 Estados: nuevo → pendiente → en_progreso → completado → confirmado.
 También existen "bloqueado" y "cancelado".
 """
+
+
+OUTPUT_SCHEMA = {"type": "object"}
 
 
 def _tool(
@@ -26,8 +29,13 @@ def _tool(
     description: str,
     properties: dict,
     required: tuple[str, ...] = (),
+    *,
+    title: str | None = None,
+    read_only: bool = False,
+    idempotent: bool = False,
+    destructive: bool = False,
 ) -> dict:
-    return {
+    tool = {
         "name": name,
         "description": description,
         "inputSchema": {
@@ -36,7 +44,17 @@ def _tool(
             "required": list(required),
             "additionalProperties": False,
         },
+        "outputSchema": OUTPUT_SCHEMA,
+        "annotations": {
+            "readOnlyHint": read_only,
+            "destructiveHint": destructive,
+            "idempotentHint": idempotent,
+            "openWorldHint": False,
+        },
     }
+    if title:
+        tool["title"] = title
+    return tool
 
 
 CODE = {
@@ -67,8 +85,9 @@ TOOLS = [
     _tool(
         "create",
         "Crea un ticket en estado 'nuevo'. Úsalo para registrar mantenimiento, "
-        "funcionalidades, bugs, documentación o seguridad. Pasa siempre 'agent': "
-        "el ticket queda asignado a ese agente y su sesión se registra sola.",
+        "funcionalidades, bugs, documentación o seguridad. Pasa 'agent' o se "
+        "usará el nombre del cliente MCP; el ticket queda asignado y su sesión "
+        "se registra sola.",
         {
             "title": {"type": "string", "description": "Título corto y accionable"},
             "body": {
@@ -112,6 +131,7 @@ TOOLS = [
             "agent": AGENT,
         },
         ("title",),
+        title="Crear ticket",
     ),
     _tool(
         "list",
@@ -193,6 +213,9 @@ TOOLS = [
                 "description": "code = más recientes primero; priority = prioridad y antigüedad",
             },
         },
+        title="Listar tickets",
+        read_only=True,
+        idempotent=True,
     ),
     _tool(
         "get",
@@ -225,6 +248,9 @@ TOOLS = [
             },
         },
         ("code",),
+        title="Ver ticket",
+        read_only=True,
+        idempotent=True,
     ),
     _tool(
         "claim",
@@ -243,6 +269,7 @@ TOOLS = [
             "force": FORCE,
         },
         ("code",),
+        title="Reclamar ticket",
     ),
     _tool(
         "update",
@@ -273,6 +300,7 @@ TOOLS = [
             "session_id": SESSION,
         },
         ("code",),
+        title="Actualizar ticket",
     ),
     _tool(
         "transition",
@@ -290,6 +318,7 @@ TOOLS = [
             "force": FORCE,
         },
         ("code", "status"),
+        title="Cambiar estado",
     ),
     _tool(
         "complete",
@@ -312,6 +341,7 @@ TOOLS = [
             "force": FORCE,
         },
         ("code", "resolution"),
+        title="Completar ticket",
     ),
     _tool(
         "comment",
@@ -323,6 +353,7 @@ TOOLS = [
             "session_id": SESSION,
         },
         ("code", "body"),
+        title="Comentar ticket",
     ),
     _tool(
         "link",
@@ -339,11 +370,15 @@ TOOLS = [
             "session_id": SESSION,
         },
         ("code", "kind", "ref"),
+        title="Enlazar referencia",
     ),
     _tool(
         "stats",
         "Resumen de tickets por estado, tipo, prioridad y proyecto.",
         {},
+        title="Estadísticas",
+        read_only=True,
+        idempotent=True,
     ),
     _tool(
         "next",
@@ -358,6 +393,9 @@ TOOLS = [
                 "description": "Devuelve el ticket completo en vez del resumen",
             },
         },
+        title="Siguiente ticket",
+        read_only=True,
+        idempotent=True,
     ),
 ]
 

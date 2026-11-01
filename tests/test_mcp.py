@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import os
+import server as mcp_server
 import tui
-from mcp_layer import handlers
+from mcp_layer import errors, handlers, schemas
 from ticketlib import audit as audit_lib, db, domain, repo, runtime
 from tests.support import Harness
 
@@ -96,6 +97,76 @@ def run(h: Harness) -> None:
         "meta vacío cae al identificador provisto en args",
     )
 
+    # ── Validación de argumentos y errores estructurados ───────────────
+    h.raises(
+        domain.ValidationError,
+        lambda: handlers.call_tool("list", {"statuss": ["pendiente"]}),
+        "un argumento desconocido se rechaza en vez de ignorarse",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: handlers.call_tool("list", {"limit": "dos"}),
+        "un tipo incorrecto se rechaza",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: handlers.call_tool(
+            "get", {"code": "T-0001", "include": ["inventada"]}
+        ),
+        "un valor fuera del enum se rechaza",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: handlers.call_tool("create", {"title": "x", "parent_id": 3}),
+        "un tipo incorrecto en un campo opcional se rechaza",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: handlers.call_tool("taiki_list", {"statuss": []}),
+        "la validación también cubre los alias con prefijo",
+    )
+    try:
+        handlers.call_tool("get", {"code": "T-9999"})
+    except domain.NotFoundError as exc:
+        error = errors.payload(exc, tool="get")
+        h.eq(
+            error["error"]["code"],
+            "not_found",
+            "errors.payload clasifica un ticket inexistente",
+        )
+        h.ok(
+            error["error"].get("hint"),
+            "el error incluye una pista accionable",
+        )
+    stale = errors.payload(
+        domain.ValidationError("El MCP está desactualizado: recarga")
+    )
+    h.eq(
+        stale["error"]["code"],
+        "stale_server",
+        "errors.payload distingue un MCP desactualizado",
+    )
+    envelope = mcp_server._tool_error(
+        errors.payload(domain.ValidationError("argumento malo"), tool="list")
+    )
+    h.ok(
+        envelope["isError"]
+        and envelope["structuredContent"]["error"]["code"]
+        == "invalid_arguments",
+        "el servidor devuelve errores estructurados con isError",
+    )
+    by_name = {tool["name"]: tool for tool in schemas.TOOLS}
+    h.ok(
+        all("annotations" in tool and "outputSchema" in tool for tool in schemas.TOOLS),
+        "todas las herramientas declaran anotaciones y outputSchema",
+    )
+    h.ok(
+        by_name["get"]["annotations"]["readOnlyHint"]
+        and by_name["get"]["annotations"]["idempotentHint"]
+        and not by_name["create"]["annotations"]["readOnlyHint"],
+        "las herramientas de lectura se marcan como read-only",
+    )
+
     # Despacho de herramientas vía call_tool y registro de eventos
     mcp_created = handlers.call_tool(
         "create",
@@ -115,6 +186,18 @@ def run(h: Harness) -> None:
         mcp_created["assigned_to"] == "mcp:tester",
         "el ticket creado vía MCP queda asignado a su agente",
     )
+    handlers.set_client_info({"name": "mcp-client", "version": "1.0"})
+    try:
+        from_client = handlers.call_tool(
+            "create", {"title": "Sin agent explícito"}
+        )
+        h.eq(
+            from_client["assigned_to"],
+            "mcp-client",
+            "sin agent se usa el nombre del cliente MCP",
+        )
+    finally:
+        handlers.set_client_info(None)
     h.raises(
         domain.TransitionError,
         lambda: handlers.call_tool(

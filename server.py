@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from ticketlib import db, domain, render, runtime, servers, workspace
-from mcp_layer import handlers, schemas
+from mcp_layer import errors, handlers, schemas
 
 SERVER_NAME = "taiki"
 SERVER_VERSION = "1.0.0"
@@ -45,8 +45,17 @@ def _tool_result(data: dict) -> dict:
     }
 
 
-def _tool_error(message: str) -> dict:
-    return {"content": [{"type": "text", "text": message}], "isError": True}
+def _tool_error(payload: dict) -> dict:
+    error = payload.get("error") or {}
+    text = str(error.get("message") or payload)
+    hint = error.get("hint")
+    if hint:
+        text += f"\n{hint}"
+    return {
+        "content": [{"type": "text", "text": text}],
+        "structuredContent": payload,
+        "isError": True,
+    }
 
 
 def _register_runtime() -> None:
@@ -92,6 +101,7 @@ def _heartbeat(params: dict) -> None:
 
 def _initialize(params: dict) -> dict:
     _register_runtime()
+    handlers.set_client_info(params.get("clientInfo"))
     requested = params.get("protocolVersion")
     version = requested if requested in SUPPORTED_PROTOCOLS else LATEST_PROTOCOL
     return {
@@ -116,17 +126,18 @@ def _dispatch(method: str, params: dict) -> dict:
         return {"tools": schemas.TOOLS}
     if method == "tools/call":
         _heartbeat(params)
+        tool = params.get("name", "")
         try:
             data = handlers.call_tool(
-                params.get("name", ""),
+                tool,
                 params.get("arguments") or {},
                 params.get("_meta"),
             )
         except domain.TicketError as exc:
-            return _tool_error(f"Error: {exc}")
+            return _tool_error(errors.payload(exc, tool=tool))
         except Exception as exc:  # noqa: BLE001 - se reporta al agente
             print(traceback.format_exc(), file=sys.stderr, flush=True)
-            return _tool_error(f"Error interno: {exc}")
+            return _tool_error(errors.internal(exc, tool=tool))
         return _tool_result(data)
     if method == "resources/list":
         return {"resources": schemas.RESOURCES}
