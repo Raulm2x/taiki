@@ -130,8 +130,11 @@ Solo tras esa autorización el worker ejecuta un borrado acotado con `rm -f
 `~*` y `.worktrees/*`). El reviewer no borra: si detecta un archivo que
 debería eliminarse, lo propone como hallazgo.
 
-Routing de modelos: `documentacion` → `low`; mantenimiento/funcionalidad →
-`medium`; `bug`/`seguridad` → `high`. Todos los perfiles worker usan
+Routing de modelos: `documentacion` → `medium`; mantenimiento/funcionalidad →
+`medium`; `bug`/`seguridad` → `high`. `worker-low` (16 pasos) queda para
+ediciones cortas; la documentación grande va a `worker-medium`.
+`recommend` y `assign` devuelven el mismo perfil: el MCP no recomienda un
+worker distinto del que se lanza. Todos los perfiles worker usan
 `opencode-go/deepseek-v4.1-flash` para no disparar el coste en tokens;
 `worker-medium` va sin variante porque deepseek no expone `medium`, así que se
 usa el default del cliente. El conductor lanza el perfil que devuelve

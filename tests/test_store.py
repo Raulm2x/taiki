@@ -529,11 +529,14 @@ def run(h: Harness) -> None:
         "la configuración sobrescribe el registro",
     )
     h.ok(
-        agents.recommend("documentacion")["name"] == "worker-low"
+        all(
+            agents.recommend(kind)["name"] == agents.assign(kind)["agent"]
+            for kind in ("documentacion", "bug")
+        )
         and agents.assign("bug")["agent"] == "worker-high"
         and agents.assign("bug")["model"]
         and agents.assign("bug")["steps"] == 40,
-        "recomendar elige un perfil existente con modelo y steps reales",
+        "recomendar coincide con assign y expone modelo y steps reales",
     )
     h.raises(
         domain.ValidationError,

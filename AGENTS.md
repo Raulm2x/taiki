@@ -30,8 +30,11 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
 6. El conductor y los subagentes viven en `.opencode/agents/`; consulta el
    routing de variantes y el presupuesto de concurrencia con la herramienta
    MCP `agents` y `schedule` (paralelismo seguro por paths). Los perfiles
-   worker usan deepseek-v4.1-flash; `worker-medium` va sin variante. Los
-   agentes escriben estado por MCP (claim/complete/transition/checkpoint)
+   worker usan deepseek-v4.1-flash; `worker-medium` va sin variante. La
+   documentación grande va a `worker-medium`; `worker-low` (16 pasos) queda
+   para ediciones cortas. Si un worker agota pasos o falla, un reintento con
+   el perfil superior y, si vuelve a fallar, bloquear: no se escala en bucle.
+   Los agentes escriben estado por MCP (claim/complete/transition/checkpoint)
    para conservar actor, actor_type y owner_session; el CLI es del usuario.
    Tras claim con worktree, usa `session_move` a la ruta devuelta. El shell
    de los agentes permite inspección/edición común (`pwd`, `ls`, `cat`,

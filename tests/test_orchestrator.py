@@ -490,14 +490,18 @@ def run(h: Harness) -> None:
     from ticketlib import agents as agents_lib
 
     worker_cap = agents_lib.capability("worker")
-    docs = agents_lib.route("documentacion", worker_cap)
+    docs = agents_lib.assign("documentacion")
+    short = agents_lib.registry()["worker-low"]
     bug = agents_lib.route("bug", worker_cap)
     h.ok(
-        docs["level"] == "low"
-        and docs["variant"] == "low"
+        docs["agent"] == "worker-medium"
+        and docs["level"] == "medium"
+        and docs["steps"] == agents_lib.STEPS_BY_LEVEL["medium"]
+        and "documentacion" in short["strengths"]
+        and short["steps"] >= 16
         and bug["level"] == "high"
         and bug["variant"] == "high",
-        "docs usa low y un bug usa high",
+        "docs grandes va a worker-medium; worker-low (16 pasos) es para cortas",
     )
     limited = agents_lib.capability("worker-medium")
     unsupported = agents_lib.route("bug", limited, level="xhigh")
@@ -536,9 +540,10 @@ def run(h: Harness) -> None:
     )
     mcp_agents = handlers.call_tool("agents", {"kind": "documentacion"})
     h.ok(
-        mcp_agents["routing"]["variant"] == "low"
+        mcp_agents["routing"]["agent"] == "worker-medium"
+        and mcp_agents["routing"]["steps"] >= 16
         and mcp_agents["concurrency"] >= 1,
-        "agents por MCP expone routing y presupuesto de concurrencia",
+        "agents por MCP enruta documentación a worker-medium",
     )
 
     # ── Scheduler de paralelismo seguro ─────────────────────────────────
@@ -829,22 +834,20 @@ def run(h: Harness) -> None:
         "worker-high limita a un writer simultáneo",
     )
 
-    for index in range(2):
-        running = repo.create_ticket(
-            conn, title=f"Activa {index}", project="sched4",
-            kind="documentacion", paths=[f"src/act{index}.py"],
-        )
-        repo.claim_ticket(
-            conn, running["code"], agent="worker",
-            session_id=f"ses_act{index}",
-        )
+    running = repo.create_ticket(
+        conn, title="Activa 0", project="sched4",
+        kind="documentacion", paths=["src/act0.py"],
+    )
+    repo.claim_ticket(
+        conn, running["code"], agent="worker", session_id="ses_act0",
+    )
     for index in range(2):
         repo.create_ticket(
             conn, title=f"Libre {index}", project="sched4",
             priority="alta", paths=[f"src/lib{index}.py"],
         )
     global_plan = orchestrator.parallel_plan(
-        conn, project="sched4", limit=3
+        conn, project="sched4", limit=2
     )
     h.ok(
         len(global_plan["parallel"]) == 1
@@ -894,7 +897,7 @@ def run(h: Harness) -> None:
     h.ok(
         profile_plan["parallel"] == []
         and profile_plan["deferred"] == [doc_ready["code"]],
-        "los activos worker-low consumen el tope de su perfil",
+        "los activos de documentación agotan el tope de worker-medium",
     )
 
     # Sin hijos no es épica: un writer en curso sigue contando como activo.

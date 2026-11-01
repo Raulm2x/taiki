@@ -95,14 +95,16 @@ VARIANT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 # Algunos catálogos exponen "none" (sin variante); no es un nivel de routing.
 MODEL_VARIANTS = ("none", *VARIANT_LEVELS)
 ROUTING: dict[str, str] = {
-    "documentacion": "low",
+    # Documentación normal (varios documentos o una mudanza) no cabe en 16
+    # pasos: va a worker-medium. ``worker-low`` queda para ediciones cortas.
+    "documentacion": "medium",
     "mantenimiento": "medium",
     "funcionalidad": "medium",
     "otro": "medium",
     "bug": "high",
     "seguridad": "high",
 }
-STEPS_BY_LEVEL = {"low": 12, "medium": 24, "high": 40, "xhigh": 48, "max": 48}
+STEPS_BY_LEVEL = {"low": 16, "medium": 24, "high": 40, "xhigh": 48, "max": 48}
 DEFAULT_CONCURRENCY = 3
 
 # Catálogo de modelos por defecto del proyecto. ``.taiki/config.json`` puede
@@ -145,14 +147,14 @@ DEFAULT_AGENTS: dict[str, dict[str, Any]] = {
         "max_parallel": 2,
         "paths": [],
         "cost": 0.5,
-        "steps": 12,
+        "steps": 16,
     },
     "worker-medium": {
         # deepseek no expone variante "medium": se usa el default del cliente
         # en vez de un modelo más caro por tokens.
         "model": "opencode-go/deepseek-v4.1-flash",
         "variant": None,
-        "strengths": ["mantenimiento", "funcionalidad", "otro"],
+        "strengths": ["documentacion", "mantenimiento", "funcionalidad", "otro"],
         "max_parallel": 2,
         "paths": [],
         "cost": 1.0,
@@ -370,12 +372,20 @@ def capability(
 def recommend(
     kind: str, config: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Perfil especializado para un tipo; ``worker`` solo como respaldo."""
+    """Perfil que marca el routing; ``worker`` solo como respaldo.
+
+    Coincide con ``assign`` para que el MCP no recomiende un perfil distinto
+    del que se lanza. Si el perfil del nivel no cubre el tipo, cae al mínimo
+    por coste entre los que sí lo cubren.
+    """
     from .domain import ValidationError
     from .util import check_enum
 
     check_enum(kind, KINDS, "tipo")
     table = registry(config)
+    routed = table.get(f"worker-{ROUTING.get(kind, 'medium')}")
+    if routed is not None and kind in routed["strengths"]:
+        return routed
     candidates = [
         item
         for item in table.values()

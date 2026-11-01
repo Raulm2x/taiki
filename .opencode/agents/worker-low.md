@@ -1,8 +1,8 @@
 ---
-description: Implementa tareas de documentación o triviales con el modelo barato
+description: Ediciones cortas y retoques de documentación con el modelo barato
 mode: subagent
 model: opencode-go/deepseek-v4.1-flash#low
-steps: 12
+steps: 16
 permissions:
   - action: subagent
     resource: "*"
