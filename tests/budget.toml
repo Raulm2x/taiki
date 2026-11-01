@@ -3,7 +3,7 @@
 # por arriba avisa, bajar nunca (la poda es válida si la cobertura se mantiene).
 [suite]
 max_seconds = 4.0
-baseline_checks = 974
+baseline_checks = 988
 checks_tolerance = 20
 
 [module]
