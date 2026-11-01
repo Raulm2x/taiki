@@ -228,6 +228,27 @@ def run(h: Harness) -> None:
         ),
         "list --json-summary implica --json y omite sesiones y cuerpo",
     )
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        cli.main(["list", "--compact", "--limit", "5"])
+    compact_only = json.loads(out.getvalue().strip())
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        cli.main(["list", "--json", "--compact", "--limit", "5"])
+    json_compact = json.loads(out.getvalue().strip())
+    h.ok(
+        compact_only["tickets"] and json_compact["tickets"],
+        "hay tickets abiertos para comparar --compact",
+    )
+    h.eq(
+        {key for ticket in compact_only["tickets"] for key in ticket},
+        {key for ticket in json_compact["tickets"] for key in ticket},
+        "--compact y --json --compact devuelven las mismas claves",
+    )
+    h.ok(
+        all("body" in ticket for ticket in compact_only["tickets"]),
+        "--compact incluye body como --json",
+    )
 
     # ── Wrapper del CLI ─────────────────────────────────────────────────
     root = Path(__file__).resolve().parent.parent

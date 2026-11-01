@@ -109,7 +109,7 @@ def cmd_list(args: argparse.Namespace) -> int:
             limit=limit,
             offset=offset,
             order=args.sort,
-            detail=bool(args.json and not summary),
+            detail=bool((args.json or args.compact) and not summary),
         )
         total = repo.count_tickets(conn, **filters, **hierarchy)
         hidden = 0
