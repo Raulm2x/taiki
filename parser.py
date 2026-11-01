@@ -401,13 +401,21 @@ def build_parser() -> argparse.ArgumentParser:
     wt_adopt.add_argument("--json", action="store_true")
     wt_adopt.set_defaults(func=cmd_worktree_adopt)
     wt_merge = wt_sub.add_parser(
-        "merge", help="rebase, tests y merge ff-only del worktree"
+        "merge",
+        help="rebase, tests y merge ff-only del worktree",
+        description="Integra el worktree en la rama principal. Exige que el "
+        "ticket esté 'confirmado'; usa --force para el bypass consciente.",
     )
     wt_merge.add_argument("code", nargs="?")
     wt_merge.add_argument("--path", help="ruta concreta del worktree")
     wt_merge.add_argument("--no-tests", action="store_true")
     wt_merge.add_argument(
         "--delete", action="store_true", help="retira el worktree tras mergear"
+    )
+    wt_merge.add_argument(
+        "--force",
+        action="store_true",
+        help="Mergea aunque el ticket no esté confirmado",
     )
     wt_merge.add_argument("--json", action="store_true")
     wt_merge.set_defaults(func=cmd_worktree_merge)

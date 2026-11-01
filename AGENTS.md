@@ -38,9 +38,12 @@ Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
   checkout** sin worktree; el escape consciente es `TAIKI_SHARED_TREE=1`.
 - **Al reclamar**: `taiki claim T-XXXX --worktree` crea el worktree y lo enlaza.
   Durante comandos largos, `taiki heartbeat T-XXXX` renueva el lease.
-- **Al terminar**: `taiki worktree merge T-XXXX --delete` hace rebase, tests,
-  `merge --ff-only` y limpia. `taiki confirm` retira solo los worktrees limpios
-  y mergeados (`--keep-worktrees` para conservarlos).
+- **Al terminar**: commitea en el worktree, marca el ticket `completado` y
+  espera la confirmación del usuario. Solo después, `taiki worktree merge
+  T-XXXX --delete` hace rebase, tests, `merge --ff-only` y limpia. El merge
+  rechaza tickets que no estén en `confirmado`; `--force` es el bypass
+  consciente. `taiki confirm` retira solo los worktrees limpios y mergeados
+  (`--keep-worktrees` para conservarlos).
 - **Stagea rutas concretas** (`git add <ruta>`). Si otra sesión tiene un ticket
   activo, el guard bloquea `git add -A`, `git add .`, `git commit -a`,
   `git stash`, `git reset`, `git clean` y `git checkout -- .`.

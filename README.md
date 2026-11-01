@@ -326,7 +326,7 @@ taiki status                   # sesiones, claims, worktrees y solapamientos
 taiki status --sessions        # solo las sesiones activas
 taiki worktree create T-0001  # .worktrees/T-0001 + rama agent/T-0001-…
 taiki worktree list
-taiki worktree merge T-0001 --delete  # rebase + tests + ff-only + limpieza
+taiki worktree merge T-0001 --delete  # solo si T-0001 está confirmado
 taiki worktree remove T-0001 --delete-branch
 taiki commit -m "..."          # commitea solo las rutas del ticket activo
 taiki complete T-0001 -r "Qué se hizo y cómo se verificó" --commit abc1234
@@ -730,6 +730,9 @@ Varias sesiones pueden trabajar a la vez sin pisarse:
 - **Merge asistido**: `taiki worktree merge T-XXXX` hace rebase sobre la rama
   principal, ejecuta `tests/run.py` si existe (`--no-tests` para omitir),
   `merge --ff-only` y limpia con `--delete`. Nunca mergea si algo falla.
+  Exige que el ticket esté `confirmado`: el commit vive en el worktree, pero
+  `main` solo recibe lo que el usuario ya revisó. `--force` es el bypass
+  consciente.
 - **Estado**: `taiki status` (o la tecla `S` en la TUI) muestra sesiones,
   leases, ramas, worktrees y solapamientos. El plugin de recarga del MCP se
   aplaza si hay otra sesión con actividad reciente.
@@ -742,7 +745,9 @@ cd .worktrees/T-0001 && opencode
 # ...trabajo en el worktree...
 taiki commit -m "cambio acotado"
 taiki complete T-0001 -r "Qué se hizo y cómo se verificó"
-# el usuario confirma y fusiona la rama
+# el usuario revisa y confirma
+taiki confirm T-0001
+# solo ahora se fusiona la rama en main
 taiki worktree merge T-0001 --delete
 ```
 

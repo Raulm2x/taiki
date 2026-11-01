@@ -26,6 +26,34 @@ def _open_ticket(conn, code: str) -> dict:
     return ticket
 
 
+def _merge_code(conn, code: str | None, path: str | None) -> str | None:
+    """Código del ticket a mergear: por argumento o por el enlace del worktree."""
+    if code:
+        return code
+    if not path:
+        return None
+    resolved = str(Path(path).expanduser().resolve())
+    row = conn.execute(
+        "SELECT t.code FROM links l JOIN tickets t ON t.id = l.ticket_id "
+        "WHERE l.kind = 'worktree' AND l.ref = ? "
+        "ORDER BY l.id DESC LIMIT 1",
+        (resolved,),
+    ).fetchone()
+    return row["code"] if row else None
+
+
+def _require_confirmed(conn, code: str, force: bool) -> None:
+    """Solo se integra en main lo que el usuario ya confirmó."""
+    ticket = repo.get_ticket(conn, code)
+    if force or ticket["status"] == "confirmado":
+        return
+    raise TicketError(
+        f"{ticket['code']} está '{ticket['status']}'; confírmalo con "
+        f"`taiki confirm {ticket['code']}` antes de mergear. "
+        "Usa --force solo si es consciente."
+    )
+
+
 def cmd_worktree_create(args: argparse.Namespace) -> int:
     root = _root()
     with _conn() as conn:
@@ -155,13 +183,30 @@ def cmd_worktree_remove(args: argparse.Namespace) -> int:
 
 def cmd_worktree_merge(args: argparse.Namespace) -> int:
     root = _root()
+    code = getattr(args, "code", None)
+    try:
+        with _conn() as conn:
+            code = _merge_code(conn, code, getattr(args, "path", None))
+            if code:
+                _require_confirmed(
+                    conn, code, bool(getattr(args, "force", False))
+                )
+    except TicketError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    if getattr(args, "path", None) and not code:
+        print(
+            "aviso: no se pudo asociar el worktree a un ticket; "
+            "se mergea sin comprobar la confirmación",
+            file=sys.stderr,
+        )
     target = args.path
     if target is None:
-        if not args.code:
+        if not code:
             raise SystemExit("Indica el ticket o --path")
-        found = worktree.locate(root, args.code)
+        found = worktree.locate(root, code)
         if found is None:
-            raise SystemExit(f"No se encontró worktree para {args.code}")
+            raise SystemExit(f"No se encontró worktree para {code}")
         target = found["path"]
     test_cmd = None
     if not args.no_tests and (Path(target) / "tests" / "run.py").is_file():
@@ -173,12 +218,12 @@ def cmd_worktree_merge(args: argparse.Namespace) -> int:
     except TicketError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
-    if result.get("removed") and args.code:
+    if result.get("removed") and code:
         with _conn() as conn:
             conn.execute(
                 "DELETE FROM links WHERE kind IN ('worktree', 'rama') "
                 "AND ticket_id = (SELECT id FROM tickets WHERE code = ?)",
-                (args.code,),
+                (code,),
             )
             conn.commit()
     if args.json:

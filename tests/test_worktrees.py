@@ -12,6 +12,7 @@ from pathlib import Path
 
 from commands.tickets import cmd_claim
 from commands.workflow import cmd_confirm
+from commands.worktree import cmd_worktree_merge
 from ticketlib import db, render, repo, workspace, worktree
 from ticketlib.domain import TicketError
 from tests.seeds import git_repo
@@ -367,3 +368,66 @@ def run(h: Harness) -> None:
         merged["branch"] not in _git(root, "branch", "--format=%(refname:short)").split(),
         "merge --delete elimina la rama",
     )
+
+    # ── merge exige ticket confirmado ──────────────────────────────────
+    with h.env(TAIKI_DB=str(info["db"])), contextlib.chdir(root):
+        conn = db.connect()
+        try:
+            gate = repo.create_ticket(conn, title="Guard de merge")
+            repo.claim_ticket(conn, gate["code"], agent="opencode")
+            repo.complete_ticket(
+                conn,
+                gate["code"],
+                resolution="listo",
+                actor="opencode",
+                actor_type="agente",
+            )
+            args = argparse.Namespace(
+                code=gate["code"],
+                path=None,
+                delete=False,
+                no_tests=True,
+                json=False,
+                force=False,
+            )
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(stderr):
+                rc = cmd_worktree_merge(args)
+            h.eq(rc, 1, "merge rechaza un ticket completado")
+            h.ok(
+                "taiki confirm" in stderr.getvalue().lower(),
+                "el rechazo pide confirmar el ticket antes de mergear",
+            )
+
+            repo.transition(
+                conn,
+                gate["code"],
+                "confirmado",
+                actor="usuario",
+                actor_type="usuario",
+            )
+            h.raises(
+                SystemExit,
+                lambda: cmd_worktree_merge(args),
+                "un ticket confirmado sin worktree llega a la búsqueda",
+            )
+
+            forced = repo.create_ticket(conn, title="Guard con force")
+            repo.claim_ticket(conn, forced["code"], agent="opencode")
+            repo.complete_ticket(
+                conn,
+                forced["code"],
+                resolution="listo",
+                actor="opencode",
+                actor_type="agente",
+            )
+            args.code = forced["code"]
+            args.force = True
+            h.raises(
+                SystemExit,
+                lambda: cmd_worktree_merge(args),
+                "--force salta el estado y llega a la búsqueda del worktree",
+            )
+        finally:
+            conn.close()
