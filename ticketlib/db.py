@@ -184,25 +184,47 @@ def connect(
     return conn
 
 
-def migrate(conn: sqlite3.Connection, force: bool = False) -> None:
-    """Aplica el esquema y las migraciones pendientes.
-
-    La versión vive en ``PRAGMA user_version``; en régimen estable ``connect``
-    no ejecuta DDL ni el fixup de alias, así que no toma el lock de escritura.
-    ``force`` reaplica todo (útil en tests de migración).
+FTS_UPDATE_TRIGGER_SQL = (
+    "DROP TRIGGER IF EXISTS tickets_fts_au",
     """
-    current = int(conn.execute("PRAGMA user_version").fetchone()[0])
-    if current > SCHEMA_VERSION:
-        raise TicketError(
-            f"La base de datos usa el esquema v{current}, más reciente que "
-            f"v{SCHEMA_VERSION}. Actualiza taiki y vuelve a intentarlo."
-        )
-    if not force and current >= SCHEMA_VERSION:
-        return
+CREATE TRIGGER tickets_fts_au
+AFTER UPDATE OF title, body, code ON tickets BEGIN
+    INSERT INTO tickets_fts(tickets_fts, rowid, title, body, code)
+    VALUES ('delete', old.id, old.title, old.body, old.code);
+    INSERT INTO tickets_fts(rowid, title, body, code)
+    VALUES (new.id, new.title, new.body, new.code);
+END
+""",
+)
 
-    conn.executescript(SCHEMA_SQL)
-    # Columnas aditivas: se añaden antes de crear índices sobre ellas.
-    columns = {col["name"] for col in conn.execute("PRAGMA table_info(tickets)")}
+V4_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts)",
+    "CREATE INDEX IF NOT EXISTS idx_events_action ON events(action)",
+    "CREATE INDEX IF NOT EXISTS idx_tickets_updated ON tickets(updated_at)",
+)
+
+
+def schema_version(conn: sqlite3.Connection) -> int:
+    """Versión real del esquema (fuente única)."""
+    return int(conn.execute("PRAGMA user_version").fetchone()[0])
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _has_table(conn: sqlite3.Connection, table: str) -> bool:
+    return bool(
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
+        ).fetchone()
+    )
+
+
+def _migrate_v2(conn: sqlite3.Connection, force: bool = False) -> None:
+    """Columnas de claim/rutas, índice y fixup de alias (una sola vez)."""
+    columns = _table_columns(conn, "tickets")
     if "iterations" not in columns:
         conn.execute(
             "ALTER TABLE tickets ADD COLUMN iterations INTEGER NOT NULL DEFAULT 0"
@@ -213,35 +235,80 @@ def migrate(conn: sqlite3.Connection, force: bool = False) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_tickets_owner ON tickets(owner_session)"
     )
+    if _has_table(conn, "mcp_servers") and "workspace" not in _table_columns(
+        conn, "mcp_servers"
+    ):
+        conn.execute("ALTER TABLE mcp_servers ADD COLUMN workspace TEXT")
+    if force or not meta_get(conn, AGENTS_NORMALIZED_KEY):
+        _normalize_agent_aliases(conn)
+        meta_set(conn, AGENTS_NORMALIZED_KEY, "1")
 
-    row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
-    version = int(row["value"]) if row else 0
-    if version > SCHEMA_VERSION:
+
+def _migrate_v3(conn: sqlite3.Connection, force: bool = False) -> None:
+    """Trigger FTS limitado a title/body/code."""
+    for sql in FTS_UPDATE_TRIGGER_SQL:
+        conn.execute(sql)
+
+
+def _migrate_v4(conn: sqlite3.Connection, force: bool = False) -> None:
+    """Índices de events(ts/action) y tickets(updated_at)."""
+    for sql in V4_INDEXES:
+        conn.execute(sql)
+
+
+MIGRATIONS = {
+    2: _migrate_v2,
+    3: _migrate_v3,
+    4: _migrate_v4,
+}
+
+
+def migrate(conn: sqlite3.Connection, force: bool = False) -> None:
+    """Aplica el esquema y las migraciones pendientes, paso a paso.
+
+    ``PRAGMA user_version`` es la única fuente de versión. En régimen estable
+    ``connect`` no ejecuta DDL ni el fixup de alias. ``force`` reaplica los
+    pasos (útil en tests de migración).
+    """
+    current = schema_version(conn)
+    if current > SCHEMA_VERSION:
         raise TicketError(
-            f"La base de datos usa el esquema v{version}, más reciente que "
+            f"La base de datos usa el esquema v{current}, más reciente que "
             f"v{SCHEMA_VERSION}. Actualiza taiki y vuelve a intentarlo."
         )
-    server_columns = {
-        col["name"] for col in conn.execute("PRAGMA table_info(mcp_servers)")
-    }
-    if "workspace" not in server_columns:
-        conn.execute("ALTER TABLE mcp_servers ADD COLUMN workspace TEXT")
+    if not force and current >= SCHEMA_VERSION:
+        return
 
-    with tx(conn):
-        if row is None:
-            meta_set(conn, "schema_version", str(SCHEMA_VERSION))
+    # Base nueva: no hay tabla de tickets. El esquema actual ya incluye todo.
+    if not _table_columns(conn, "tickets"):
+        conn.executescript(SCHEMA_SQL)
+        with tx(conn):
             meta_set(conn, "next_ticket_number", "1")
             meta_set(conn, "created_at", now())
-        else:
-            meta_set(conn, "schema_version", str(SCHEMA_VERSION))
-        # Los agentes internos de OpenCode (build, plan…) no son dueños
-        # distintos. El fixup recorre cuatro columnas: se hace una sola vez.
-        if row is not None and (
-            force or not meta_get(conn, AGENTS_NORMALIZED_KEY)
-        ):
-            _normalize_agent_aliases(conn)
-            meta_set(conn, AGENTS_NORMALIZED_KEY, "1")
-    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        return
+
+    start = current
+    if start == 0:
+        # DB anterior a user_version: meta.schema_version solo sirve de pista.
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()
+        start = int(row["value"]) if row else 1
+        if start > SCHEMA_VERSION:
+            raise TicketError(
+                f"La base de datos usa el esquema v{start}, más reciente que "
+                f"v{SCHEMA_VERSION}. Actualiza taiki y vuelve a intentarlo."
+            )
+    if force:
+        start = min(start, 1)
+    for version in range(start + 1, SCHEMA_VERSION + 1):
+        step = MIGRATIONS.get(version)
+        if step is None:
+            continue
+        with tx(conn):
+            step(conn, force=force)
+        conn.execute(f"PRAGMA user_version = {version}")
 
 
 def _normalize_agent_aliases(conn: sqlite3.Connection) -> None:

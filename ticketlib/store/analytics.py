@@ -202,7 +202,7 @@ def export_all(conn: sqlite3.Connection) -> dict[str, Any]:
         }
 
     return {
-        "schema_version": db.meta_get(conn, "schema_version"),
+        "schema_version": db.schema_version(conn),
         "exported_at": now(),
         "tickets": tickets,
     }

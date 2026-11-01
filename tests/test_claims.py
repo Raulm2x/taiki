@@ -320,12 +320,46 @@ def run(h: Harness) -> None:
         domain.SCHEMA_VERSION,
         "migrate sella la versión del esquema en user_version",
     )
-    h.eq(
-        db.meta_get(upgraded, "schema_version"),
-        str(domain.SCHEMA_VERSION),
-        "meta.schema_version sigue en sincronía",
-    )
     upgraded.close()
+
+    # ── Matriz de migraciones por pasos: v1/v2/v3 → v4 ─────────────────
+    for start in (1, 2, 3):
+        path = Path(h.tmp) / f"migrate-v{start}.db"
+        seed = db.connect(path)
+        seed.execute("DROP INDEX IF EXISTS idx_events_ts")
+        seed.execute("DROP INDEX IF EXISTS idx_events_action")
+        seed.execute("DROP INDEX IF EXISTS idx_tickets_updated")
+        if start < 3:
+            seed.execute("DROP TRIGGER IF EXISTS tickets_fts_au")
+        seed.execute(f"PRAGMA user_version = {start}")
+        seed.close()
+        stepped = db.connect(path)
+        version = stepped.execute("PRAGMA user_version").fetchone()[0]
+        names = {
+            row["name"]
+            for row in stepped.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            )
+        }
+        trigger = stepped.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'tickets_fts_au'"
+        ).fetchone()
+        h.eq(
+            version,
+            domain.SCHEMA_VERSION,
+            f"v{start} migra hasta v{domain.SCHEMA_VERSION}",
+        )
+        h.ok(
+            {"idx_events_ts", "idx_events_action", "idx_tickets_updated"}
+            <= names,
+            f"v{start} recupera los índices de v4",
+        )
+        h.ok(
+            trigger is not None
+            and "UPDATE OF title, body, code" in trigger["sql"],
+            f"v{start} recupera el trigger FTS de v3",
+        )
+        stepped.close()
 
     # ── connect no espera detrás de otro escritor en régimen estable ────
     writer = db.connect(legacy)
