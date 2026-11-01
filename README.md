@@ -81,6 +81,8 @@ El borrado requiere OK del conductor y una ruta exacta:
   tickets temporales, servidores MCP, datos y aislamiento.
 - [Desarrollo](docs/desarrollo.md) — estructura, tests, gates, presupuesto y
   cobertura.
+- [Ramas y releases](docs/desarrollo.md#ramas-y-releases) — `develop` para la
+  integración diaria y `main` solo con releases etiquetadas.
 
 Índice completo: [docs/README.md](docs/README.md).
 

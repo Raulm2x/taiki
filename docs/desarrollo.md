@@ -98,6 +98,103 @@ taiki/
         └── tickets.py     fachada retrocompatible de store
 ```
 
+## Ramas y releases
+
+`main` es la historia publicada y solo contiene releases; `develop` es la rama
+de integración donde aterriza el trabajo diario. Ningún cambio llega a `main`
+sin pasar por una release verificada.
+
+| Rama | Origen | Destino | Uso |
+|---|---|---|---|
+| `main` | — | — | Solo releases: un commit unificado y etiquetado por entrega. |
+| `develop` | `main` (una vez) | `main` vía release | Integración diaria de las ramas de ticket. |
+| `agent/T-XXXX-<slug>` | `develop` | `develop` | Rama efímera de un ticket y su worktree. |
+| `release/x.y.z` | `develop` | `main` y `develop` | Congelación opcional antes de publicar. |
+| `hotfix/T-XXXX` | `main` | `main` y `develop` | Corrección urgente de una release publicada. |
+
+`taiki worktree merge` integra en `orchestrator.integration_branch` (`develop`
+por defecto); las ramas `agent/*` nunca se mergean directamente en `main`.
+
+### Ciclo de un ticket
+
+1. El worker reclama el ticket con worktree: la rama `agent/T-XXXX-<slug>` nace
+   de `develop` (o de la rama de integración configurada).
+2. Commits pequeños y convencionales; rebase frecuente sobre `develop`.
+3. Antes de pedir revisión, `python3 tests/run.py --verify` debe estar en verde
+   (suite, cobertura, ruff, mypy y benchmarks).
+4. El conductor revisa el diff y los gates; el usuario confirma el ticket.
+5. `taiki worktree merge T-XXXX` hace rebase, `merge --ff-only` y limpia la
+   rama y el worktree. El historial de `develop` queda lineal, sin merge
+   commits.
+
+`release/x.y.z` solo se usa si hace falta congelar: se crea desde `develop`, se
+estabiliza allí y se integra de vuelta en `develop` antes de publicar.
+
+### Release
+
+Desde una `develop` limpia, al día y con la CI en verde:
+
+```bash
+git switch develop && git pull --ff-only
+python3 tests/run.py --verify
+taiki release
+```
+
+`taiki release` aplana los commits de `develop` en **un solo commit** sobre
+`main`, actualiza `CHANGELOG.md` a partir de los tickets y commits desde el tag
+anterior y crea el tag anotado `vX.Y.Z`. `main` no recibe pushes ni commits
+directos: la única vía es ese comando con los gates en verde.
+
+### Reglas
+
+- `main` protegida: sin push directo, sin commits sueltos y sin reescribir
+  historia publicada. `develop` también se protege contra force-push.
+- Commits convencionales (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`,
+  `chore:`) con el código `T-XXXX` en el asunto; el hook `commit-msg` lo exige.
+- Ramas cortas, rebase antes de integrar, `--ff-only` y borrar la rama al
+  fusionar.
+- Nunca uses `git stash` compartido entre worktrees: commitea el WIP en tu rama.
+- Un merge de una rama a la vez; el guard y los hooks rechazan el trabajo
+  directo en `main` y las ramas desactualizadas (ver
+  [operación](operacion.md#agentes-en-paralelo-worktrees)).
+
+### Rollback
+
+No se reescribe `main`. Para deshacer una release:
+
+```bash
+git switch main && git pull --ff-only
+git revert <commit-de-release>   # commit inverso; la historia queda intacta
+```
+
+Si el fallo afecta a una release ya publicada, se prepara un `hotfix/T-XXXX`
+desde `main`, se etiqueta una versión de parche y se integra también en
+`develop`. El tag anterior sigue siendo el punto de retorno para desplegar.
+
+### Versionado y CHANGELOG
+
+Versionado semántico: un cambio incompatible sube **major**, un `feat:` sube
+**minor** y el resto (`fix:`, `docs:`, `refactor:`…) sube **patch**. El
+`CHANGELOG.md` se genera durante la release agrupando los tickets y commits
+desde el tag anterior; solo se edita a mano para corregir el resumen.
+
+### Roles
+
+- **Worker**: crea la rama del ticket desde `develop`, commitea, ejecuta los
+  gates y marca `completado`.
+- **Conductor**: revisa, verifica con `--verify`, marca `verificado` y mergea a
+  `develop` en orden de dependencias.
+- **Usuario**: confirma los tickets y ejecuta la release (`taiki release`) sobre
+  `main`.
+
+### Migración
+
+Mientras las tareas .02-.06 de la épica de ramas no estén integradas, los
+worktrees siguen fusionándose en `main`. Para adoptar el flujo: crea `develop`
+desde `main` en el mismo commit, publícala, protege ambas ramas y fija
+`orchestrator.integration_branch` a `develop` en `.taiki/config.json`. Los
+worktrees abiertos se rebasan sobre la nueva rama de integración.
+
 ## Desarrollo
 
 ```bash

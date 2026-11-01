@@ -71,6 +71,10 @@ Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
   los no confirmados y `--force` es el bypass consciente. La confirmación sigue
   siendo del usuario: `taiki confirm` retira solo los worktrees limpios y
   mergeados (`--keep-worktrees` para conservarlos).
+- **Ramas**: el trabajo diario vive en `agent/T-XXXX-*` y se integra con
+  `--ff-only` en `develop`; `main` solo recibe releases unificadas y
+  etiquetadas. Ciclo, release, rollback y versionado:
+  [docs/desarrollo.md](docs/desarrollo.md#ramas-y-releases).
 - **Stagea rutas concretas** (`git add <ruta>`). Si otra sesión tiene un ticket
   activo, el guard bloquea `git add -A`, `git add .`, `git commit -a`,
   `git stash`, `git reset`, `git clean` y `git checkout -- .`.
