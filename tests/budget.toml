@@ -2,7 +2,7 @@
 # borrados automáticos. Ajusta la línea base al añadir o quitar comprobaciones.
 [suite]
 max_seconds = 3.0
-baseline_checks = 787
+baseline_checks = 789
 checks_tolerance = 20
 
 [module]

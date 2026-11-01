@@ -259,7 +259,7 @@ TOOLS = [
         "get",
         "Obtiene un ticket completo: datos, etiquetas, comentarios, enlaces e "
         "historial. Usa include para pedir solo algunas secciones y "
-        "history_limit para acotar eventos/comentarios.",
+        "history_limit/links_limit/subtasks_limit/commits_limit para acotarlas.",
         {
             "code": CODE,
             "include": {
@@ -284,6 +284,27 @@ TOOLS = [
                 "maximum": 500,
                 "default": 50,
                 "description": "Máximo de eventos y comentarios (0 = sin límite)",
+            },
+            "links_limit": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 500,
+                "default": 50,
+                "description": "Máximo de enlaces (0 = sin límite)",
+            },
+            "subtasks_limit": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 500,
+                "default": 50,
+                "description": "Máximo de subtareas (0 = sin límite)",
+            },
+            "commits_limit": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 500,
+                "default": 50,
+                "description": "Máximo de commits enlazados (0 = sin límite)",
             },
         },
         ("code",),

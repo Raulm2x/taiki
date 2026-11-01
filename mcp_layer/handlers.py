@@ -186,18 +186,22 @@ def _project_rows(
     return [_summary(row) for row in rows]
 
 
-def _limit_history(ticket: dict[str, Any], limit: Any) -> None:
+def _limit_section(ticket: dict[str, Any], key: str, limit: Any) -> None:
     try:
         maximum = int(limit)
     except (TypeError, ValueError):
         maximum = 50
     if maximum <= 0:
         return
+    items = ticket.get(key)
+    if isinstance(items, list) and len(items) > maximum:
+        ticket[f"{key}_total"] = len(items)
+        ticket[key] = items[-maximum:]
+
+
+def _limit_history(ticket: dict[str, Any], limit: Any) -> None:
     for key in ("events", "comments"):
-        items = ticket.get(key)
-        if isinstance(items, list) and len(items) > maximum:
-            ticket[f"{key}_total"] = len(items)
-            ticket[key] = items[-maximum:]
+        _limit_section(ticket, key, limit)
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +365,9 @@ def _handle_get(
             if section not in keep:
                 ticket.pop(section, None)
     _limit_history(ticket, args.get("history_limit", 50))
+    _limit_section(ticket, "links", args.get("links_limit", 50))
+    _limit_section(ticket, "subtasks", args.get("subtasks_limit", 50))
+    _limit_section(ticket, "commits", args.get("commits_limit", 50))
     return ticket
 
 

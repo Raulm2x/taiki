@@ -394,6 +394,40 @@ def run(h: Harness) -> None:
     )
     h.ok(len(mcp_linked["links"]) == 1, "call_tool('link') registra enlace")
 
+    for index in range(3):
+        handlers.call_tool(
+            "link",
+            {
+                "code": mcp_created["code"],
+                "kind": "commit",
+                "ref": f"commit-{index}",
+            },
+            meta={"sessionId": "session-claim-111"},
+        )
+    limited = handlers.call_tool(
+        "get",
+        {
+            "code": mcp_created["code"],
+            "links_limit": 2,
+            "commits_limit": 1,
+        },
+    )
+    h.ok(
+        len(limited["links"]) == 2
+        and limited["links_total"] == 4
+        and len(limited["commits"]) == 1
+        and limited["commits_total"] == 3,
+        "get acota enlaces y commits con sus totales",
+    )
+    limited_batch = handlers.call_tool(
+        "get", {"code": batch["code"], "subtasks_limit": 1}
+    )
+    h.ok(
+        len(limited_batch["subtasks"]) == 1
+        and limited_batch["subtasks_total"] == 2,
+        "get acota subtareas y conserva el total",
+    )
+
     for index in range(5):
         handlers.call_tool(
             "comment",

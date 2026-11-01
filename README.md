@@ -271,6 +271,11 @@ Los errores llegan como `{code, message, hint, retryable}` y las herramientas
 de lectura llevan `readOnlyHint`. Si el código del MCP cambia, las escrituras
 se bloquean hasta recargarlo: evita datos inconsistentes.
 
+Envelopes: `get` devuelve el ticket en primer nivel, `next` devuelve
+`{ticket}` y `list` devuelve `{tickets, count, total, offset, limit}`. Las
+secciones de `get` se acotan con `history_limit`, `links_limit`,
+`subtasks_limit` y `commits_limit`; `0` significa sin límite.
+
 Los worktrees comparten la DB del checkout principal. Aunque el repositorio
 versione `.taiki/config.json`, `taiki` resuelve el `.taiki` principal desde
 cualquier worktree; no se crea una DB vacía dentro de `.worktrees/`.
