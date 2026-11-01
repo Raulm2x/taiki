@@ -776,6 +776,22 @@ def _handle_reassign(
     )
 
 
+def _handle_schedule(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    session: str | None = None,
+    actor: str = "agente",
+) -> dict[str, Any]:
+    info = workspace.resolve()
+    config = workspace.load_config(info["workspace"]) if info["workspace"] else {}
+    return orchestrator_lib.parallel_plan(
+        conn,
+        project=args.get("project"),
+        limit=args.get("limit"),
+        config=config,
+    )
+
+
 def _handle_heartbeat(
     conn: sqlite3.Connection,
     args: dict[str, Any],

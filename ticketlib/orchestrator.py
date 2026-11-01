@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from . import env, repo
+from . import agents, commits, env, repo
 from .domain import TicketError, ValidationError
 
 DEFAULT_MAX_ATTEMPTS = 3
@@ -191,4 +191,85 @@ def retry(
         "blocked": False,
         "reassigned": False,
         "session": current.get("owner_session"),
+    }
+
+
+# Rutas que nunca se paralelizan: esquema, store core, configuración compartida
+# y agentes. Un cambio aquí puede afectar a cualquier otro writer.
+SERIAL_PATTERNS = (
+    ".taiki/",
+    "opencode.json",
+    "ticketlib/db.py",
+    "ticketlib/store/",
+    "ticketlib/domain.py",
+    "tests/budget.toml",
+    ".opencode/agents/",
+)
+
+
+def _serial_paths(paths: list[str]) -> str | None:
+    """Motivo por el que una tarea no puede correr en paralelo, o None."""
+    if not paths:
+        return "sin paths declarados: no se puede probar que sea disjunta"
+    for path in paths:
+        if commits.matches(path, SERIAL_PATTERNS):
+            return f"toca {path}, reservado a ejecución serial"
+    return None
+
+
+def parallel_plan(
+    conn: sqlite3.Connection,
+    *,
+    project: str | None = None,
+    limit: int | None = None,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Scheduler: qué tareas listas pueden correr a la vez sin pisarse.
+
+    Una tarea entra en ``parallel`` solo si tiene paths declarados, no toca
+    zonas seriales y no solapa con las ya elegidas. El resto va a ``serial``
+    (ejecutar de una en una) o a ``deferred`` (presupuesto agotado).
+    """
+    maximum = limit if limit is not None else agents.concurrency_budget(config)
+    if isinstance(maximum, bool) or not isinstance(maximum, int) or maximum < 1:
+        raise ValidationError("El límite de paralelismo debe ser un entero >= 1")
+    candidates = repo.list_tickets(
+        conn,
+        statuses=["pendiente", "nuevo"],
+        project=project,
+        leaves_only=True,
+        ready=True,
+        order="priority",
+        limit=100,
+    )
+    parallel: list[dict[str, Any]] = []
+    serial: list[dict[str, Any]] = []
+    deferred: list[str] = []
+    for task in candidates:
+        paths = list(task.get("paths") or [])
+        reason = _serial_paths(paths)
+        if reason is not None:
+            serial.append({"code": task["code"], "reason": reason})
+            continue
+        if len(parallel) >= maximum:
+            deferred.append(task["code"])
+            continue
+        clash: list[str] = []
+        for other in parallel:
+            clash.extend(commits.overlaps(paths, other["paths"]))
+        if clash:
+            serial.append(
+                {
+                    "code": task["code"],
+                    "reason": "solapa con " + ", ".join(sorted(clash)),
+                }
+            )
+            continue
+        parallel.append({"code": task["code"], "paths": paths})
+    return {
+        "parallel": [item["code"] for item in parallel],
+        "serial": serial,
+        "deferred": deferred,
+        "limit": maximum,
+        "requires_worktree": True,
     }

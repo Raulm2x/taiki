@@ -537,3 +537,70 @@ def run(h: Harness) -> None:
         and mcp_agents["concurrency"] >= 1,
         "agents por MCP expone routing y presupuesto de concurrencia",
     )
+
+    # ── Scheduler de paralelismo seguro ─────────────────────────────────
+    from ticketlib import commits as commits_lib
+
+    sched_a = repo.create_ticket(
+        conn, title="Sched A", project="sched", priority="alta",
+        paths=["src/a.py"],
+    )
+    sched_b = repo.create_ticket(
+        conn, title="Sched B", project="sched", priority="alta",
+        paths=["src/b.py"],
+    )
+    sched_c = repo.create_ticket(
+        conn, title="Sched C", project="sched", priority="media",
+        paths=["src/a.py"],
+    )
+    sched_d = repo.create_ticket(
+        conn, title="Sched D", project="sched", priority="baja",
+        paths=["ticketlib/db.py"],
+    )
+    sched_e = repo.create_ticket(
+        conn, title="Sched E", project="sched", priority="baja"
+    )
+    plan = orchestrator.parallel_plan(conn, project="sched", limit=3)
+    h.eq(
+        plan["parallel"],
+        [sched_a["code"], sched_b["code"]],
+        "dos tareas disjuntas corren en paralelo",
+    )
+    reasons = {item["code"]: item["reason"] for item in plan["serial"]}
+    h.ok(
+        sched_c["code"] in reasons and "solapa" in reasons[sched_c["code"]],
+        "dos tareas con paths solapados se serializan",
+    )
+    h.ok(
+        sched_d["code"] in reasons
+        and "serial" in reasons[sched_d["code"]],
+        "tocar esquema o store core obliga a ejecución serial",
+    )
+    h.ok(
+        sched_e["code"] in reasons
+        and "sin paths" in reasons[sched_e["code"]],
+        "una tarea sin paths no se paraleliza",
+    )
+    h.ok(
+        len(plan["parallel"]) <= plan["limit"]
+        and commits_lib.overlaps(
+            repo.get_ticket(conn, sched_a["code"])["paths"],
+            repo.get_ticket(conn, sched_b["code"])["paths"],
+        )
+        == [],
+        "el límite se respeta y los elegidos no solapan",
+    )
+    tight = orchestrator.parallel_plan(conn, project="sched", limit=1)
+    h.ok(
+        tight["parallel"] == [sched_a["code"]]
+        and sched_b["code"] in tight["deferred"],
+        "el presupuesto limita la ola y difiere el resto",
+    )
+    mcp_plan = handlers.call_tool(
+        "schedule", {"project": "sched", "limit": 3}
+    )
+    h.ok(
+        mcp_plan["parallel"] == plan["parallel"]
+        and mcp_plan["requires_worktree"] is True,
+        "schedule por MCP devuelve el mismo plan y exige worktree",
+    )

@@ -80,6 +80,11 @@ def run(h: Harness) -> None:
         (path / "opencode.json").is_file(),
         "create copia la configuración de OpenCode",
     )
+    h.raises(
+        TicketError,
+        lambda: worktree.create(root, ticket["code"], title=ticket["title"]),
+        "no se crea un segundo worktree para la misma tarea",
+    )
     h.ok(
         not (path / ".taiki").exists(),
         "el worktree no copia .taiki ni la base de datos",

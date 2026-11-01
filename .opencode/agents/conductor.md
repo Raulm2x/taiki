@@ -65,10 +65,11 @@ verificas. **No editas código, no confirmas tickets y no mergeas worktrees.**
    T-XXXX`. Revisa dependencias (`depends_on`, `blocked_by`, `ready`) y el
    registro de capacidades con la herramienta MCP `agents`. No reclames la
    épica: se reclaman sus tareas.
-2. Elige la siguiente tarea **lista** (`ready=true`), por prioridad. Si hay
-   varias sin dependencias y con paths disjuntos, puedes paralelizar como
-   máximo 2-3 writers; si comparten paths, migraciones, config o store, van en
-   serie.
+2. Elige la siguiente tarea **lista** (`ready=true`), por prioridad. Antes
+   de paralelizar llama a `schedule`: solo ejecuta a la vez las tareas que
+   devuelve en `parallel` (paths disjuntos y dentro de
+   `orchestrator.max_parallel`). Las de `serial` van de una en una; nunca
+   paralelices migraciones, esquema, store core, config ni merges.
 3. Para cada tarea lanza el subagente `worker` con: código, título, body,
    criterios de aceptación, paths que posee y el modelo/variante recomendado
    por `agents`. El worker reclama con worktree, implementa, commitea y marca

@@ -94,7 +94,10 @@ y mergea. Las capacidades (tipos, variantes, paralelismo y coste) viven en
 Routing de modelos: `documentacion` → `low`; mantenimiento/funcionalidad →
 `medium`; `bug`/`seguridad` → `high`. Si el modelo no expone la variante, se
 usa el default del cliente; nunca se escala en bucle. El límite de writers
-simultáneos es `orchestrator.max_parallel` (3 por defecto).
+simultáneos es `orchestrator.max_parallel` (3 por defecto). Antes de
+paralelizar, la herramienta MCP `schedule` separa las tareas en `parallel`
+(paths disjuntos) y `serial` (solapes, esquema, store core, config o sin
+paths); las migraciones y los merges nunca van en paralelo.
 
 ## Estructura
 
