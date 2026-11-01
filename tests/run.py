@@ -21,6 +21,7 @@ MODULES = (
     "test_core",
     "test_tags_scope",
     "test_store",
+    "test_scratch",
     "test_mcp",
     "test_sessions",
     "test_cli",

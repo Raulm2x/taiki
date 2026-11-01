@@ -6,12 +6,15 @@ import sqlite3
 from datetime import date, datetime, timedelta
 from typing import Any, Iterable
 
+from .. import db
 from ..domain import (
     KINDS,
     PARENT_CONFIRMED_STATUSES,
     PARENT_DONE_STATUSES,
     PRIORITIES,
+    SCRATCH_TAG,
     STATUSES,
+    TICKET_COUNTER,
 )
 from ..util import check_enum, clean_tags, fts_match, search_tokens
 from .common import UNSET, row_by_code, row_to_ticket
@@ -20,7 +23,9 @@ __all__ = [
     "activity_by_day",
     "count_tickets",
     "get_ticket",
+    "hidden_codes",
     "list_tickets",
+    "missing_codes",
     "next_ticket",
     "search_codes",
     "subtask_progress",
@@ -479,3 +484,79 @@ def next_ticket(
         if rows:
             return get_ticket(conn, rows[0]["code"])
     return None
+
+
+def missing_codes(conn: sqlite3.Connection) -> list[dict[str, str]]:
+    """Números ``T-`` sin ninguna fila: huecos reales de numeración.
+
+    Un ticket archivado o temporal no es un hueco: su fila existe y
+    ``hidden_codes`` lo explica. Solo cuentan los números que nunca
+    llegaron a crear ticket.
+    """
+    next_number = int(db.meta_get(conn, TICKET_COUNTER, "1") or "1")
+    existing = {
+        row[0]
+        for row in conn.execute(
+            "SELECT code FROM tickets WHERE code NOT LIKE '%.%'"
+        )
+    }
+    renames: dict[str, str] = {}
+    for row in conn.execute(
+        "SELECT note FROM events WHERE action = 'renumerar'"
+    ):
+        note = row[0] or ""
+        if "→" in note:
+            old, new = note.split("→", 1)
+            renames[old.strip()] = new.strip()
+
+    gaps: list[dict[str, str]] = []
+    for number in range(1, next_number):
+        code = f"T-{number:04d}"
+        if code in existing:
+            continue
+        new = renames.get(code)
+        gaps.append(
+            {
+                "code": code,
+                "reason": f"renumerado a {new}" if new else "sin rastro",
+            }
+        )
+    return gaps
+
+
+def hidden_codes(conn: sqlite3.Connection) -> list[dict[str, str]]:
+    """Códigos ``T-`` cuya fila existe pero está fuera de la tabla visible.
+
+    Es el caso que hace parecer un hueco: el código está consumido, el
+    ticket está archivado o es un scratch antiguo con código ``T-``.
+    """
+    rows = conn.execute(
+        "SELECT t.id, t.code, t.title, t.status, t.archived, "
+        "EXISTS (SELECT 1 FROM tags sg WHERE sg.ticket_id = t.id "
+        "AND sg.tag = ?) AS scratch "
+        "FROM tickets t WHERE t.code LIKE 'T-%' AND t.code NOT LIKE '%.%' "
+        "AND (t.archived = 1 OR EXISTS (SELECT 1 FROM tags sg "
+        "WHERE sg.ticket_id = t.id AND sg.tag = ?)) "
+        "ORDER BY t.code",
+        (SCRATCH_TAG, SCRATCH_TAG),
+    ).fetchall()
+    items: list[dict[str, str]] = []
+    for row in rows:
+        note = conn.execute(
+            "SELECT note FROM events WHERE ticket_id = ? "
+            "AND action IN ('archivar', 'promover') "
+            "ORDER BY ts DESC, id DESC LIMIT 1",
+            (row["id"],),
+        ).fetchone()
+        reason = (note[0] if note else "") or (
+            "archivado" if row["archived"] else "ticket temporal"
+        )
+        items.append(
+            {
+                "code": row["code"],
+                "title": row["title"],
+                "status": row["status"],
+                "reason": reason,
+            }
+        )
+    return items

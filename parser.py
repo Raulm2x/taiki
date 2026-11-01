@@ -35,6 +35,7 @@ from commands import (
     cmd_scratch,
     cmd_overview,
     cmd_renumber,
+    cmd_repair_gaps,
     cmd_reject,
     cmd_reopen,
     cmd_scheme_install,
@@ -125,6 +126,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--tags", nargs="*")
     p.add_argument("--parent")
     p.set_defaults(func=cmd_new)
+
+    p = sub.add_parser(
+        "repair-gaps",
+        help="Cubre huecos de numeración con tickets cancelados",
+        description="Crea un ticket genérico cancelado para cada T-XXXX que "
+        "nunca existió, de forma que la secuencia quede completa. Simula por "
+        "defecto; los números cubiertos no se reutilizan.",
+    )
+    p.add_argument("--apply", action="store_true", help="Aplica los cambios")
+    p.add_argument("--agent", help="Agente que ejecuta el cambio")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_repair_gaps)
 
     p = sub.add_parser(
         "renumber",

@@ -250,6 +250,8 @@ taiki attach T-0014 T-0008 T-0009   # agrupa tickets existentes bajo una épica
 taiki detach T-0008                  # la devuelve a la raíz
 taiki renumber                      # simula pasar T-0023… a T-0022.01, .02…
 taiki renumber --apply              # renombra los códigos planos
+taiki repair-gaps                   # simula cubrir T-XXXX que nunca existieron
+taiki repair-gaps --apply           # los cubre con tickets genéricos cancelados
 taiki claim T-0001
 taiki complete T-0001 -r "Qué se hizo y cómo se verificó" --commit abc1234
 taiki confirm T-0001           # solo usuario
@@ -260,10 +262,10 @@ taiki comment T-0001 "Nota"
 taiki transition T-0001 bloqueado --note "Espera respuesta"
 taiki stats
 taiki next
-taiki scratch                   # ticket temporal oculto para pruebas
+taiki scratch                   # ticket temporal oculto (código S-0001)
 taiki scratch --list            # scratch vivos (código, caducidad, título)
 taiki scratch --clean           # archiva los caducados
-taiki scratch --promote T-0040  # lo devuelve a la tabla
+taiki scratch --promote S-0001  # lo devuelve a la tabla con un T-XXXX
 taiki list --include-scratch    # los muestra en el listado
 taiki export -o ~/tickets.json
 taiki link T-0001 commit abc1234
@@ -308,6 +310,28 @@ T-0014       Jerarquía de tickets          [2/3]
     .02       TUI con árbol                 completado
     .03       MCP, docs y migración         en_progreso
 ```
+
+### Numeración sin huecos
+
+Un `T-XXXX` solo se consume cuando nace un ticket que se verá en la tabla.
+La regla evita el clásico hueco fantasma: un temporal que existió, se archivó
+y deja un número sin ticket visible.
+
+- **Temporales en su espacio**: los *scratch* usan `S-0001`, `S-0002`… con su
+  propio contador. No tocan `next_ticket_number` ni la secuencia visible.
+- **Promover**: `taiki scratch --promote S-0001` desarchiva el ticket, le
+  asigna el siguiente `T-XXXX` y lo deja visible. Un scratch antiguo que ya
+  tenía `T-XXXX` conserva su número si sigue libre.
+- **Rastro al archivar**: `clean` (caducidad) y `drop` (descarte manual)
+  escriben un evento `archivar` con el motivo; un ticket ya no desaparece en
+  silencio.
+- **Huecos históricos**: `taiki repair-gaps --apply` crea un ticket genérico
+  cancelado con etiqueta `hueco` para cada número que nunca existió. El número
+  queda cubierto y no se reutiliza, así una referencia antigua no apunta a
+  trabajo nuevo.
+- **Auditoría**: `taiki audit` separa *huecos reales* (números sin fila) de
+  *códigos ocultos* (tickets archivados o temporales antiguos), con el motivo
+  tomado del historial. `taiki show` marca explícitamente los archivados.
 
 ```bash
 taiki new -t "Dashboard TUI 2.0" -p alta        # épica (T-0014)
@@ -559,8 +583,9 @@ tickets sueltos: el trabajo nuevo queda donde corresponde y la confirmación del
 padre seguirá esperando a que la tarea nueva termine.
 
 **Sin épica, el ticket automático es un scratch oculto** (TTL 120 min): el
-guard desbloquea igual, pero no aparece en `list`/`stats`/`next`/TUI. Si el
-trabajo es real, `taiki scratch --promote T-XXXX`; si no, caduca solo.
+guard desbloquea igual, pero no aparece en `list`/`stats`/`next`/TUI. Usa un
+código propio `S-0001` para no consumir números `T-XXXX`. Si el trabajo es
+real, `taiki scratch --promote S-0001` (recibe un `T-XXXX`); si no, caduca solo.
 `TAIKI_GUARD_AUTO` cambia la política: `scratch` (siempre oculto), `ticket`
 (siempre visible) u `off` (bloquear sin crear nada).
 
@@ -601,20 +626,27 @@ Para pruebas o exploración sin ensuciar la tabla:
 
 ```bash
 taiki scratch -t "Probar migración" --ttl 30
-# T-0040  scratch (en_progreso, caduca 2026-10-31T18:30:00-05:00)
+# S-0001  scratch (en_progreso, caduca 2026-10-31T18:30:00-05:00)
 taiki scratch --list
 taiki scratch --clean
+taiki scratch --promote S-0001   # vuelve a la tabla como T-XXXX
 ```
 
 - Es un ticket normal con el marcador interno `_scratch` y `_scratch-sesion:<id>`
   (reservados: la etiqueta de tema `scratch` sigue siendo libre); el guard lo
-  acepta como activo, pero **no aparece** en `list`, `stats`, `next`, `audit`
-  ni en la TUI. Se ve con `taiki list --include-scratch`.
+  acepta como activo, pero **no aparece** en `list`, `stats`, `next` ni en la
+  TUI. Se ve con `taiki list --include-scratch`.
+- Su código es `S-####`, un contador aparte: crear temporales **no consume**
+  números `T-XXXX` ni deja huecos en la tabla.
 - `taiki scratch` **reutiliza** el scratch vivo de la misma sesión (no crea
-  uno por comando) y archiva los caducados al crear otro.
-- `--ttl` son minutos (120 por defecto); al vencer, `taiki scratch --clean` lo
-  archiva. `--promote` lo devuelve a la tabla conservando historial; `--drop`
-  lo archiva. `confirm` los rechaza a propósito.
+  uno por comando) y archiva los caducados al crear otro. Las vistas (`list`,
+  `next`, `stats`, `show`) también limpian los caducados al abrirse.
+- `--ttl` son minutos (120 por defecto); al vencer se archiva con un evento
+  `archivar` que deja rastro del motivo. `--promote` lo desarchiva y le da un
+  `T-XXXX` (o conserva el suyo si es un scratch antiguo); `--drop` lo archiva
+  también con evento. `confirm` los rechaza a propósito.
+- `audit` no los mezcla con los huecos: si un scratch antiguo ocupa un
+  `T-XXXX`, aparece como *código oculto*, no como hueco real.
 - `export` los incluye: es un respaldo, no una vista.
 
 ### Servidores MCP

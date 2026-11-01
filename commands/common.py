@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from contextlib import contextmanager
 
-from ticketlib import db, render
+from ticketlib import db, render, scratch
 
 
 @contextmanager
@@ -15,6 +15,14 @@ def _conn():
         yield conn
     finally:
         conn.close()
+
+
+def _clean_expired(conn) -> list[str]:
+    """Archiva scratch caducados antes de una vista (limpieza perezosa)."""
+    try:
+        return scratch.clean(conn)
+    except Exception:  # noqa: BLE001 - una vista nunca debe fallar por esto
+        return []
 
 
 def _show(ticket: dict, as_json: bool, session_id: str | None = None) -> None:

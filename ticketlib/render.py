@@ -202,6 +202,11 @@ def render_detail(
         lines += ["", _indent(ticket["body"])]
 
     meta: list[str] = []
+    if ticket.get("archived"):
+        meta.append(
+            "Archivado: fuera de la tabla visible "
+            "(taiki list --archived para verlo)"
+        )
     if ticket.get("project"):
         meta.append(f"Proyecto: {ticket['project']}")
     if ticket.get("path"):

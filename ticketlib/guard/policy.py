@@ -128,9 +128,12 @@ def _message(
             return (
                 f"Sin ticket activo: creé {code} como ticket temporal (oculto) "
                 "y lo activé.\n"
+                "El código S-#### es su propio espacio: no consume números "
+                "T-XXXX ni deja huecos en la tabla.\n"
                 f"Si el trabajo es real, promuévelo con "
-                f"`ticket scratch --promote {code}` o crea el ticket adecuado; "
-                "si no, ignóralo (caduca solo y no aparece en la tabla)."
+                f"`taiki scratch --promote {code}` (recibirá un T-XXXX) o crea "
+                "el ticket adecuado; si no, ignóralo (caduca solo y no aparece "
+                "en la tabla)."
             )
         head = f"Sin ticket activo: creé y activé {code} «{title}»."
         if parent is not None:

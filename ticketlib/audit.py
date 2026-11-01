@@ -6,9 +6,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from . import db, githook, runtime, servers
+from . import githook, runtime, servers
 from .domain import TicketError
 from .store.mutations import renumber_plan
+from .store.queries import hidden_codes, missing_codes
 from .store.relations import TICKET_CODE_RE
 
 
@@ -60,36 +61,13 @@ def stalled(conn: Any, days: int = 2) -> list[dict[str, Any]]:
 
 
 def code_gaps(conn: Any) -> list[dict[str, str]]:
-    """Números de ticket que no existen, con su explicación si se conoce."""
-    next_number = int(db.meta_get(conn, "next_ticket_number", "1") or "1")
-    roots = {
-        row["code"]
-        for row in conn.execute(
-            "SELECT code FROM tickets WHERE code NOT LIKE '%.%'"
-        )
-    }
-    renames: dict[str, str] = {}
-    for row in conn.execute(
-        "SELECT note FROM events WHERE action = 'renumerar'"
-    ):
-        note = row["note"] or ""
-        if "→" in note:
-            old, new = note.split("→", 1)
-            renames[old.strip()] = new.strip()
+    """Números de ticket que nunca existieron, con su explicación si se conoce."""
+    return missing_codes(conn)
 
-    gaps: list[dict[str, str]] = []
-    for number in range(1, next_number):
-        code = f"T-{number:04d}"
-        if code in roots:
-            continue
-        new = renames.get(code)
-        gaps.append(
-            {
-                "code": code,
-                "reason": f"renumerado a {new}" if new else "sin rastro",
-            }
-        )
-    return gaps
+
+def hidden(conn: Any) -> list[dict[str, str]]:
+    """Códigos consumidos por tickets archivados o temporales (falsos huecos)."""
+    return hidden_codes(conn)
 
 
 def unresolved(conn: Any) -> list[dict[str, Any]]:
@@ -133,6 +111,7 @@ def audit(
         "uncommitted": uncommitted(conn),
         "misnumbered": renumber_plan(conn),
         "gaps": code_gaps(conn),
+        "hidden": hidden(conn),
         "mcp": runtime.status(conn),
         "servers": {"summary": servers.summary(fleet), "items": fleet},
         "hooks": githook.hooks_installed(repo),

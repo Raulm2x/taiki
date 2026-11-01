@@ -185,6 +185,13 @@ def cmd_audit(args: argparse.Namespace) -> int:
     if not gaps:
         print("  ninguno")
     print()
+    hidden = data.get("hidden") or []
+    print(f"Códigos ocultos que parecen huecos ({len(hidden)})")
+    for item in hidden:
+        print(f"  {item['code']}  [{item['status']}]  {item['reason']}")
+    if not hidden:
+        print("  ninguno")
+    print()
     fleet = data["servers"]
     server_summary = fleet["summary"]
     print(

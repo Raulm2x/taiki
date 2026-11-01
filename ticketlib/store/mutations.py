@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from typing import Any
 
@@ -9,16 +10,22 @@ from .. import db
 from ..domain import (
     KINDS,
     PRIORITIES,
+    SCRATCH_CODE_PREFIX,
+    SCRATCH_COUNTER,
+    TICKET_COUNTER,
+    TOMBSTONE_TAG,
     ValidationError,
 )
 from ..util import check_enum, clean_tags, normalize_agent, now
 from .common import UNSET, event, row_by_code
-from .queries import get_ticket
+from .queries import get_ticket, missing_codes
 
 __all__ = [
+    "allocate_code",
     "attach_tickets",
     "create_ticket",
     "detach_tickets",
+    "fill_gaps",
     "renumber_children",
     "renumber_plan",
     "update_ticket",
@@ -74,6 +81,20 @@ def validate_parent(
     return parent["id"]
 
 
+def _counter_key(prefix: str) -> str:
+    """Clave de ``meta`` del contador de cada espacio de códigos."""
+    scratch = SCRATCH_CODE_PREFIX.rstrip("-")
+    return SCRATCH_COUNTER if prefix == scratch else TICKET_COUNTER
+
+
+def allocate_code(conn: sqlite3.Connection, prefix: str = "T") -> str:
+    """Siguiente código del espacio indicado (``T-0001``, ``S-0001``…)."""
+    key = _counter_key(prefix)
+    number = int(db.meta_get(conn, key, "1") or "1")
+    db.meta_set(conn, key, str(number + 1))
+    return f"{prefix}-{number:04d}"
+
+
 def create_ticket(
     conn: sqlite3.Connection,
     title: str,
@@ -88,8 +109,15 @@ def create_ticket(
     actor_type: str = "agente",
     session_id: str | None = None,
     assigned_to: str | None = None,
+    code_prefix: str = "T",
+    code: str | None = None,
 ) -> dict[str, Any]:
     """Crea un nuevo ticket con código secuencial y evento inicial.
+
+    ``code_prefix`` elige el espacio de numeración: ``T`` para tickets
+    visibles y ``S`` para temporales (scratch), que no consumen números
+    T-XXXX. ``code`` fuerza un código concreto y solo se usa para cubrir
+    huecos históricos con tickets genéricos.
 
     ``assigned_to`` se rellena cuando el agente que crea el ticket se
     identifica, para que la columna AGENTE sea visible antes del ``claim``.
@@ -115,13 +143,34 @@ def create_ticket(
     ts = now()
 
     with db.tx(conn):
-        if parent_row is not None:
+        if code is not None:
+            forced = str(code).strip().upper()
+            if not re.fullmatch(r"T-\d{4,}", forced):
+                raise ValidationError(
+                    f"Código forzado inválido: {code!r} (esperado T-0001)"
+                )
+            if conn.execute(
+                "SELECT 1 FROM tickets WHERE code = ?", (forced,)
+            ).fetchone():
+                raise ValidationError(f"El código {forced} ya existe")
+            next_number = int(db.meta_get(conn, TICKET_COUNTER, "1") or "1")
+            if int(forced.split("-", 1)[1]) >= next_number:
+                raise ValidationError(
+                    f"{forced} todavía no es un hueco: el contador va por "
+                    f"T-{next_number:04d}"
+                )
+            code = forced
+        elif parent_row is not None:
             # Las tareas heredan el prefijo de la épica: T-0014.1, T-0014.2…
             code = _next_child_code(conn, parent_row["code"])
         else:
-            number = int(db.meta_get(conn, "next_ticket_number", "1") or "1")
-            code = f"T-{number:04d}"
-            db.meta_set(conn, "next_ticket_number", str(number + 1))
+            prefix = (code_prefix or "T").strip().upper()
+            if prefix not in ("T", SCRATCH_CODE_PREFIX.rstrip("-")):
+                raise ValidationError(
+                    f"Espacio de códigos inválido: {code_prefix!r} "
+                    "(esperado T o S)"
+                )
+            code = allocate_code(conn, prefix)
         cur = conn.execute(
             "INSERT INTO tickets(code, title, body, kind, status, priority, project, path, "
             "created_by, assigned_to, parent_id, created_at, updated_at) "
@@ -426,3 +475,66 @@ def detach_tickets(
                 "Sin padre",
             )
     return [get_ticket(conn, child["code"]) for child in rows]
+
+
+def fill_gaps(
+    conn: sqlite3.Connection,
+    apply: bool = False,
+    actor: str = "usuario",
+    actor_type: str = "usuario",
+) -> list[dict[str, str]]:
+    """Cubre los huecos de numeración con tickets genéricos cancelados.
+
+    Un hueco es un ``T-XXXX`` que nunca llegó a existir. Se crea un ticket
+    visible y ya cancelado, con la etiqueta ``hueco``, para que la secuencia
+    quede completa y el número no vuelva a usarse: así una referencia antigua
+    a ese código nunca apunta a trabajo nuevo. Devuelve el plan (simulación
+    por defecto, igual que ``renumber``).
+    """
+    plan = [
+        dict(item, action="cancelado") for item in missing_codes(conn)
+    ]
+    if not apply or not plan:
+        return plan
+    ts = now()
+    for item in plan:
+        ticket = create_ticket(
+            conn,
+            title="Hueco histórico de numeración",
+            body=(
+                f"El código {item['code']} nunca tuvo ticket "
+                f"({item['reason']}). Se cubre con un ticket genérico "
+                "cancelado para que la secuencia no quede rota y el número "
+                "no se reutilice."
+            ),
+            kind="otro",
+            priority="baja",
+            tags=[TOMBSTONE_TAG],
+            created_by=actor,
+            actor_type=actor_type,
+            code=item["code"],
+        )
+        with db.tx(conn):
+            conn.execute(
+                "UPDATE tickets SET status = 'cancelado', completed_at = ?, "
+                "updated_at = ?, resolution = ? WHERE id = ?",
+                (
+                    ts,
+                    ts,
+                    "Hueco de numeración cubierto: no existía ticket para "
+                    "este código.",
+                    ticket["id"],
+                ),
+            )
+            event(
+                conn,
+                ticket["id"],
+                "transicion",
+                actor,
+                actor_type,
+                None,
+                "nuevo",
+                "cancelado",
+                f"Hueco de numeración {item['code']} cubierto",
+            )
+    return plan

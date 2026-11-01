@@ -51,6 +51,13 @@ SCHEMA_VERSION = 1
 # no colisionar con etiquetas de tema del usuario (p. ej. tags=["scratch"]).
 SCRATCH_TAG = "_scratch"
 SCRATCH_SESSION_PREFIX = "_scratch-sesion:"
+# Los temporales tienen su propio espacio de códigos: así no consumen números
+# T-XXXX y la secuencia visible queda sin huecos.
+SCRATCH_CODE_PREFIX = "S-"
+SCRATCH_COUNTER = "next_scratch_number"
+# Etiqueta de los tickets genéricos que cubren huecos históricos.
+TOMBSTONE_TAG = "hueco"
+TICKET_COUNTER = "next_ticket_number"
 
 
 class TicketError(Exception):

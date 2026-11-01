@@ -11,7 +11,7 @@ from ticketlib import db, render, repo, scratch, sessions, workspace
 from ticketlib.domain import OPEN_STATUSES
 from ticketlib.util import resolve_scope
 
-from .common import _conn, _read_body, _show
+from .common import _clean_expired, _conn, _read_body, _show
 
 
 def _annotate(
@@ -72,6 +72,7 @@ def cmd_list(args: argparse.Namespace) -> int:
         limit, offset = None, 0
 
     with _conn() as conn:
+        _clean_expired(conn)
         tickets = repo.list_tickets(
             conn,
             **filters,
@@ -150,6 +151,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 def cmd_show(args: argparse.Namespace) -> int:
     with _conn() as conn:
+        _clean_expired(conn)
         ticket = repo.get_ticket(conn, args.code)
         session_id = _annotate(conn, [ticket]).get(ticket["code"])
     _show(ticket, args.json, session_id)
@@ -189,6 +191,29 @@ def cmd_new(args: argparse.Namespace) -> int:
             actor_type="usuario",
         )
     print(f"Creado {ticket['code']}: {ticket['title']}")
+    return 0
+
+
+def cmd_repair_gaps(args: argparse.Namespace) -> int:
+    with _conn() as conn:
+        plan = repo.fill_gaps(
+            conn,
+            apply=args.apply,
+            actor=args.agent or "usuario",
+            actor_type="agente" if args.agent else "usuario",
+        )
+    if args.json:
+        print(render.to_json(plan))
+        return 0
+    if not plan:
+        print("No hay huecos de numeración.")
+        return 0
+    for item in plan:
+        print(f"{item['code']}  {item['reason']}")
+    if not args.apply:
+        print("(simulación; usa --apply para cubrir los huecos)")
+    else:
+        print(f"Cubiertos {len(plan)} hueco(s) con tickets cancelados.")
     return 0
 
 
@@ -241,6 +266,7 @@ def cmd_claim(args: argparse.Namespace) -> int:
 
 def cmd_next(args: argparse.Namespace) -> int:
     with _conn() as conn:
+        _clean_expired(conn)
         ticket = repo.next_ticket(conn, project=args.project)
         session_id = _annotate(conn, [ticket]).get(ticket["code"]) if ticket else None
     if ticket is None:
@@ -282,12 +308,15 @@ def cmd_scratch(args: argparse.Namespace) -> int:
                 )
             return 0
         if args.drop:
-            ticket = scratch.drop(conn, args.drop)
+            ticket = scratch.drop(conn, args.drop, session_id=session_id)
             print(f"{ticket['code']} archivado (scratch).")
             return 0
         if args.promote:
-            ticket = scratch.promote(conn, args.promote)
-            print(f"{ticket['code']} visible otra vez en la tabla.")
+            ticket = scratch.promote(conn, args.promote, session_id=session_id)
+            print(
+                f"{ticket['code']} visible otra vez en la tabla "
+                "(código T- propio)."
+            )
             return 0
 
         ticket = scratch.create_or_reuse(
@@ -302,14 +331,19 @@ def cmd_scratch(args: argparse.Namespace) -> int:
             f"{ticket['code']}  scratch ({ticket['status']}, caduca {limit})"
         )
         print(
-            "Oculto de `ticket list`, `stats`, `next` y la TUI. "
-            f"Promuévelo con `ticket scratch --promote {ticket['code']}`."
+            "Oculto de `taiki list`, `stats`, `next` y la TUI; el código S- "
+            "no consume números T-XXXX."
+        )
+        print(
+            f"Promuévelo con `taiki scratch --promote {ticket['code']}` "
+            "cuando el trabajo sea real."
         )
     return 0
 
 
 def cmd_stats(args: argparse.Namespace) -> int:
     with _conn() as conn:
+        _clean_expired(conn)
         data = repo.stats(conn)
     print(render.to_json(data) if args.json else render.render_stats(data))
     return 0

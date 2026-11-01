@@ -2,9 +2,11 @@
 
 from .analytics import export_all, stats
 from .mutations import (
+    allocate_code,
     attach_tickets,
     create_ticket,
     detach_tickets,
+    fill_gaps,
     renumber_children,
     renumber_plan,
     update_ticket,
@@ -24,6 +26,7 @@ from .workflow import claim_ticket, complete_ticket, confirm_tickets, transition
 
 __all__ = [
     "activity_by_day",
+    "allocate_code",
     "attach_tickets",
     "auto_link_commit",
     "claim_ticket",
@@ -33,6 +36,7 @@ __all__ = [
     "count_tickets",
     "create_ticket",
     "detach_tickets",
+    "fill_gaps",
     "export_all",
     "get_ticket",
     "link_ticket",

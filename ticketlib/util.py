@@ -62,7 +62,7 @@ def clean_tags(tags: Any) -> list[str]:
 
 
 def normalize_code(value: Any) -> int | str:
-    """Acepta T-0001, t-1 o 1. Devuelve código normalizado o id entero."""
+    """Acepta T-0001, t-1, S-0001 o 1. Devuelve código normalizado o id."""
     if isinstance(value, bool):
         raise ValidationError(f"Código de ticket inválido: {value!r}")
     if isinstance(value, int):
@@ -73,10 +73,12 @@ def normalize_code(value: Any) -> int | str:
     if text.isdigit():
         return int(text)
     code = text.upper()
-    if not code.startswith("T-"):
+    if not code.startswith(("T-", "S-")):
         code = f"T-{code}"
-    if not re.fullmatch(r"T-\d+(?:\.\d+)?", code):
-        raise ValidationError(f"Código de ticket inválido: {value!r} (esperado T-0001)")
+    if not re.fullmatch(r"[TS]-\d+(?:\.\d+)?", code):
+        raise ValidationError(
+            f"Código de ticket inválido: {value!r} (esperado T-0001 o S-0001)"
+        )
     return code
 
 

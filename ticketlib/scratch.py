@@ -8,18 +8,26 @@ ticket activo, pero ``list``/``stats``/``next``/TUI/audit lo ocultan y
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import datetime, timedelta
-from typing import Any, Iterable
+from typing import Any
 
 from . import db, repo
-from .domain import SCRATCH_SESSION_PREFIX, SCRATCH_TAG
+from .domain import (
+    SCRATCH_CODE_PREFIX,
+    SCRATCH_SESSION_PREFIX,
+    SCRATCH_TAG,
+    TICKET_COUNTER,
+)
+from .store.common import event
 from .util import now
 
 SESSION_PREFIX = SCRATCH_SESSION_PREFIX
 META_PREFIX = "_scratch:"
 DEFAULT_TTL = 120  # minutos
 DEFAULT_PROJECT = "scratch"
+CODE_PREFIX = SCRATCH_CODE_PREFIX.rstrip("-")
 
 
 def session_tag(session_id: str | None) -> str | None:
@@ -84,6 +92,18 @@ def clean(conn: sqlite3.Connection, at: str | None = None) -> list[str]:
                 (ts, row["id"]),
             )
             conn.execute("DELETE FROM meta WHERE key = ?", (_meta_key(code),))
+            event(
+                conn,
+                row["id"],
+                "archivar",
+                "sistema",
+                "sistema",
+                None,
+                None,
+                None,
+                f"Scratch caducado ({code}, TTL {DEFAULT_TTL} min); "
+                "archivado sin tocar la tabla",
+            )
     return codes
 
 
@@ -153,6 +173,7 @@ def create_or_reuse(
         actor_type="agente",
         session_id=session_id,
         assigned_to=agent,
+        code_prefix=CODE_PREFIX,
     )
     repo.claim_ticket(
         conn, ticket["code"], agent=agent, session_id=session_id
@@ -162,12 +183,39 @@ def create_or_reuse(
     return repo.get_ticket(conn, ticket["code"])
 
 
-def promote(conn: sqlite3.Connection, code: str) -> dict[str, Any]:
-    """Quita la marca de scratch para que el ticket vuelva a la tabla."""
+def _promotion_code(conn: sqlite3.Connection, old_code: str) -> str:
+    """Código ``T-`` que recibe el scratch al promoverlo.
+
+    Los scratch nuevos usan ``S-####`` y reciben el siguiente número real.
+    Los antiguos ya quemaron un ``T-XXXX``: si ese número sigue libre se
+    conserva, para no fabricar otro hueco.
+    """
+    match = re.fullmatch(r"T-(\d{4,})", old_code)
+    next_number = int(db.meta_get(conn, TICKET_COUNTER, "1") or "1")
+    if match and int(match.group(1)) < next_number:
+        return old_code
+    return repo.allocate_code(conn, "T")
+
+
+def promote(
+    conn: sqlite3.Connection,
+    code: str,
+    actor: str = "usuario",
+    actor_type: str = "usuario",
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """Devuelve un scratch a la tabla: lo desarchiva y le da código ``T-``."""
     ticket = repo.get_ticket(conn, code)
     if not is_scratch(ticket):
         return ticket
+    old_code = ticket["code"]
     with db.tx(conn):
+        new_code = _promotion_code(conn, old_code)
+        conn.execute(
+            "UPDATE tickets SET code = ?, archived = 0, updated_at = ? "
+            "WHERE id = ?",
+            (new_code, now(), ticket["id"]),
+        )
         conn.execute(
             "DELETE FROM tags WHERE ticket_id = ? AND tag = ?",
             (ticket["id"], SCRATCH_TAG),
@@ -176,11 +224,28 @@ def promote(conn: sqlite3.Connection, code: str) -> dict[str, Any]:
             "DELETE FROM tags WHERE ticket_id = ? AND substr(tag, 1, ?) = ?",
             (ticket["id"], len(SESSION_PREFIX), SESSION_PREFIX),
         )
-        conn.execute("DELETE FROM meta WHERE key = ?", (_meta_key(ticket["code"]),))
-    return repo.get_ticket(conn, ticket["code"])
+        conn.execute("DELETE FROM meta WHERE key = ?", (_meta_key(old_code),))
+        event(
+            conn,
+            ticket["id"],
+            "promover",
+            actor,
+            actor_type,
+            session_id,
+            ticket["status"],
+            ticket["status"],
+            f"{old_code} → {new_code}: ya visible en la tabla",
+        )
+    return repo.get_ticket(conn, new_code)
 
 
-def drop(conn: sqlite3.Connection, code: str) -> dict[str, Any]:
+def drop(
+    conn: sqlite3.Connection,
+    code: str,
+    actor: str = "usuario",
+    actor_type: str = "usuario",
+    session_id: str | None = None,
+) -> dict[str, Any]:
     """Archiva un scratch sin pasar por la tabla."""
     ticket = repo.get_ticket(conn, code)
     if not is_scratch(ticket):
@@ -191,6 +256,17 @@ def drop(conn: sqlite3.Connection, code: str) -> dict[str, Any]:
             (now(), ticket["id"]),
         )
         conn.execute("DELETE FROM meta WHERE key = ?", (_meta_key(ticket["code"]),))
+        event(
+            conn,
+            ticket["id"],
+            "archivar",
+            actor,
+            actor_type,
+            session_id,
+            ticket["status"],
+            ticket["status"],
+            f"Scratch descartado ({code})",
+        )
     return repo.get_ticket(conn, code)
 
 
