@@ -10,7 +10,7 @@ from ticketlib import domain
 def payload(exc: BaseException, tool: str | None = None) -> dict[str, Any]:
     """Convierte una excepción de dominio en un error consumible por agentes."""
     message = str(exc)
-    if "MCP está desactualizado" in message:
+    if isinstance(exc, domain.StaleServerError):
         code, hint, retryable = (
             "stale_server",
             "Recarga el servidor MCP (el plugin lo hace al quedar idle) o reinicia OpenCode.",

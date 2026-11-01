@@ -78,3 +78,7 @@ class TransitionError(TicketError):
 
 class PermissionDenied(TicketError):
     """Acción reservada al usuario."""
+
+
+class StaleServerError(TicketError):
+    """El MCP en ejecución no corresponde al código en disco."""

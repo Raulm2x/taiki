@@ -193,6 +193,34 @@ def run(h: Harness) -> None:
         "la proyección lean cachea las columnas",
     )
 
+    # ── Renumerado estructurado con fallback a la nota antigua ──────────
+    structured = db.connect(":memory:")
+    try:
+        for title in ("Uno", "Dos", "Tres"):
+            repo.create_ticket(structured, title=title)
+        renamed = repo.get_ticket(structured, "T-0003")
+        structured.execute(
+            "UPDATE tickets SET code = 'T-0002.01' WHERE id = ?",
+            (renamed["id"],),
+        )
+        structured.execute(
+            "INSERT INTO links(ticket_id, kind, ref, created_at) "
+            "VALUES (?, 'otro', ?, ?)",
+            (renamed["id"], "renumerado:T-0003->T-0002.01", "2026-01-01"),
+        )
+        db.meta_set(structured, "next_ticket_number", "4")
+        reasons = {
+            item["code"]: item["reason"]
+            for item in queries.missing_codes(structured)
+        }
+        h.eq(
+            reasons.get("T-0003"),
+            "renumerado a T-0002.01",
+            "missing_codes lee el renumerado estructurado",
+        )
+    finally:
+        structured.close()
+
     # Atomicidad en claim_ticket
     t_atomic = repo.create_ticket(conn, title="Ticket para prueba atómica de claim")
     h.ok(t_atomic["status"] == "nuevo", "ticket inicia en estado nuevo")

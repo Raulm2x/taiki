@@ -395,6 +395,16 @@ def renumber_children(
                 item["status"],
                 f"{item['code']} → {item['new_code']}",
             )
+            # Registro estructurado del renumerado, independiente del texto.
+            conn.execute(
+                "INSERT OR IGNORE INTO links(ticket_id, kind, ref, created_at) "
+                "VALUES (?, 'otro', ?, ?)",
+                (
+                    item["id"],
+                    f"renumerado:{item['code']}->{item['new_code']}",
+                    ts,
+                ),
+            )
     return plan
 
 

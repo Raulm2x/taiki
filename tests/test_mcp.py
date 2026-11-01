@@ -186,12 +186,12 @@ def run(h: Harness) -> None:
             "el error incluye una pista accionable",
         )
     stale = errors.payload(
-        domain.ValidationError("El MCP está desactualizado: recarga")
+        domain.StaleServerError("texto distinto: el proceso quedó viejo")
     )
     h.eq(
         stale["error"]["code"],
         "stale_server",
-        "errors.payload distingue un MCP desactualizado",
+        "errors.payload clasifica el stale por tipo, no por mensaje",
     )
     envelope = mcp_server._tool_error(
         errors.payload(domain.ValidationError("argumento malo"), tool="list")
@@ -255,7 +255,7 @@ def run(h: Harness) -> None:
     runtime.is_stale = lambda: True
     try:
         h.raises(
-            domain.ValidationError,
+            domain.StaleServerError,
             lambda: handlers.call_tool("create", {"title": "MCP viejo"}),
             "un MCP viejo bloquea cualquier escritura, no solo las subtareas",
         )

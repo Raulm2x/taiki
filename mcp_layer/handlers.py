@@ -219,7 +219,7 @@ def _handle_create(
     actor: str = "agente",
 ) -> dict[str, Any]:
     if args.get("parent_id") and runtime.is_stale():
-        raise domain.ValidationError(
+        raise domain.StaleServerError(
             "El MCP está desactualizado: no se crea la tarea para no numerarla "
             "mal. Recarga el servidor MCP (el plugin lo hace al quedar la sesión "
             "idle) o reinicia OpenCode."
@@ -896,7 +896,7 @@ def call_tool(
     schema = validation.tool_schema(name)
     base = schema["name"] if schema else name
     if base in MUTATING_TOOLS and runtime.is_stale():
-        raise domain.ValidationError(
+        raise domain.StaleServerError(
             "El MCP está desactualizado: no se ejecuta la escritura para no "
             "dejar datos inconsistentes. Recarga el servidor MCP (el plugin lo "
             "hace al quedar la sesión idle) o reinicia OpenCode."

@@ -408,7 +408,7 @@ def run(h: Harness) -> None:
         runtime.is_stale = lambda: True
         try:
             h.raises(
-                domain.ValidationError,
+                domain.StaleServerError,
                 lambda: handlers.call_tool(
                     "create",
                     {

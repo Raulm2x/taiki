@@ -688,12 +688,22 @@ def missing_codes(conn: sqlite3.Connection) -> list[dict[str, str]]:
     }
     renames: dict[str, str] = {}
     for row in conn.execute(
+        "SELECT ref FROM links WHERE kind = 'otro' "
+        "AND ref LIKE 'renumerado:%'"
+    ):
+        ref = row[0] or ""
+        body = ref.removeprefix("renumerado:")
+        if "->" in body:
+            old, new = body.split("->", 1)
+            renames[old.strip()] = new.strip()
+    # Compatibilidad con notas antiguas "T-0001 → T-0014.01".
+    for row in conn.execute(
         "SELECT note FROM events WHERE action = 'renumerar'"
     ):
         note = row[0] or ""
         if "→" in note:
             old, new = note.split("→", 1)
-            renames[old.strip()] = new.strip()
+            renames.setdefault(old.strip(), new.strip())
 
     gaps: list[dict[str, str]] = []
     for number in range(1, next_number):
