@@ -349,6 +349,17 @@ def run(h: Harness) -> None:
         "body" not in lean_row and "title" in lean_row,
         "list devuelve un resumen sin body",
     )
+    h.ok(
+        "owner_session" not in lean_row
+        and "created_at" not in lean_row
+        and "progress" not in lean_row,
+        "list lean omite sesión, created_at y progreso vacío",
+    )
+    h.eq(
+        by_name["list"]["inputSchema"]["properties"]["limit"]["default"],
+        20,
+        "list pagina de 20 en 20 por defecto",
+    )
     full_list = handlers.call_tool(
         "list", {"tag": "mcp-suite", "detail": True}
     )

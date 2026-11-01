@@ -166,7 +166,7 @@ TOOLS = [
     _tool(
         "list",
         "Lista tickets con filtros y paginación. Sin filtros devuelve solo los "
-        "tickets abiertos y un resumen (sin body/resolution), del código más "
+        "tickets abiertos, en resumen lean y 20 por defecto, del código más "
         "reciente al más antiguo. Usa include_closed=true para ver también "
         "cerrados, detail=true para el registro completo y get para un ticket "
         "concreto. Devuelve 'total' para paginar con 'offset'.",
@@ -242,7 +242,7 @@ TOOLS = [
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 500,
-                "default": 50,
+                "default": 20,
             },
             "offset": {
                 "type": "integer",

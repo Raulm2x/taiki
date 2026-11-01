@@ -132,14 +132,10 @@ SUMMARY_FIELDS = (
     "kind",
     "project",
     "assigned_to",
-    "owner_session",
     "parent_id",
-    "paths",
-    "tags",
-    "progress",
-    "created_at",
     "updated_at",
 )
+SUMMARY_OPTIONAL = ("paths", "tags", "progress")
 DETAIL_SECTIONS = (
     "events",
     "comments",
@@ -209,6 +205,13 @@ def _project_root() -> Path:
 
 def _summary(ticket: dict[str, Any], *, preview: bool = False) -> dict[str, Any]:
     data = {key: ticket[key] for key in SUMMARY_FIELDS if key in ticket}
+    for key in SUMMARY_OPTIONAL:
+        value = ticket.get(key)
+        if not value:
+            continue
+        if key == "progress" and not (value or {}).get("total"):
+            continue
+        data[key] = value
     if preview:
         body = str(ticket.get("body") or "").strip()
         data["body_preview"] = (
@@ -381,7 +384,7 @@ def _handle_list(
         hierarchy["leaves_only"] = True
     if args.get("parent_id"):
         hierarchy["parent_id"] = args["parent_id"]
-    limit = args.get("limit", 50)
+    limit = args.get("limit", 20)
     offset = args.get("offset", 0)
     order = args.get("order", "code")
     rows = repo.list_tickets(
