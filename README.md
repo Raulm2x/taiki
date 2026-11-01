@@ -921,10 +921,15 @@ el total real de comprobaciones, que cubre filtros de tags, subtareas, concurren
 
 ### Presupuesto y cuarentena
 
-- `tests/budget.toml` fija un presupuesto de tiempo (suite y módulo) y una
-  línea base de comprobaciones con tolerancia. En local superarlo genera un
+- `tests/budget.toml` fija un presupuesto de tiempo (suite y módulo) y un
+  **techo** de comprobaciones con tolerancia. En local superarlo genera un
   **aviso accionable**; con `--strict-budget` (lo que usa la CI) el tiempo es un
-  **gate duro** y la suite termina con código 1.
+  **gate duro** y la suite termina con código 1. Bajar comprobaciones no avisa:
+  el contador es un techo, no un objetivo.
+- Política de tests: un comportamiento, un test en la capa más baja; un bug,
+  una regresión en la capa que falló; MCP/CLI solo contrato y TUI solo lógica
+  pura. Borrar tests es válido si la cobertura no baja; añadir por encima del
+  techo obliga a podar o justificarlo.
 - La cobertura se mide **aparte** del presupuesto de tiempo: la CI ejecuta
   primero `tests/run.py --strict-budget` sin instrumentar y después
   `coverage run` + `tests/coverage_gate.py`. Así el coste de coverage no infla
@@ -938,7 +943,7 @@ el total real de comprobaciones, que cubre filtros de tags, subtareas, concurren
   `expires`. Mientras está vigente se ejecuta pero un fallo no bloquea; al
   caducar, la suite falla para forzar la revisión.
 - `--audit` informa de mensajes duplicados, imports y seeds sin uso, módulos sin
-  aserciones y desviación sobre la línea base. No modifica ni elimina pruebas.
+  aserciones y desviación sobre el techo. No modifica ni elimina pruebas.
 - No hay borrado automático por antigüedad: un test antiguo que protege una
   invariante sigue siendo valioso.
 

@@ -1,8 +1,9 @@
-# Presupuesto de la suite. Los incumplimientos son avisos accionables, nunca
-# borrados automáticos. Ajusta la línea base al añadir o quitar comprobaciones.
+# Presupuesto de la suite. El tiempo es un gate duro con `--strict-budget`
+# (lo usa la CI); en local solo avisa. `baseline_checks` es un TECHO: pasarse
+# por arriba avisa, bajar nunca (la poda es válida si la cobertura se mantiene).
 [suite]
 max_seconds = 4.0
-baseline_checks = 893
+baseline_checks = 912
 checks_tolerance = 20
 
 [module]

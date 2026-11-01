@@ -65,6 +65,21 @@ Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
   `taiki show T-XXXX --json --compact`; evita `list --json` completo.
   `--compact` y `--json-summary` ya implican `--json`.
 
+## Política de tests
+
+- **Un comportamiento, un test en la capa más baja.** La lógica se prueba en
+  `ticketlib`/`store`; MCP y CLI solo comprueban contrato (entrada/salida);
+  la TUI solo lógica pura (estado, detalle, mapa), nunca curses.
+- **Un bug, un test de regresión** en la capa que falló. No se copia el mismo
+  caso en tres capas.
+- **Borrar es válido.** El presupuesto de comprobaciones es un **techo**, no un
+  objetivo: bajar checks no avisa si la cobertura se mantiene. Añadir por encima
+  del techo obliga a podar o justificarlo.
+- **El tiempo y la cobertura son gates duros en CI.** Local avisa; CI falla con
+  `--strict-budget` y con los umbrales por capa de `tests/coverage_gate.py`.
+- **Poda periódica:** shims sin uso, módulos de más de 700 líneas y matrices
+  repetidas (transiciones, enums, filtros) se convierten en tablas.
+
 ## Comandos útiles
 
 ```bash

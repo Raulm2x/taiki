@@ -108,12 +108,17 @@ def run(h: Harness) -> None:
         "budget_warnings avisa del exceso de tiempo",
     )
     h.ok(
-        any("línea base" in item for item in warnings),
-        "budget_warnings avisa de la desviación de comprobaciones",
+        any("techo" in item for item in warnings),
+        "budget_warnings avisa al superar el techo de comprobaciones",
+    )
+    low = [{"name": "test_x", "checks": 2, "elapsed": 0.01, "error": None}]
+    h.ok(
+        not any("techo" in item for item in hygiene.budget_warnings(low, budget)),
+        "bajar comprobaciones no genera aviso: el presupuesto es un techo",
     )
     partial = hygiene.budget_warnings(results, budget, partial=True)
     h.ok(
-        all("presupuesto" not in item and "línea base" not in item for item in partial)
+        all("presupuesto" not in item and "techo" not in item for item in partial)
         and any("test_x" in item for item in partial),
         "una ejecución parcial solo avisa del presupuesto por módulo",
     )

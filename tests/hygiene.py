@@ -287,8 +287,10 @@ def format_audit(
     delta = total - baseline
     lines.append("")
     lines.append(
-        f"Línea base: {baseline} · real: {total} ({delta:+d}, tolerancia ±{tolerance})"
+        f"Techo: {baseline} (+{tolerance}) · real: {total} ({delta:+d})"
     )
+    if total > baseline + tolerance:
+        lines.append("  Supera el techo: poda tests o justifica el aumento.")
     return lines
 
 
@@ -332,9 +334,11 @@ def budget_warnings(
     total_checks = sum(row.get("checks", 0) for row in results)
     baseline = int(suite.get("baseline_checks", 0) or 0)
     tolerance = int(suite.get("checks_tolerance", 0) or 0)
-    if not partial and baseline and abs(total_checks - baseline) > tolerance:
+    # Techo, no objetivo: bajar comprobaciones es válido (poda) mientras la
+    # cobertura se mantenga; solo preocupa pasarse del margen por arriba.
+    if not partial and baseline and total_checks > baseline + tolerance:
         warnings.append(
-            f"{total_checks} comprobaciones frente a una línea base de {baseline} "
-            f"(±{tolerance}); justifica el cambio"
+            f"{total_checks} comprobaciones superan el techo de {baseline} "
+            f"(+{tolerance}); poda o justifica el aumento"
         )
     return warnings
