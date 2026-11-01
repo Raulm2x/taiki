@@ -232,6 +232,24 @@ def _serial_paths(paths: list[str]) -> str | None:
     return None
 
 
+def _writer_profile(
+    assigned: Any, kind: Any, config: dict[str, Any] | None = None
+) -> str:
+    """Perfil que consume presupuesto para un writer ya activo.
+
+    Un perfil específico (``worker-low``, ``worker-high``…) manda; el ``worker``
+    genérico o un actor humano no identifican perfil, así que se usa el que el
+    router elegiría para el tipo del ticket.
+    """
+    name = str(assigned or "").strip().lower()
+    if name in agents.registry(config) and name != agents.FALLBACK_AGENT:
+        return name
+    try:
+        return str(agents.assign(str(kind or ""), config)["agent"])
+    except ValidationError:
+        return name or agents.FALLBACK_AGENT
+
+
 def parallel_plan(
     conn: sqlite3.Connection,
     *,
@@ -241,27 +259,31 @@ def parallel_plan(
 ) -> dict[str, Any]:
     """Scheduler: qué tareas listas pueden correr a la vez sin pisarse.
 
-    Cuenta los writers ya activos (``en_progreso``): sus paths bloquean
-    solapes y consumen el presupuesto global. Cada perfil recomendado impone
-    además su propio ``max_parallel``. El resto va a ``serial`` (una a una) o
+    Solo cuentan como writers activos las hojas ``en_progreso``: una épica en
+    curso coordina, no escribe, y sus paths amplios no deben serializar a sus
+    propias tareas (una épica sin hijos sí cuenta). Los activos consumen el
+    presupuesto global y el ``max_parallel`` de su perfil, derivado del asignado
+    o, si es genérico, del tipo. El resto va a ``serial`` (una a una) o
     ``deferred`` (presupuesto agotado).
     """
     maximum = limit if limit is not None else agents.concurrency_budget(config)
     if isinstance(maximum, bool) or not isinstance(maximum, int) or maximum < 1:
         raise ValidationError("El límite de paralelismo debe ser un entero >= 1")
     active_sql = (
-        "SELECT code, assigned_to, paths FROM tickets "
-        "WHERE archived = 0 AND status = 'en_progreso'"
+        "SELECT t.code, t.assigned_to, t.kind, t.paths FROM tickets t "
+        "WHERE t.archived = 0 AND t.status = 'en_progreso' "
+        "AND NOT EXISTS (SELECT 1 FROM tickets ch "
+        "WHERE ch.parent_id = t.id AND ch.archived = 0)"
     )
     active_params: tuple[Any, ...] = ()
     if project:
-        active_sql += " AND project = ?"
+        active_sql += " AND t.project = ?"
         active_params = (project,)
     active_rows = conn.execute(active_sql, active_params).fetchall()
     active = [
         {
             "code": row["code"],
-            "agent": row["assigned_to"] or "",
+            "agent": _writer_profile(row["assigned_to"], row["kind"], config),
             "paths": _paths(row["paths"]),
         }
         for row in active_rows

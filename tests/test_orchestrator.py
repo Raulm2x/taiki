@@ -573,31 +573,25 @@ def run(h: Harness) -> None:
     h.ok(
         "solapa" in reasons.get(sched_c["code"], "")
         and "serial" in reasons.get(sched_d["code"], "")
-        and "sin paths" in reasons.get(sched_e["code"], ""),
-        "solapes, esquema/store y tareas sin paths se serializan",
-    )
-    h.ok(
-        len(plan["parallel"]) <= plan["limit"]
+        and "sin paths" in reasons.get(sched_e["code"], "")
+        and len(plan["parallel"]) <= plan["limit"]
         and commits_lib.overlaps(
             repo.get_ticket(conn, sched_a["code"])["paths"],
             repo.get_ticket(conn, sched_b["code"])["paths"],
         )
         == [],
-        "el límite se respeta y los elegidos no solapan",
+        "solapes, esquema/store y sin paths se serializan; el límite se respeta",
     )
     tight = orchestrator.parallel_plan(conn, project="sched", limit=1)
-    h.ok(
-        tight["parallel"] == [sched_a["code"]]
-        and sched_b["code"] in tight["deferred"],
-        "el presupuesto limita la ola y difiere el resto",
-    )
     mcp_plan = handlers.call_tool(
         "schedule", {"project": "sched", "limit": 3}
     )
     h.ok(
-        mcp_plan["parallel"] == plan["parallel"]
+        tight["parallel"] == [sched_a["code"]]
+        and sched_b["code"] in tight["deferred"]
+        and mcp_plan["parallel"] == plan["parallel"]
         and mcp_plan["requires_worktree"] is True,
-        "schedule por MCP devuelve el mismo plan y exige worktree",
+        "el presupuesto limita la ola, difiere el resto y schedule MCP coincide",
     )
 
     # ── E2E: épica con 3 tareas, paralelismo, bug y confirmación ────────
@@ -783,16 +777,12 @@ def run(h: Harness) -> None:
             and plan["steps"] > 0
             for plan in plans.values()
         )
-        and profile_ok,
-        "todos los tipos y perfiles son lanzables y declaran modelo/steps",
-    )
-    medium_plan = plans["mantenimiento"]
-    h.ok(
-        medium_plan["agent"] == "worker-medium"
-        and medium_plan["model"] == "opencode-go/deepseek-v4.1-flash"
-        and medium_plan["variant"] is None
-        and medium_plan["fallback"] is True,
-        "worker-medium usa deepseek por defecto, sin variante medium",
+        and profile_ok
+        and plans["mantenimiento"]["agent"] == "worker-medium"
+        and plans["mantenimiento"]["model"] == "opencode-go/deepseek-v4.1-flash"
+        and plans["mantenimiento"]["variant"] is None
+        and plans["mantenimiento"]["fallback"] is True,
+        "los tipos y perfiles son lanzables; worker-medium va sin variante medium",
     )
     h.ok(
         _rule(worker, "shell", "git add -A*") == "deny"
@@ -842,7 +832,7 @@ def run(h: Harness) -> None:
     for index in range(2):
         running = repo.create_ticket(
             conn, title=f"Activa {index}", project="sched4",
-            paths=[f"src/act{index}.py"],
+            kind="documentacion", paths=[f"src/act{index}.py"],
         )
         repo.claim_ticket(
             conn, running["code"], agent="worker",
@@ -860,6 +850,70 @@ def run(h: Harness) -> None:
         len(global_plan["parallel"]) == 1
         and len(global_plan["deferred"]) == 1,
         "las tareas activas consumen el presupuesto global",
+    )
+
+    # Una épica en curso coordina: sus paths amplios no serializan sus tareas.
+    epic_sched = repo.create_ticket(
+        conn, title="Épica sched", project="sched5", paths=["docs/"]
+    )
+    epic_tasks = [
+        repo.create_ticket(
+            conn, title=f"Doc sched {name}", kind="documentacion",
+            project="sched5", parent_id=epic_sched["code"],
+            paths=[f"docs/sched_{name}.md"],
+        )
+        for name in ("a", "b")
+    ]
+    repo.transition(
+        conn, epic_sched["code"], "en_progreso", actor="conductor"
+    )
+    epic_plan = orchestrator.parallel_plan(conn, project="sched5", limit=3)
+    h.ok(
+        epic_plan["parallel"] == [task["code"] for task in epic_tasks]
+        and epic_sched["code"] not in epic_plan["active"],
+        "una épica en_progreso no serializa sus propias tareas",
+    )
+
+    # El perfil derivado del tipo consume su max_parallel: 2 activos = tope.
+    for index in range(2):
+        running = repo.create_ticket(
+            conn, title=f"Doc activa {index}", kind="documentacion",
+            project="sched6", paths=[f"docs/doc{index}.md"],
+        )
+        repo.claim_ticket(
+            conn, running["code"], agent="worker",
+            session_id=f"ses_doc{index}",
+        )
+    doc_ready = repo.create_ticket(
+        conn, title="Doc lista", kind="documentacion", project="sched6",
+        priority="alta", paths=["docs/doc_lista.md"],
+    )
+    profile_plan = orchestrator.parallel_plan(
+        conn, project="sched6", limit=3
+    )
+    h.ok(
+        profile_plan["parallel"] == []
+        and profile_plan["deferred"] == [doc_ready["code"]],
+        "los activos worker-low consumen el tope de su perfil",
+    )
+
+    # Sin hijos no es épica: un writer en curso sigue contando como activo.
+    solo_epic = repo.create_ticket(
+        conn, title="Épica sin hijos sched7", kind="bug",
+        project="sched7", paths=["src/solo_epic.py"],
+    )
+    repo.claim_ticket(
+        conn, solo_epic["code"], agent="worker", session_id="ses_solo"
+    )
+    repo.create_ticket(
+        conn, title="Bug libre sched7", kind="bug", project="sched7",
+        paths=["src/solo_bug.py"],
+    )
+    solo_plan = orchestrator.parallel_plan(conn, project="sched7", limit=3)
+    h.ok(
+        solo_epic["code"] in solo_plan["active"]
+        and solo_plan["parallel"] == [],
+        "una épica sin hijos sigue contando como writer activo",
     )
 
     # ── Atribución real por MCP: agente, actor_type y sesión ────────────
