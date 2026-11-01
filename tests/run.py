@@ -83,6 +83,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="informe de ruido: duplicados, imports, seeds y línea base",
     )
+    parser.add_argument(
+        "--bench",
+        action="store_true",
+        help="ejecuta los benchmarks de connect/export a 20k",
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="mostrar cada módulo")
     args = parser.parse_args(argv)
 
@@ -149,6 +154,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {item}")
         return 1
     print(f"OK: {total} comprobaciones ({len(names)} módulos, {elapsed:.2f}s)")
+    if args.bench:
+        from tests import benchmarks
+
+        if benchmarks.main([]) != 0:
+            return 1
     return 0
 
 

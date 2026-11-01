@@ -51,11 +51,11 @@ def _history_section(
     except (TypeError, ValueError):
         maximum = 0
     if maximum <= 0:
-        rows = conn.execute(
+        cursor = conn.execute(
             f"SELECT {columns} FROM {table} WHERE ticket_id = ? ORDER BY id",
             (ticket_id,),
         )
-        return [dict(row) for row in rows], None
+        return [dict(row) for row in cursor], None
     # Se pide una fila de más: si no aparece, no hubo recorte y no hace falta
     # el COUNT. Si aparece, el total se consulta una sola vez.
     rows = conn.execute(
@@ -171,7 +171,7 @@ def get_ticket(
             "SELECT ref FROM links WHERE ticket_id = ? AND kind = 'commit' "
             "ORDER BY id",
             (row["id"],),
-        )
+        ).fetchall()
     else:
         commit_rows = [
             link for link in ticket["links"] if link["kind"] == "commit"

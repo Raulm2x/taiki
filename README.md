@@ -12,6 +12,18 @@ documentación, seguridad) y para que el usuario revise y confirme lo hecho.
 - **Base de datos**: una por proyecto en `.taiki/taiki.db`. Sin base de datos
   global: usar Taiki es una decisión de cada proyecto.
 
+## Contenido
+
+- [Workspaces: `.taiki`](#workspaces-taiki)
+- [Estados](#estados)
+- [Estructura](#estructura)
+- [Instalación](#instalación)
+- [Herramientas MCP](#herramientas-mcp)
+- [CLI](#cli)
+- [Guard y worktrees](#guard-ningún-cambio-sin-ticket)
+- [Datos y respaldo](#datos-y-respaldo)
+- [Desarrollo](#desarrollo)
+
 ## Workspaces: `.taiki`
 
 Cada proyecto que quiera usar Taiki crea un directorio `.taiki/` en su raíz:
@@ -879,9 +891,20 @@ python3 tests/run.py --list          # módulos disponibles
 python3 tests/run.py --only guard    # una sola área, con su propia DB temporal
 python3 tests/run.py -k tui -v       # filtrar por nombre y ver el desglose
 python3 tests/run.py --audit         # ruido: duplicados, imports, seeds y línea base
+python3 tests/run.py --bench         # benchmarks 20k (connect <10 ms, export <500 ms)
+python3 -m tests.benchmarks          # benchmarks por separado
+ruff check .                         # lint (corrección + ARG)
+mypy                                 # tipos de ticketlib (gradual)
+coverage run tests/run.py && coverage report
 python3 selftest.py                  # compatibilidad (delega en tests/run.py)
 TAIKI_DB=/tmp/opencode/taiki.db python3 cli.py list
 ```
+
+`pyproject.toml` declara `requires-python >=3.11`, los entry points `taiki` y
+`taiki-mcp`, la configuración de ruff/mypy y la cobertura. La CI de
+`.github/workflows/ci.yml` ejecuta suite, lint, tipos y los benchmarks en cada
+push y pull request. Los módulos de prueba se descubren automáticamente
+(`tests/test_*.py`); no hay que editar el runner al añadir uno.
 
 Cada módulo de la suite crea su propia base de datos temporal y restaura las
 variables de entorno al terminar; `--failfast` detiene la ejecución en el primer

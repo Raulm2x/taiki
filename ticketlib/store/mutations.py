@@ -194,7 +194,7 @@ def create_ticket(
                 ts,
             ),
         )
-        ticket_id = int(cur.lastrowid)
+        ticket_id = int(cur.lastrowid or 0)
         for tag in tags:
             conn.execute(
                 "INSERT OR IGNORE INTO tags(ticket_id, tag) VALUES (?, ?)",

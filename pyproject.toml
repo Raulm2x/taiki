@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "taiki"
+version = "1.1.0"
+description = "Gestor local de tickets en SQLite para agentes y usuario"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = []
+
+[project.scripts]
+taiki = "cli:main"
+taiki-mcp = "server:main"
+
+[tool.setuptools]
+py-modules = ["cli", "parser", "selftest", "server"]
+
+[tool.setuptools.packages.find]
+include = ["ticketlib*", "commands*", "mcp_layer*", "tui*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+# Reglas de corrección + ARG para parámetros muertos. El resto de estilo se
+# añadirá por módulo cuando la base esté limpia.
+select = ["E9", "F63", "F7", "F82", "ARG"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ARG"]
+"mcp_layer/handlers.py" = ["ARG001", "ARG002"]
+"commands/system.py" = ["ARG001"]
+"ticketlib/db.py" = ["ARG001"]
+"ticketlib/guard/*" = ["ARG001"]
+"ticketlib/herdr.py" = ["ARG001"]
+"tui/view.py" = ["ARG001"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+# Gradual: empezamos por la capa de datos; ampliar a mcp_layer/commands/tui.
+files = ["ticketlib"]
+
+[tool.coverage.run]
+branch = true
+source = ["ticketlib", "mcp_layer", "commands", "tui"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

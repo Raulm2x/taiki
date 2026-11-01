@@ -14,7 +14,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 TIMEOUT = 15
 
@@ -65,13 +65,19 @@ def _default_runner(argv: list[str]) -> dict[str, Any]:
         detail = result.stderr.strip() or result.stdout.strip()
         raise HerdrError(f"herdr {' '.join(argv)}: {detail}")
     try:
-        return json.loads(result.stdout or "{}")
+        data = json.loads(result.stdout or "{}")
     except json.JSONDecodeError as exc:
         raise HerdrError(f"herdr devolvió JSON inválido: {exc}") from exc
+    if not isinstance(data, dict):
+        return {}
+    return cast(dict[str, Any], data)
 
 
 def _payload(data: dict[str, Any]) -> dict[str, Any]:
-    return data.get("result") if isinstance(data.get("result"), dict) else data
+    result = data.get("result")
+    if isinstance(result, dict):
+        return cast(dict[str, Any], result)
+    return data
 
 
 def agents(run: Callable[[list[str]], dict[str, Any]]) -> list[dict[str, Any]]:
@@ -233,7 +239,7 @@ def plan(
         )
 
     tab = None
-    pane = None
+    pane: Any = None
     if workspace != "<nuevo>":
         tab = find_tab(tabs(run, workspace), code)
         if tab:
