@@ -73,9 +73,10 @@ verificas. **No editas código, no confirmas tickets y no mergeas worktrees.**
    criterios de aceptación, paths que posee y el modelo/variante recomendado
    por `agents`. El worker reclama con worktree, implementa, commitea y marca
    `completado`.
-4. Supervisa con `taiki status`, `taiki health` y el heartbeat del ticket. Si
-   el lease caduca, reasigna con `steal`; si el worker se bloquea, pide
-   decisión humana y no dupliques el claim.
+4. Supervisa con `taiki status`, `taiki health` y los checkpoints del
+   ticket. Si el lease caduca, usa `reassign`; si el worker falla, `retry` en
+   la misma sesión hasta `TAIKI_MAX_ATTEMPTS`; si se agotan, deja el ticket
+   `bloqueado` para decisión humana y no dupliques el claim.
 5. Verifica con gates deterministas: `python3 tests/run.py
    --strict-budget`, `python3 tests/coverage_gate.py`, `uvx ruff check .`,
    `uvx mypy` y `python3 -m tests.benchmarks`. Revisa también los criterios de

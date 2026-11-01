@@ -12,6 +12,7 @@ Sistema de tickets local compartido entre agentes y el usuario.
 Flujo de trabajo:
 1. Ningún cambio sin ticket. Antes de editar o ejecutar algo que escriba, comprueba que tienes un ticket en "en_progreso": si no, créalo con create y reclámalo con claim. En clientes que prefijan el servidor verás taiki_create/taiki_claim; el nombre real es create/claim. El guard de OpenCode puede crear un ticket temporal S-#### oculto; si el trabajo es real, crea el ticket adecuado.
 2. Al empezar, usa list (por defecto solo abiertos y en resumen) o next, y revisa también "en_progreso" para no duplicar trabajo. Para el detalle de un ticket usa get (include y history_limit acotan secciones). Si hay otra sesión activa, consulta status y whoami; reclama con worktree=true para aislar la escritura y usa heartbeat en comandos largos.
+   Durante el trabajo publica checkpoint (qué hiciste y qué falta); si un worker cae, reassign reasigna leases caducados y retry reintenta en la misma sesión hasta TAIKI_MAX_ATTEMPTS (3 por defecto).
 3. Si descubres trabajo nuevo, regístralo con create; no lo dejes solo en el chat. Para objetivos con varias tareas, crea una épica y las tareas con parent_id (T-0014.01, T-0014.02…). Declara las rutas que posee con paths.
 4. Pasa agent cuando puedas; si lo omites se usa el nombre del cliente. No reclames una épica: reclama una de sus tareas.
 5. Al terminar, usa complete con una resolución concreta y el commit o los archivos tocados.
@@ -570,6 +571,59 @@ TOOL_SPECS = [
                 "maximum": 1440,
                 "description": "Minutos de lease (por defecto TAIKI_LEASE_MINUTES)",
             },
+        },
+    ),
+    ToolSpec(
+        "checkpoint",
+        "Publica el progreso del worker (qué hizo y qué falta) y renueva el "
+        "lease del ticket.",
+        {
+            "code": CODE,
+            "note": {
+                "type": "string",
+                "maxLength": 10_000,
+                "description": "Qué se hizo desde el último checkpoint",
+            },
+            "pending": {
+                "type": "string",
+                "maxLength": 10_000,
+                "description": "Qué falta para terminar",
+            },
+            "agent": AGENT,
+            "session_id": SESSION,
+        },
+        ("code", "note"),
+    ),
+    ToolSpec(
+        "retry",
+        "Reintenta un fallo en la misma sesión o bloquea el ticket al agotar "
+        "los intentos. No reabre un ticket bloqueado: eso requiere decisión "
+        "humana.",
+        {
+            "code": CODE,
+            "why": {
+                "type": "string",
+                "maxLength": 10_000,
+                "description": "Motivo del fallo que se reintenta",
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20,
+                "description": "Máximo de intentos (por defecto TAIKI_MAX_ATTEMPTS o 3)",
+            },
+            "agent": AGENT,
+            "session_id": SESSION,
+        },
+        ("code", "why"),
+    ),
+    ToolSpec(
+        "reassign",
+        "Reasigna los tickets cuyo lease caducó (workers caídos o colgados) al "
+        "agente y sesión indicados.",
+        {
+            "agent": AGENT,
+            "session_id": SESSION,
         },
     ),
     ToolSpec(

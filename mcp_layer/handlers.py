@@ -15,6 +15,7 @@ from ticketlib import (
     db,
     domain,
     githook,
+    orchestrator as orchestrator_lib,
     presentation,
     render,
     repo,
@@ -728,6 +729,49 @@ def _handle_whoami(
     summary["worktree"] = str(found["path"]) if found else None
     data["active"] = summary
     return data
+
+
+def _handle_checkpoint(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    session: str | None = None,
+    actor: str = "agente",
+) -> dict[str, Any]:
+    return orchestrator_lib.checkpoint(
+        conn,
+        args.get("code"),
+        args.get("note") or "",
+        pending=args.get("pending"),
+        agent=actor,
+        session_id=session,
+    )
+
+
+def _handle_retry(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    session: str | None = None,
+    actor: str = "agente",
+) -> dict[str, Any]:
+    return orchestrator_lib.retry(
+        conn,
+        args.get("code"),
+        args.get("why") or "",
+        agent=actor,
+        session_id=session,
+        limit=args.get("limit"),
+    )
+
+
+def _handle_reassign(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    session: str | None = None,
+    actor: str = "agente",
+) -> dict[str, Any]:
+    return orchestrator_lib.reassign_stale(
+        conn, agent=actor, session_id=session
+    )
 
 
 def _handle_heartbeat(

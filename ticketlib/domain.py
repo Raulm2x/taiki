@@ -54,8 +54,8 @@ TRANSITIONS: dict[str, set[str]] = {
     "bloqueado": {"pendiente", "en_progreso", "cancelado"},
     # ``verificado`` es el visto bueno del conductor; el usuario puede
     # confirmar tanto desde ``completado`` como desde ``verificado``.
-    "completado": {"verificado", "confirmado", "en_progreso"},
-    "verificado": {"confirmado", "en_progreso"},
+    "completado": {"verificado", "confirmado", "en_progreso", "bloqueado"},
+    "verificado": {"confirmado", "en_progreso", "bloqueado"},
     "confirmado": {"en_progreso"},
     "cancelado": {"pendiente"},
 }

@@ -215,3 +215,129 @@ def run(h: Harness) -> None:
         and repo.get_ticket(conn, epic["code"])["status"] == "confirmado",
         "solo el usuario confirma la épica y sus tareas verificadas",
     )
+
+    # ── Checkpoints, leases y reintentos ────────────────────────────────
+    from mcp_layer import handlers
+    from ticketlib import orchestrator
+
+    task = repo.create_ticket(conn, title="Con checkpoints")
+    repo.claim_ticket(
+        conn, task["code"], agent="worker", session_id="ses_cp"
+    )
+    progress = orchestrator.checkpoint(
+        conn,
+        task["code"],
+        "parser implementado",
+        pending="tests del parser",
+        agent="worker",
+        session_id="ses_cp",
+    )
+    h.ok(
+        progress["status"] == "en_progreso"
+        and progress["renewed"]
+        and progress["lease_until"],
+        "un checkpoint renueva el lease del worker",
+    )
+    h.ok(
+        any(
+            "checkpoint: parser implementado" in comment["body"]
+            and "tests del parser" in comment["body"]
+            for comment in repo.get_ticket(conn, task["code"])["comments"]
+        ),
+        "el checkpoint deja qué se hizo y qué falta",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: orchestrator.checkpoint(conn, task["code"], "   "),
+        "un checkpoint sin nota falla",
+    )
+
+    repo.complete_ticket(
+        conn,
+        task["code"],
+        resolution="entrega uno",
+        actor="worker",
+        session_id="ses_cp",
+    )
+    first_retry = orchestrator.retry(
+        conn,
+        task["code"],
+        "test del parser en rojo",
+        agent="worker",
+        session_id="ses_cp",
+        limit=3,
+    )
+    h.ok(
+        first_retry["status"] == "en_progreso"
+        and first_retry["attempts"] == 2
+        and first_retry["session"] == "ses_cp",
+        "un fallo reintenta en la misma sesión y suma un intento",
+    )
+    h.ok(
+        repo.get_ticket(conn, task["code"])["owner_session"] == "ses_cp",
+        "el reintento no duplica el claim",
+    )
+    repo.complete_ticket(
+        conn,
+        task["code"],
+        resolution="entrega dos",
+        actor="worker",
+        session_id="ses_cp",
+    )
+    blocked_retry = orchestrator.retry(
+        conn,
+        task["code"],
+        "sigue fallando",
+        agent="worker",
+        session_id="ses_cp",
+        limit=2,
+    )
+    h.ok(
+        blocked_retry["blocked"]
+        and repo.get_ticket(conn, task["code"])["status"] == "bloqueado",
+        "agotar los intentos bloquea para decisión humana",
+    )
+    h.raises(
+        domain.TicketError,
+        lambda: orchestrator.retry(conn, task["code"], "otra vez"),
+        "un ticket bloqueado no se reintenta solo",
+    )
+
+    stale = repo.create_ticket(conn, title="Worker caído")
+    repo.claim_ticket(
+        conn, stale["code"], agent="worker", session_id="ses_muerto"
+    )
+    conn.execute(
+        "UPDATE tickets SET lease_until = '2000-01-01T00:00:00+00:00' "
+        "WHERE code = ?",
+        (stale["code"],),
+    )
+    conn.commit()
+    reassigned = orchestrator.reassign_stale(
+        conn, agent="conductor", session_id="ses_nuevo"
+    )
+    h.ok(
+        stale["code"] in reassigned["reassigned"]
+        and repo.get_ticket(conn, stale["code"])["owner_session"]
+        == "ses_nuevo",
+        "un lease caducado se detecta y se reasigna",
+    )
+
+    mcp_task = repo.create_ticket(conn, title="Checkpoint MCP")
+    repo.claim_ticket(
+        conn, mcp_task["code"], agent="worker", session_id="ses_mcp_cp"
+    )
+    mcp_checkpoint = handlers.call_tool(
+        "checkpoint",
+        {
+            "code": mcp_task["code"],
+            "note": "avance MCP",
+            "pending": "resto",
+        },
+        meta={"sessionId": "ses_mcp_cp"},
+    )
+    h.ok(
+        mcp_checkpoint["renewed"]
+        and "resto" in mcp_checkpoint["checkpoint"],
+        "checkpoint por MCP publica progreso y renueva el lease",
+    )

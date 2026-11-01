@@ -62,14 +62,17 @@ subagentes, no confirmas y no mergeas.
    por otra sesión, no lo fuerces: informa.
 3. Implementa el cambio mínimo que cumple los criterios. Stagea rutas
    concretas (`git add <ruta>`), nunca `git add -A`.
-4. Verifica: `python3 tests/run.py --strict-budget`, `uvx ruff check .`,
+4. Publica checkpoints durante el trabajo (qué hiciste y qué falta) con la
+   herramienta MCP `checkpoint` o `taiki comment`; así el conductor detecta
+   avances y renueva el lease.
+5. Verifica: `python3 tests/run.py --strict-budget`, `uvx ruff check .`,
    `uvx mypy` y los tests específicos de tu cambio. Si tocas cobertura, ejecuta
    también el gate.
-5. Commitea con el código en el asunto:
+6. Commitea con el código en el asunto:
    `TAIKI_TICKET=T-XXXX taiki commit -m "tipo: resumen (T-XXXX)"`.
-6. Marca el ticket `completado` con resolución y commit:
+7. Marca el ticket `completado` con resolución y commit:
    `taiki complete T-XXXX -r "qué se hizo y cómo se verificó" --commit <hash>`.
-7. Informa al conductor: commit, comandos ejecutados, resultado y cualquier
+8. Informa al conductor: commit, comandos ejecutados, resultado y cualquier
    riesgo o trabajo independiente que hayas detectado. No crees tickets por tu
    cuenta salvo que el conductor lo pida.
 

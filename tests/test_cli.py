@@ -195,7 +195,7 @@ def run(h: Harness) -> None:
     )
     h.ok(
         tui_actions.available_statuses({"status": "completado"})
-        == ["en_progreso", "verificado"],
+        == ["bloqueado", "en_progreso", "verificado"],
         "las acciones ofrecen verificar pero no confirmar directamente",
     )
     h.ok(

@@ -106,8 +106,8 @@ def run(h: Harness) -> None:
         "pendiente": {"en_progreso", "bloqueado", "cancelado"},
         "en_progreso": {"completado", "bloqueado", "pendiente", "cancelado"},
         "bloqueado": {"pendiente", "en_progreso", "cancelado"},
-        "completado": {"verificado", "confirmado", "en_progreso"},
-        "verificado": {"confirmado", "en_progreso"},
+        "completado": {"verificado", "confirmado", "en_progreso", "bloqueado"},
+        "verificado": {"confirmado", "en_progreso", "bloqueado"},
         "confirmado": {"en_progreso"},
         "cancelado": {"pendiente"},
     }
