@@ -52,6 +52,21 @@ permissions:
     resource: "stat *"
     effect: allow
   - action: shell
+    resource: "echo *"
+    effect: allow
+  - action: shell
+    resource: "printf *"
+    effect: allow
+  - action: shell
+    resource: "sed *"
+    effect: allow
+  - action: shell
+    resource: "md5sum *"
+    effect: allow
+  - action: shell
+    resource: "sha256sum *"
+    effect: allow
+  - action: shell
     resource: "python3 tests/*"
     effect: allow
   - action: shell
@@ -97,7 +112,16 @@ permissions:
     resource: "rm -fr*"
     effect: deny
   - action: shell
+    resource: "rm -r*"
+    effect: deny
+  - action: shell
     resource: "sudo *"
+    effect: deny
+  - action: shell
+    resource: "rm *"
+    effect: deny
+  - action: shell
+    resource: "git rm *"
     effect: deny
   - action: shell
     resource: "chmod 777*"
@@ -130,3 +154,5 @@ mergeas y no lanzas subagentes.
 - Solo lectura y comandos de comprobación.
 - Nunca modifiques archivos, tickets ni worktrees.
 - Nunca confirmes ni mergees.
+- No borras nada: si un archivo debería eliminarse, lo propones como hallazgo;
+  el worker pide OK al conductor y ejecuta el borrado acotado.

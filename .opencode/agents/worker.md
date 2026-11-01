@@ -76,6 +76,21 @@ permissions:
     resource: "stat *"
     effect: allow
   - action: shell
+    resource: "echo *"
+    effect: allow
+  - action: shell
+    resource: "printf *"
+    effect: allow
+  - action: shell
+    resource: "sed *"
+    effect: allow
+  - action: shell
+    resource: "md5sum *"
+    effect: allow
+  - action: shell
+    resource: "sha256sum *"
+    effect: allow
+  - action: shell
     resource: "mkdir -p docs*"
     effect: allow
   - action: shell
@@ -160,7 +175,34 @@ permissions:
     resource: "rm -fr*"
     effect: deny
   - action: shell
+    resource: "rm -r*"
+    effect: deny
+  - action: shell
     resource: "sudo *"
+    effect: deny
+  - action: shell
+    resource: "rm -f *"
+    effect: allow
+  - action: shell
+    resource: "git rm *"
+    effect: allow
+  - action: shell
+    resource: "rm -f /*"
+    effect: deny
+  - action: shell
+    resource: "rm -f ../*"
+    effect: deny
+  - action: shell
+    resource: "rm -f ~*"
+    effect: deny
+  - action: shell
+    resource: "rm -f .worktrees/*"
+    effect: deny
+  - action: shell
+    resource: "git rm /*"
+    effect: deny
+  - action: shell
+    resource: "git rm ../*"
     effect: deny
   - action: shell
     resource: "chmod 777*"
@@ -205,6 +247,18 @@ subagentes, no confirmas y no mergeas.
 8. Informa al conductor: commit, comandos ejecutados, resultado y cualquier
    riesgo o trabajo independiente que hayas detectado. No crees tickets por tu
    cuenta salvo que el conductor lo pida.
+
+## Borrado seguro
+
+No borras por tu cuenta. Si el cambio exige eliminar algo, publica un
+`checkpoint` o `comment` en el ticket con las rutas exactas (sin globs ni
+directorios), el motivo y por qué no basta con dejarlo; pide OK al conductor y
+espera su autorización. El conductor valida que las rutas estén dentro de tu
+worktree y de los paths del ticket, que no sean ficheros importantes o
+rastreados sin justificar y que no haya globs; si procede, lo autoriza en el
+ticket. Solo entonces ejecuta un borrado acotado con `rm -f <ruta>` o
+`git rm <ruta>` sobre la ruta autorizada. `rm -rf`, `rm -r`, `sudo` y cualquier
+ruta fuera del worktree siguen denegados: si hace falta, bloquea el ticket.
 
 ## Límites
 

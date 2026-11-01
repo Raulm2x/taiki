@@ -71,6 +71,14 @@ Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
 - **Stagea rutas concretas** (`git add <ruta>`). Si otra sesión tiene un ticket
   activo, el guard bloquea `git add -A`, `git add .`, `git commit -a`,
   `git stash`, `git reset`, `git clean` y `git checkout -- .`.
+- **Borrado seguro**: los subagentes no borran por su cuenta. Si un worker
+  necesita eliminar algo, publica un `checkpoint`/`comment` con las rutas
+  exactas (sin globs) y el motivo, y pide OK al conductor; este valida que estén
+  dentro del worktree y de los paths del ticket, que no sean ficheros
+  importantes/rastreados sin justificar y lo autoriza en el ticket. Solo
+  entonces el worker ejecuta `rm -f <ruta>` o `git rm <ruta>` sobre la ruta
+  autorizada; `rm -rf`, `rm -r`, `sudo` y lo que quede fuera del worktree siguen
+  denegados. El conductor no borra (solo autoriza) y el reviewer tampoco.
 - **Nunca uses `git stash` a pelo**: el stash es único para todos los worktrees
   y puede aplicarte cambios de otra sesión. Commitea el WIP en tu rama.
 - **Commitea solo lo tuyo** con `taiki commit -m "..."`: respeta las rutas del

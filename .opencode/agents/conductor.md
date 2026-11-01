@@ -88,6 +88,21 @@ permissions:
     resource: "stat *"
     effect: allow
   - action: shell
+    resource: "echo *"
+    effect: allow
+  - action: shell
+    resource: "printf *"
+    effect: allow
+  - action: shell
+    resource: "sed *"
+    effect: allow
+  - action: shell
+    resource: "md5sum *"
+    effect: allow
+  - action: shell
+    resource: "sha256sum *"
+    effect: allow
+  - action: shell
     resource: "mkdir -p docs*"
     effect: allow
   - action: shell
@@ -166,7 +181,16 @@ permissions:
     resource: "rm -fr*"
     effect: deny
   - action: shell
+    resource: "rm -r*"
+    effect: deny
+  - action: shell
     resource: "sudo *"
+    effect: deny
+  - action: shell
+    resource: "rm *"
+    effect: deny
+  - action: shell
+    resource: "git rm *"
     effect: deny
   - action: shell
     resource: "chmod 777*"
@@ -236,5 +260,12 @@ confirmas tickets**: la confirmación es exclusiva del usuario.
   bugs/arquitectura/seguridad). Si el modelo no expone la variante, se cae al
   default del cliente: no escales en bucle.
 - No inventes trabajo: todo cambio vive en un ticket.
+- **Borrado seguro**: no borras nada; tu shell lo deniega (`rm *`, `git rm *`).
+  Si un worker pide borrar, valida en su `checkpoint`/`comment` las rutas
+  exactas, el motivo y que estén dentro de su worktree y de los paths del
+  ticket, sin globs ni ficheros importantes/rastreados sin justificar. Si
+  procede, autoriza el borrado con `comment` (y `transition` si aplica) y
+  registra las rutas; si no, niégalo y explica el motivo. Nunca autorices
+  `rm -rf`, `rm -r` ni rutas fuera del worktree. El reviewer no borra.
 - Deja evidencia concreta (comandos, salida, commit) en la nota de
   verificación.

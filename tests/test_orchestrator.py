@@ -87,8 +87,10 @@ def run(h: Harness) -> None:
     h.ok(
         "verificado" in conductor_body
         and "Nunca" in conductor_body
-        and "tests/run.py" in conductor_body,
-        "el prompt del conductor exige gates y verificación",
+        and "tests/run.py" in conductor_body
+        and "Borrado seguro" in conductor_body
+        and "autoriza" in conductor_body,
+        "el prompt del conductor exige gates, verificación y autorizar borrados",
     )
 
     h.ok(
@@ -101,8 +103,10 @@ def run(h: Harness) -> None:
         _rule(worker, "shell", "git push*") == "deny"
         and _rule(worker, "shell", "git merge*") == "deny"
         and _rule(worker, "shell", "taiki confirm*") == "deny"
-        and _rule(worker, "shell", "taiki worktree merge*") == "deny",
-        "el worker no publica, no mergea ni confirma",
+        and _rule(worker, "shell", "taiki worktree merge*") == "deny"
+        and "Borrado seguro" in worker_body
+        and "OK al conductor" in worker_body,
+        "el worker no publica, no mergea, no confirma y pide OK para borrar",
     )
 
     h.ok(
@@ -111,8 +115,9 @@ def run(h: Harness) -> None:
         and _rule(reviewer, "shell", "*") == "deny"
         and _rule(reviewer, "shell", "python3 tests/*") == "allow"
         and "hallazgos" in reviewer_body.lower()
-        and "No editas" in reviewer_body,
-        "el reviewer es de solo lectura, ejecuta tests y devuelve hallazgos",
+        and "No editas" in reviewer_body
+        and "No borras" in reviewer_body,
+        "el reviewer es de solo lectura, ejecuta tests, hallazgos y no borra",
     )
 
     # ── Flujo: conductor delega, verifica y no confirma ─────────────────
@@ -1018,6 +1023,7 @@ def run(h: Harness) -> None:
         "head *",
         "tail *",
         "sed -n *",
+        "sed *",
         "grep *",
         "rg *",
         "find *",
@@ -1025,6 +1031,10 @@ def run(h: Harness) -> None:
         "diff *",
         "file *",
         "stat *",
+        "echo *",
+        "printf *",
+        "md5sum *",
+        "sha256sum *",
     )
     h.ok(
         all(
@@ -1051,8 +1061,36 @@ def run(h: Harness) -> None:
                 "git merge*",
                 "taiki confirm*",
                 "rm -rf*",
+                "rm -fr*",
+                "rm -r*",
                 "sudo *",
             )
+        )
+        and all(
+            _rule(profiles[name], "shell", "rm -f *") == "allow"
+            and _rule(profiles[name], "shell", "git rm *") == "allow"
+            and all(
+                _rule(profiles[name], "shell", pattern) == "deny"
+                for pattern in (
+                    "rm -f /*",
+                    "rm -f ../*",
+                    "rm -f ~*",
+                    "git rm /*",
+                    "git rm ../*",
+                )
+            )
+            for name in (
+                "worker.md",
+                "worker-low.md",
+                "worker-medium.md",
+                "worker-high.md",
+            )
+        )
+        and all(
+            _rule(profiles[name], "shell", "rm *") == "deny"
+            and _rule(profiles[name], "shell", "git rm *") == "deny"
+            and _rule(profiles[name], "shell", "rm -f *") is None
+            for name in ("conductor.md", "reviewer.md")
         )
         and _rule(profiles["conductor.md"], "shell", "taiki worktree merge*")
         == "allow"
@@ -1067,7 +1105,7 @@ def run(h: Harness) -> None:
             if name != "reviewer.md"
         )
         and _rule(profiles["reviewer.md"], "shell", "*") == "deny",
-        "permisos de shell: inspección sin prompt, denies críticos y fallback",
+        "permisos de shell: inspección sin prompt, denies críticos, borrado y fallback",
     )
     problems = orchestrator.isolation_problems(
         "T-0001",

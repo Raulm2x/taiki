@@ -67,6 +67,8 @@ El guard (`"guard": true` en `config.json`) bloquea las escrituras sin ticket
 activo. `taiki mcp install` lo activa y `taiki mcp uninstall` lo desactiva.
 Los agentes permiten shell de inspección, piden permiso para lo desconocido y
 deniegan push/merge/confirm: [permisos](docs/operacion.md#permisos-de-shell).
+El borrado requiere OK del conductor y una ruta exacta:
+[borrado seguro](docs/operacion.md#borrado-seguro).
 
 ## Documentación
 

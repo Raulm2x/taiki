@@ -89,9 +89,11 @@ interrumpir la inspección y la edición normal sin abrir la puerta a lo
 peligroso:
 
 - **Permitido sin preguntar**: `pwd`, `ls`, `cat`, `head`, `tail`, `sed -n`,
-  `grep`, `rg`, `find`, `wc`, `diff`, `file`, `stat`, `mkdir -p docs` y
-  `git show`; además de `python3 tests/*`, `python3 -m tests.*`,
-  `git status/diff/log/add/commit`, las lecturas de `taiki` y `taiki commit`.
+  `sed`, `echo`, `printf`, `md5sum`, `sha256sum`, `grep`, `rg`, `find`, `wc`,
+  `diff`, `file`, `stat`, `mkdir -p docs` y `git show`; además de
+  `python3 tests/*`, `python3 -m tests.*`, `git status/diff/log/add/commit`,
+  las lecturas de `taiki` y `taiki commit`. `echo`/`printf`/`sed`/`md5sum` son
+  para inspección puntual: la edición va por `edit`/`read`, no por shell.
 - **Pide permiso (`ask`)**: comandos no clasificados, red e instalación. Es el
   fallback del conductor y de los workers.
 - **Denegado**: `git push`, `git merge` directo, `taiki confirm`,
@@ -103,6 +105,25 @@ peligroso:
 El límite de confianza es explícito: estas reglas evitan prompts repetidos y
 reducen el daño accidental, **no son un sandbox de seguridad**. La garantía
 sigue siendo el guard de tickets, la revisión del conductor y los gates.
+
+### Borrado seguro
+
+Los subagentes no borran por su cuenta. Si un cambio exige eliminar algo, el
+worker publica un `checkpoint` o `comment` en el ticket con las rutas exactas
+(sin globs ni directorios), el motivo y por qué no basta con dejarlo, y espera
+el OK del conductor. El conductor **no borra**: valida que las rutas estén
+dentro del worktree del worker y de los paths del ticket, que no sean ficheros
+importantes o rastreados sin justificar y que no haya globs; si procede,
+autoriza el borrado con `comment` (o `transition` si aplica) y lo registra en
+el ticket; si no, lo deniega y explica el motivo. Nunca autoriza `rm -rf`,
+`rm -r` ni rutas fuera del worktree.
+
+Solo tras esa autorización el worker ejecuta un borrado acotado con `rm -f
+<ruta>` o `git rm <ruta>` sobre la ruta autorizada. En los perfiles worker
+`rm -f *` y `git rm *` están permitidos, pero siguen denegados `rm -rf*`,
+`rm -fr*`, `rm -r*`, `sudo *` y los escapes fuera del worktree (`/*`, `../*`,
+`~*` y `.worktrees/*`). El reviewer no borra: si detecta un archivo que
+debería eliminarse, lo propone como hallazgo.
 
 Routing de modelos: `documentacion` → `low`; mantenimiento/funcionalidad →
 `medium`; `bug`/`seguridad` → `high`. Todos los perfiles worker usan
