@@ -57,7 +57,7 @@ Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
 
 - `list` ya devuelve 20 abiertos en resumen; `get` acota historial/enlaces y
   las mutaciones devuelven un recibo. Usa `detail=true` solo cuando necesites
-  el ticket completo.
+  el ticket completo y `get raw=true` para el registro íntegro.
 - En CLI prefiere `taiki list --json-summary --compact --limit 20` y
   `taiki show T-XXXX --json --compact`; evita `list --json` completo.
 

@@ -258,9 +258,16 @@ TOOLS = [
         "Obtiene un ticket completo: datos, etiquetas, comentarios, enlaces e "
         "historial. Usa include para pedir secciones y history_limit/"
         "links_limit/subtasks_limit/commits_limit para acotarlas; "
-        "events_detail=true recupera todos los campos de los eventos.",
+        "events_detail=true recupera todos los campos de los eventos. "
+        "raw=true devuelve el registro íntegro, sin proyecciones ni límites.",
         {
             "code": CODE,
+            "raw": {
+                "type": "boolean",
+                "default": False,
+                "description": "Devuelve el ticket íntegro: ignora include, "
+                "events_detail y los límites de secciones",
+            },
             "include": {
                 "type": "array",
                 "items": {

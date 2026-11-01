@@ -257,7 +257,7 @@ El servidor expone 19 herramientas. El nombre real no lleva prefijo (`list`,
 | Herramienta | Uso |
 |---|---|
 | `list` | Abiertos en resumen; `include_closed`, `detail`, `fields`, `leaves_only` |
-| `get` | Detalle; `include` y `history_limit` acotan secciones |
+| `get` | Detalle; `include`, `history_limit` y `raw` ajustan qué llega |
 | `next` | Siguiente ticket en resumen; `detail=true` para el registro completo |
 | `create`, `update`, `transition`, `complete`, `comment`, `link` | Ciclo de vida |
 | `claim` | Reclama; `worktree=true`, `lease_minutes`, `steal`, `force` |
@@ -275,7 +275,8 @@ se bloquean hasta recargarlo: evita datos inconsistentes.
 Envelopes: `get` devuelve el ticket en primer nivel, `next` devuelve
 `{ticket}` y `list` devuelve `{tickets, count, total, offset, limit}`. Las
 secciones de `get` se acotan con `history_limit`, `links_limit`,
-`subtasks_limit` y `commits_limit`; `0` significa sin límite.
+`subtasks_limit` y `commits_limit`; `0` significa sin límite. `raw=true`
+devuelve el registro íntegro e ignora esas proyecciones.
 
 Los worktrees comparten la DB del checkout principal. Aunque el repositorio
 versione `.taiki/config.json`, `taiki` resuelve el `.taiki` principal desde
@@ -857,7 +858,8 @@ el nombre real de la herramienta es el que aparece en `tools/list`.
 - `list` devuelve 20 abiertos en resumen; usa `limit`/`offset`, `fields` o
   `detail` solo si necesitas más.
 - `get` acota historial (15), enlaces (20) y subtareas (20); `events_detail`
-  y los límites a `0` son para el detalle completo.
+  y los límites a `0` amplían el detalle, y `raw=true` devuelve el registro
+  íntegro (incluye el note del cierre y los enlaces commit).
 - `create`, `claim`, `update`, `transition`, `complete`, `comment` y `link`
   devuelven un recibo; `detail=true` recupera el ticket completo.
 - En CLI, prefiere `taiki list --json-summary --compact --limit 20` y

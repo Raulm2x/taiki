@@ -425,22 +425,17 @@ def _handle_get(
     if not code:
         raise domain.ValidationError("El parámetro 'code' es obligatorio")
     ticket = repo.get_ticket(conn, code)
+    # ``raw`` devuelve el registro íntegro: sin recortes ni proyecciones. Es la
+    # vía para recuperar el note del evento de cierre o los campos completos de
+    # los eventos sin depender de los límites por defecto.
+    if args.get("raw", False):
+        return ticket
     include = args.get("include")
     if include is not None:
         keep = {str(name) for name in include}
         for section in DETAIL_SECTIONS:
             if section not in keep:
                 ticket.pop(section, None)
-    # Los commits ya están en ``commits``; no repetirlos como enlaces.
-    if ticket.get("links") and ticket.get("commits"):
-        ticket["links"] = [
-            link for link in ticket["links"] if link.get("kind") != "commit"
-        ]
-    resolution = ticket.get("resolution")
-    if resolution:
-        for event in ticket.get("events", []):
-            if event.get("note") == resolution:
-                event.pop("note", None)
     if not args.get("events_detail", False):
         for event in ticket.get("events", []):
             for key in ("actor_type", "from_status", "to_status", "session_id"):

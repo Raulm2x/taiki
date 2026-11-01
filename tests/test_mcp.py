@@ -452,10 +452,24 @@ def run(h: Harness) -> None:
         },
     )
     h.ok(
-        len(limited["links"]) == 1
+        len(limited["links"]) == 2
+        and any(link["kind"] == "commit" for link in limited["links"])
         and len(limited["commits"]) == 1
         and limited["commits_total"] == 3,
-        "get separa enlaces de commits y los acota",
+        "get conserva los enlaces commit y acota cada sección",
+    )
+    only_links = handlers.call_tool(
+        "get",
+        {
+            "code": mcp_created["code"],
+            "include": ["links"],
+            "links_limit": 0,
+        },
+    )
+    h.ok(
+        len(only_links["links"]) == 4
+        and sum(1 for link in only_links["links"] if link["kind"] == "commit") == 3,
+        "include=['links'] devuelve también los enlaces commit",
     )
     limited_batch = handlers.call_tool(
         "get", {"code": batch["code"], "subtasks_limit": 1}
@@ -545,11 +559,22 @@ def run(h: Harness) -> None:
         "get", {"code": mcp_created["code"]}
     )
     h.ok(
-        all(
-            event.get("note") != completed_full.get("resolution")
+        any(
+            event.get("note") == completed_full.get("resolution")
             for event in completed_full["events"]
         ),
-        "get no repite la resolución en el evento de cierre",
+        "get conserva el note del evento de cierre",
+    )
+    completed_raw = handlers.call_tool(
+        "get", {"code": mcp_created["code"], "raw": True}
+    )
+    h.ok(
+        any(
+            event.get("note") == completed_raw.get("resolution")
+            for event in completed_raw["events"]
+        )
+        and any(link["kind"] == "commit" for link in completed_raw["links"]),
+        "get(raw=true) devuelve el note de cierre y los enlaces commit",
     )
 
     open_only = handlers.call_tool("list", {"limit": 200})
