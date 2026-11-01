@@ -32,8 +32,50 @@ __all__ = [
 ]
 
 
-def get_ticket(conn: sqlite3.Connection, code: Any) -> dict[str, Any]:
-    """Recupera un ticket completo con etiquetas, comentarios, eventos y enlaces."""
+def _history_section(
+    conn: sqlite3.Connection,
+    table: str,
+    columns: str,
+    ticket_id: int,
+    limit: Any,
+) -> tuple[list[dict[str, Any]], int | None]:
+    """Carga una sección de historial, opcionalmente acotada en SQL.
+
+    Devuelve ``(filas, total)``; ``total`` solo se informa cuando se recortó.
+    Con ``limit`` nulo o ``<= 0`` se devuelve el historial completo.
+    """
+    try:
+        maximum = int(limit) if limit is not None else 0
+    except (TypeError, ValueError):
+        maximum = 0
+    if maximum <= 0:
+        rows = conn.execute(
+            f"SELECT {columns} FROM {table} WHERE ticket_id = ? ORDER BY id",
+            (ticket_id,),
+        )
+        return [dict(row) for row in rows], None
+    total = conn.execute(
+        f"SELECT COUNT(*) FROM {table} WHERE ticket_id = ?", (ticket_id,)
+    ).fetchone()[0]
+    rows = conn.execute(
+        f"SELECT {columns} FROM (SELECT {columns}, id FROM {table} "
+        "WHERE ticket_id = ? ORDER BY id DESC LIMIT ?) ORDER BY id",
+        (ticket_id, maximum),
+    )
+    return [dict(row) for row in rows], total
+
+
+def get_ticket(
+    conn: sqlite3.Connection,
+    code: Any,
+    *,
+    history_limit: Any = None,
+) -> dict[str, Any]:
+    """Recupera un ticket completo con etiquetas, comentarios, eventos y enlaces.
+
+    ``history_limit`` acota eventos y comentarios en la propia consulta; sin
+    él se carga el historial completo.
+    """
     row = row_by_code(conn, code)
     ticket = row_to_ticket(row)
     ticket["tags"] = [
@@ -42,21 +84,20 @@ def get_ticket(conn: sqlite3.Connection, code: Any) -> dict[str, Any]:
             "SELECT tag FROM tags WHERE ticket_id = ? ORDER BY tag", (row["id"],)
         )
     ]
-    ticket["comments"] = [
-        dict(item)
-        for item in conn.execute(
-            "SELECT ts, author, body FROM comments WHERE ticket_id = ? ORDER BY id",
-            (row["id"],),
-        )
-    ]
-    ticket["events"] = [
-        dict(item)
-        for item in conn.execute(
-            "SELECT ts, actor, actor_type, action, from_status, to_status, note, session_id "
-            "FROM events WHERE ticket_id = ? ORDER BY id",
-            (row["id"],),
-        )
-    ]
+    ticket["comments"], comments_total = _history_section(
+        conn, "comments", "ts, author, body", row["id"], history_limit
+    )
+    if comments_total is not None and comments_total > len(ticket["comments"]):
+        ticket["comments_total"] = comments_total
+    ticket["events"], events_total = _history_section(
+        conn,
+        "events",
+        "ts, actor, actor_type, action, from_status, to_status, note, session_id",
+        row["id"],
+        history_limit,
+    )
+    if events_total is not None and events_total > len(ticket["events"]):
+        ticket["events_total"] = events_total
     ticket["links"] = [
         dict(item)
         for item in conn.execute(

@@ -533,6 +533,25 @@ def run(h: Harness) -> None:
         6,
         "get informa del total de comentarios truncados",
     )
+    traced: list[str] = []
+    conn.set_trace_callback(traced.append)
+    try:
+        handlers._handle_get(
+            conn, {"code": mcp_created["code"], "history_limit": 2}
+        )
+    finally:
+        conn.set_trace_callback(None)
+    h.ok(
+        any(
+            "FROM events" in stmt and "ORDER BY id DESC LIMIT" in stmt
+            for stmt in traced
+        )
+        and any(
+            "FROM comments" in stmt and "ORDER BY id DESC LIMIT" in stmt
+            for stmt in traced
+        ),
+        "get aplica history_limit en SQL para eventos y comentarios",
+    )
     h.ok(
         all(
             set(event) <= {"ts", "actor", "action", "note"}

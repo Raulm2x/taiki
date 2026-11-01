@@ -250,11 +250,6 @@ def _limit_section(ticket: dict[str, Any], key: str, limit: Any) -> None:
         ticket[key] = items[-maximum:]
 
 
-def _limit_history(ticket: dict[str, Any], limit: Any) -> None:
-    for key in ("events", "comments"):
-        _limit_section(ticket, key, limit)
-
-
 # ---------------------------------------------------------------------------
 # Manejadores Individuales de Herramientas (11 herramientas MCP)
 # ---------------------------------------------------------------------------
@@ -429,23 +424,25 @@ def _handle_get(
     code = args.get("code")
     if not code:
         raise domain.ValidationError("El parámetro 'code' es obligatorio")
-    ticket = repo.get_ticket(conn, code)
     # ``raw`` devuelve el registro íntegro: sin recortes ni proyecciones. Es la
     # vía para recuperar el note del evento de cierre o los campos completos de
     # los eventos sin depender de los límites por defecto.
     if args.get("raw", False):
-        return ticket
+        return repo.get_ticket(conn, code)
+    ticket = repo.get_ticket(
+        conn, code, history_limit=args.get("history_limit", 15)
+    )
     include = args.get("include")
     if include is not None:
         keep = {str(name) for name in include}
         for section in DETAIL_SECTIONS:
             if section not in keep:
                 ticket.pop(section, None)
+                ticket.pop(f"{section}_total", None)
     if not args.get("events_detail", False):
         for event in ticket.get("events", []):
             for key in ("actor_type", "from_status", "to_status", "session_id"):
                 event.pop(key, None)
-    _limit_history(ticket, args.get("history_limit", 15))
     _limit_section(ticket, "links", args.get("links_limit", 20))
     _limit_section(ticket, "subtasks", args.get("subtasks_limit", 20))
     _limit_section(ticket, "commits", args.get("commits_limit", 20))
@@ -1005,8 +1002,7 @@ def read_resource(uri: str) -> dict[str, Any]:
             data = repo.stats(conn)
         elif uri.startswith("taiki://ticket/"):
             code = unquote(uri.removeprefix("taiki://ticket/"))
-            data = repo.get_ticket(conn, code)
-            _limit_history(data, 50)
+            data = repo.get_ticket(conn, code, history_limit=50)
         else:
             raise domain.NotFoundError(f"Recurso desconocido: {uri}")
     finally:
