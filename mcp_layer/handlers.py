@@ -148,6 +148,7 @@ DETAIL_SECTIONS = (
     "committed",
 )
 PREVIEW_CHARS = 240
+IDEMPOTENCY_PREFIX = "idempotency:"
 
 
 def _project_root() -> Path:
@@ -216,27 +217,70 @@ def _handle_create(
             "mal. Recarga el servidor MCP (el plugin lo hace al quedar la sesión "
             "idle) o reinicia OpenCode."
         )
+    subtasks: list[str] = []
+    for raw in args.get("subtasks") or []:
+        title = str(raw or "").strip()
+        if not title:
+            raise domain.ValidationError(
+                "Cada subtarea necesita un título no vacío"
+            )
+        subtasks.append(title)
+
+    key = str(args.get("idempotency_key") or "").strip()
+    if key:
+        previous = db.meta_get(conn, f"{IDEMPOTENCY_PREFIX}{key}")
+        if previous:
+            try:
+                ticket = repo.get_ticket(conn, previous)
+            except domain.NotFoundError:
+                pass
+            else:
+                ticket["idempotent_replay"] = True
+                return ticket
+
     project, path = resolve_scope(args.get("project"), args.get("path"))
     config = workspace.load_config()
     defaults = config.get("defaults") or {}
     kind = args.get("kind") or defaults.get("kind") or "otro"
     priority = args.get("priority") or defaults.get("priority") or "media"
-    return repo.create_ticket(
-        conn,
-        title=args.get("title", ""),
-        body=args.get("body", ""),
-        kind=kind,
-        priority=priority,
-        project=project,
-        path=path,
-        tags=args.get("tags"),
-        paths=args.get("paths"),
-        parent_id=args.get("parent_id"),
-        created_by=actor,
-        actor_type="agente",
-        session_id=session,
-        assigned_to=actor if actor not in ("", "agente", "usuario") else None,
-    )
+    assigned = actor if actor not in ("", "agente", "usuario") else None
+
+    with db.tx(conn):
+        ticket = repo.create_ticket(
+            conn,
+            title=args.get("title", ""),
+            body=args.get("body", ""),
+            kind=kind,
+            priority=priority,
+            project=project,
+            path=path,
+            tags=args.get("tags"),
+            paths=args.get("paths"),
+            parent_id=args.get("parent_id"),
+            created_by=actor,
+            actor_type="agente",
+            session_id=session,
+            assigned_to=assigned,
+        )
+        if key:
+            db.meta_set(conn, f"{IDEMPOTENCY_PREFIX}{key}", ticket["code"])
+        for title in subtasks:
+            repo.create_ticket(
+                conn,
+                title=title,
+                body="",
+                kind=kind,
+                priority=priority,
+                project=ticket.get("project"),
+                path=ticket.get("path"),
+                paths=ticket.get("paths"),
+                parent_id=ticket["code"],
+                created_by=actor,
+                actor_type="agente",
+                session_id=session,
+                assigned_to=assigned,
+            )
+    return repo.get_ticket(conn, ticket["code"])
 
 
 def _handle_list(

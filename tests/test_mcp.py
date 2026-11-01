@@ -259,6 +259,46 @@ def run(h: Harness) -> None:
         mcp_created["assigned_to"] == "mcp:tester",
         "el ticket creado vía MCP queda asignado a su agente",
     )
+    batch = handlers.call_tool(
+        "create",
+        {
+            "title": "Épica en lote",
+            "subtasks": ["Primera", "Segunda"],
+            "idempotency_key": "lote-1",
+            "agent": "mcp:tester",
+        },
+    )
+    h.eq(
+        len(batch["subtasks"]),
+        2,
+        "create con subtasks crea las hijas en una llamada",
+    )
+    replay = handlers.call_tool(
+        "create",
+        {
+            "title": "Épica en lote",
+            "subtasks": ["Primera", "Segunda"],
+            "idempotency_key": "lote-1",
+            "agent": "mcp:tester",
+        },
+    )
+    h.eq(
+        replay["code"],
+        batch["code"],
+        "idempotency_key devuelve el mismo ticket en un reintento",
+    )
+    h.ok(
+        replay.get("idempotent_replay"),
+        "el reintento se marca como replay",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: handlers.call_tool(
+            "create", {"title": "Vacía", "subtasks": [""]}
+        ),
+        "una subtarea sin título se rechaza",
+    )
+
     handlers.set_client_info({"name": "mcp-client", "version": "1.0"})
     try:
         from_client = handlers.call_tool(

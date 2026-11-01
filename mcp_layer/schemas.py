@@ -89,7 +89,8 @@ TOOLS = [
         "Crea un ticket en estado 'nuevo'. Úsalo para registrar mantenimiento, "
         "funcionalidades, bugs, documentación o seguridad. Pasa 'agent' o se "
         "usará el nombre del cliente MCP; el ticket queda asignado y su sesión "
-        "se registra sola.",
+        "se registra sola. Con subtasks crea las hijas en la misma llamada y "
+        "con idempotency_key los reintentos devuelven el mismo ticket.",
         {
             "title": {
                 "type": "string",
@@ -139,6 +140,17 @@ TOOLS = [
                 "type": "string",
                 "maxLength": 40,
                 "description": "Código del ticket padre, si es una subtarea",
+            },
+            "subtasks": {
+                "type": "array",
+                "items": {"type": "string", "maxLength": 200},
+                "maxItems": 100,
+                "description": "Títulos de las tareas hijas a crear con el ticket",
+            },
+            "idempotency_key": {
+                "type": "string",
+                "maxLength": 200,
+                "description": "Clave para que un reintento devuelva el mismo ticket",
             },
             "agent": AGENT,
         },
