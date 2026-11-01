@@ -27,10 +27,7 @@ def _tool(
     properties: dict,
     required: tuple[str, ...] = (),
     *,
-    title: str | None = None,
     read_only: bool = False,
-    idempotent: bool = False,
-    destructive: bool = False,
 ) -> dict:
     tool = {
         "name": name,
@@ -42,8 +39,8 @@ def _tool(
             "additionalProperties": False,
         },
     }
-    # Solo se anota lo que aporta una pista real al cliente. Las anotaciones
-    # ``false`` y los títulos duplicaban el catálogo en cada sesión.
+    # Solo se anota lo que aporta una pista real al cliente; títulos e
+    # ``idempotentHint``/``destructiveHint`` duplicaban el catálogo sin uso.
     if read_only:
         tool["annotations"] = {"readOnlyHint": True}
     return tool
@@ -153,7 +150,6 @@ TOOLS = [
             "agent": AGENT,
         },
         ("title",),
-        title="Crear ticket",
     ),
     _tool(
         "list",
@@ -249,9 +245,7 @@ TOOLS = [
                 "description": "code = más recientes primero; priority = prioridad y antigüedad",
             },
         },
-        title="Listar tickets",
         read_only=True,
-        idempotent=True,
     ),
     _tool(
         "get",
@@ -319,9 +313,7 @@ TOOLS = [
             },
         },
         ("code",),
-        title="Ver ticket",
         read_only=True,
-        idempotent=True,
     ),
     _tool(
         "claim",
@@ -352,7 +344,6 @@ TOOLS = [
             "detail": DETAIL,
         },
         ("code",),
-        title="Reclamar ticket",
     ),
     _tool(
         "update",
@@ -392,7 +383,6 @@ TOOLS = [
             "session_id": SESSION,
         },
         ("code",),
-        title="Actualizar ticket",
     ),
     _tool(
         "transition",
@@ -412,7 +402,6 @@ TOOLS = [
             "detail": DETAIL,
         },
         ("code", "status"),
-        title="Cambiar estado",
     ),
     _tool(
         "complete",
@@ -442,7 +431,6 @@ TOOLS = [
             "detail": DETAIL,
         },
         ("code", "resolution"),
-        title="Completar ticket",
     ),
     _tool(
         "comment",
@@ -455,7 +443,6 @@ TOOLS = [
             "detail": DETAIL,
         },
         ("code", "body"),
-        title="Comentar ticket",
     ),
     _tool(
         "link",
@@ -477,15 +464,12 @@ TOOLS = [
             "detail": DETAIL,
         },
         ("code", "kind", "ref"),
-        title="Enlazar referencia",
     ),
     _tool(
         "stats",
         "Resumen de tickets por estado, tipo, prioridad y proyecto.",
         {},
-        title="Estadísticas",
         read_only=True,
-        idempotent=True,
     ),
     _tool(
         "next",
@@ -500,9 +484,7 @@ TOOLS = [
                 "description": "Devuelve el ticket completo en vez del resumen",
             },
         },
-        title="Siguiente ticket",
         read_only=True,
-        idempotent=True,
     ),
     _tool(
         "status",
@@ -523,18 +505,14 @@ TOOLS = [
                 "description": "Incluye el inventario de servidores MCP",
             },
         },
-        title="Estado del proyecto",
         read_only=True,
-        idempotent=True,
     ),
     _tool(
         "whoami",
         "Devuelve tu agente y sesión resueltos, el ticket activo, su lease y "
         "su worktree. Úsalo para comprobar quién eres antes de coordinar.",
         {},
-        title="Quién soy",
         read_only=True,
-        idempotent=True,
     ),
     _tool(
         "heartbeat",
@@ -549,7 +527,6 @@ TOOLS = [
                 "description": "Minutos de lease (por defecto TAIKI_LEASE_MINUTES)",
             },
         },
-        title="Renovar lease",
     ),
     _tool(
         "worktree_create",
@@ -565,15 +542,12 @@ TOOLS = [
             "force": FORCE,
         },
         ("code",),
-        title="Crear worktree",
     ),
     _tool(
         "worktree_list",
         "Lista los worktrees del proyecto, opcionalmente filtrados por ticket.",
         {"code": CODE},
-        title="Listar worktrees",
         read_only=True,
-        idempotent=True,
     ),
     _tool(
         "promote",
@@ -581,7 +555,6 @@ TOOLS = [
         "cuando el trabajo temporal del guard resulta ser real.",
         {"code": CODE},
         ("code",),
-        title="Promover scratch",
     ),
     _tool(
         "scratch_drop",
@@ -589,7 +562,6 @@ TOOLS = [
         "sin pasar por la tabla ni consumir números T-####.",
         {"code": CODE},
         ("code",),
-        title="Descartar scratch",
     ),
     _tool(
         "health",
@@ -609,9 +581,7 @@ TOOLS = [
                 "description": "Incluye el resumen de servidores MCP",
             },
         },
-        title="Salud del proyecto",
         read_only=True,
-        idempotent=True,
     ),
 ]
 

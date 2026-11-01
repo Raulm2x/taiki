@@ -27,6 +27,40 @@ def run(h: Harness) -> None:
         "TOOL_DISPATCH debe contener las 11 herramientas principales",
     )
 
+    # Catálogo MCP: nombres estables y anotaciones solo donde aportan.
+    expected_catalog = {
+        "create", "list", "get", "claim", "update", "transition", "complete",
+        "comment", "link", "stats", "next", "status", "whoami", "heartbeat",
+        "worktree_create", "worktree_list", "promote", "scratch_drop", "health",
+    }
+    catalog_names = {tool["name"] for tool in schemas.TOOLS}
+    h.eq(
+        catalog_names,
+        expected_catalog,
+        "tools/list expone las 19 herramientas esperadas",
+    )
+    read_only = {
+        tool["name"]
+        for tool in schemas.TOOLS
+        if (tool.get("annotations") or {}).get("readOnlyHint") is True
+    }
+    h.eq(
+        read_only,
+        {
+            "list", "get", "stats", "next",
+            "status", "whoami", "worktree_list", "health",
+        },
+        "readOnlyHint solo se anota en las herramientas de lectura",
+    )
+    h.ok(
+        all(
+            set(tool) <= {"name", "description", "inputSchema", "annotations"}
+            and set(tool.get("annotations") or {}) <= {"readOnlyHint"}
+            for tool in schemas.TOOLS
+        ),
+        "el catálogo no emite anotaciones ni claves muertas",
+    )
+
     # Precedencia en resolve_session
     # 1. meta > args > env
     sess_meta = handlers.resolve_session(
