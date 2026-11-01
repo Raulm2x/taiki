@@ -24,6 +24,9 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    Quien revisa puede marcar `verificado` antes con evidencia
    (`taiki transition T-0001 verificado --note "tests/CI/revisión"`).
 5. El asunto del commit debe incluir `T-XXXX`; el hook `commit-msg` lo exige.
+6. El conductor y los subagentes viven en `.opencode/agents/`; consulta el
+   routing de variantes y el presupuesto de concurrencia con la herramienta
+   MCP `agents`.
 
 ## Agentes en paralelo
 

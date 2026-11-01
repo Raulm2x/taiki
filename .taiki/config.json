@@ -14,6 +14,11 @@
   "guard_auto": "scratch",
   "agents": {
     "worker": {
+      "variants": [
+        "low",
+        "medium",
+        "high"
+      ],
       "strengths": [
         "mantenimiento",
         "funcionalidad",
@@ -26,9 +31,16 @@
       "cost": 1.0
     },
     "reviewer": {
+      "variants": [
+        "low",
+        "medium"
+      ],
       "strengths": [],
       "max_parallel": 1,
       "cost": 0.5
     }
+  },
+  "orchestrator": {
+    "max_parallel": 3
   }
 }

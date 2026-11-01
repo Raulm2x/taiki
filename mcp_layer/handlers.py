@@ -680,10 +680,12 @@ def _handle_agents(
     data: dict[str, Any] = {
         "agents": [table[name] for name in sorted(table)],
         "fallback": agents_lib.FALLBACK_AGENT,
+        "concurrency": agents_lib.concurrency_budget(config),
     }
     kind = args.get("kind")
     if kind:
         data["recommended"] = agents_lib.recommend(kind, config)
+        data["routing"] = agents_lib.assign(kind, config)
     return data
 
 

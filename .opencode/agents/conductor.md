@@ -95,8 +95,10 @@ verificas. **No editas código, no confirmas tickets y no mergeas worktrees.**
 
 - Jerarquía plana: los workers no lanzan subagentes.
 - Un writer por worktree; nunca dos writers en el mismo path.
-- Modelos: low para docs/trivial, medium para código normal, high para
-  bugs/arquitectura/seguridad; sin variante = default.
+- Modelos: consulta `agents` con el tipo de la tarea; usa su `routing`
+  (low para docs/trivial, medium para código normal, high para
+  bugs/arquitectura/seguridad). Si el modelo no expone la variante, se cae al
+  default del cliente: no escales en bucle.
 - No inventes trabajo: todo cambio vive en un ticket.
 - Deja evidencia concreta (comandos, salida, commit) en la nota de
   verificación.

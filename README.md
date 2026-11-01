@@ -83,6 +83,19 @@ nuevo → pendiente → en_progreso → completado → verificado → confirmado
   exige un motivo e incrementa el contador de intentos.
 - Cada cambio queda registrado en el historial con actor, sesión y nota.
 
+## Orquestación
+
+Taiki incluye un conductor primario y dos subagentes (`worker`, `reviewer`) en
+`.opencode/agents/`. El conductor planifica, delega, verifica con
+`python3 tests/run.py --verify` y marca `verificado`; solo el usuario confirma
+y mergea. Las capacidades (tipos, variantes, paralelismo y coste) viven en
+`.taiki/config.json` y se consultan con la herramienta MCP `agents`.
+
+Routing de modelos: `documentacion` → `low`; mantenimiento/funcionalidad →
+`medium`; `bug`/`seguridad` → `high`. Si el modelo no expone la variante, se
+usa el default del cliente; nunca se escala en bucle. El límite de writers
+simultáneos es `orchestrator.max_parallel` (3 por defecto).
+
 ## Estructura
 
 ```

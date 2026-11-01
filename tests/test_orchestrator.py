@@ -482,3 +482,58 @@ def run(h: Harness) -> None:
         ),
         "el conductor tampoco confirma al verificar",
     )
+
+    # ── Routing de modelos por variante ─────────────────────────────────
+    from ticketlib import agents as agents_lib
+
+    worker_cap = agents_lib.capability("worker")
+    docs = agents_lib.route("documentacion", worker_cap)
+    bug = agents_lib.route("bug", worker_cap)
+    h.ok(
+        docs["level"] == "low"
+        and docs["variant"] == "low"
+        and bug["level"] == "high"
+        and bug["variant"] == "high",
+        "docs usa low y un bug usa high",
+    )
+    limited = agents_lib.capability("reviewer")
+    unsupported = agents_lib.route("bug", limited)
+    h.ok(
+        unsupported["fallback"] is True
+        and unsupported["variant"] is None
+        and unsupported["level"] == "high",
+        "una variante no soportada cae al default del cliente",
+    )
+    plan = agents_lib.assign("bug")
+    h.ok(
+        plan["level"] == "high"
+        and plan["variant"] == "high"
+        and plan["steps"] == agents_lib.STEPS_BY_LEVEL["high"]
+        and plan["agent"] in agents_lib.registry(),
+        "assign combina agente, variante y límite de steps",
+    )
+    h.eq(
+        agents_lib.concurrency_budget({"orchestrator": {"max_parallel": 2}}),
+        2,
+        "el presupuesto de concurrencia se lee de la configuración",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: agents_lib.registry(
+            {"agents": {"worker": {"variants": ["turbo"]}}}
+        ),
+        "el registro rechaza variantes desconocidas",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: agents_lib.concurrency_budget(
+            {"orchestrator": {"max_parallel": 0}}
+        ),
+        "el presupuesto de concurrencia se valida",
+    )
+    mcp_agents = handlers.call_tool("agents", {"kind": "documentacion"})
+    h.ok(
+        mcp_agents["routing"]["variant"] == "low"
+        and mcp_agents["concurrency"] >= 1,
+        "agents por MCP expone routing y presupuesto de concurrencia",
+    )

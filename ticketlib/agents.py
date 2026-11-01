@@ -80,16 +80,32 @@ CAPABILITY_KEYS = (
     "name",
     "model",
     "variant",
+    "variants",
     "strengths",
     "max_parallel",
     "paths",
     "cost",
 )
 
+# Variantes de modelo conocidas, de más barata a más capaz. Un modelo puede
+# exponer un subconjunto; sin variante se usa el default del cliente.
+VARIANT_LEVELS = ("low", "medium", "high", "xhigh")
+ROUTING: dict[str, str] = {
+    "documentacion": "low",
+    "mantenimiento": "medium",
+    "funcionalidad": "medium",
+    "otro": "medium",
+    "bug": "high",
+    "seguridad": "high",
+}
+STEPS_BY_LEVEL = {"low": 12, "medium": 24, "high": 40, "xhigh": 48}
+DEFAULT_CONCURRENCY = 3
+
 DEFAULT_AGENTS: dict[str, dict[str, Any]] = {
     "worker": {
         "model": None,
         "variant": None,
+        "variants": ["low", "medium", "high"],
         "strengths": [
             "mantenimiento",
             "funcionalidad",
@@ -105,6 +121,7 @@ DEFAULT_AGENTS: dict[str, dict[str, Any]] = {
     "reviewer": {
         "model": None,
         "variant": None,
+        "variants": ["low", "medium"],
         "strengths": [],
         "max_parallel": 1,
         "paths": [],
@@ -113,6 +130,7 @@ DEFAULT_AGENTS: dict[str, dict[str, Any]] = {
     "opencode": {
         "model": None,
         "variant": None,
+        "variants": ["low", "medium", "high"],
         "strengths": ["mantenimiento", "funcionalidad", "bug", "documentacion"],
         "max_parallel": 2,
         "paths": [],
@@ -121,6 +139,7 @@ DEFAULT_AGENTS: dict[str, dict[str, Any]] = {
     "antigravity": {
         "model": None,
         "variant": None,
+        "variants": ["low", "medium", "high"],
         "strengths": ["funcionalidad", "documentacion", "mantenimiento"],
         "max_parallel": 2,
         "paths": [],
@@ -129,6 +148,7 @@ DEFAULT_AGENTS: dict[str, dict[str, Any]] = {
     "claude": {
         "model": None,
         "variant": None,
+        "variants": ["low", "medium", "high", "xhigh"],
         "strengths": ["bug", "seguridad", "funcionalidad"],
         "max_parallel": 2,
         "paths": [],
@@ -137,6 +157,7 @@ DEFAULT_AGENTS: dict[str, dict[str, Any]] = {
     "gemini": {
         "model": None,
         "variant": None,
+        "variants": ["low", "medium"],
         "strengths": ["documentacion", "mantenimiento"],
         "max_parallel": 2,
         "paths": [],
@@ -145,6 +166,7 @@ DEFAULT_AGENTS: dict[str, dict[str, Any]] = {
     "codex": {
         "model": None,
         "variant": None,
+        "variants": ["low", "medium", "high"],
         "strengths": ["bug", "mantenimiento", "seguridad"],
         "max_parallel": 2,
         "paths": [],
@@ -199,10 +221,30 @@ def _capability(name: str, data: dict[str, Any]) -> dict[str, Any]:
             raise ValidationError(
                 f"agents.{name}.{field} debe ser texto no vacío o null"
             )
+    variant = data.get("variant")
+    if variant is not None and variant not in VARIANT_LEVELS:
+        raise ValidationError(
+            f"agents.{name}.variant debe ser uno de "
+            f"{', '.join(VARIANT_LEVELS)} o null"
+        )
+    variants = data.get("variants", list(VARIANT_LEVELS))
+    if not isinstance(variants, list) or any(
+        not isinstance(item, str) for item in variants
+    ):
+        raise ValidationError(f"agents.{name}.variants debe ser una lista")
+    invalid_variants = [
+        item for item in variants if item not in VARIANT_LEVELS
+    ]
+    if invalid_variants:
+        raise ValidationError(
+            f"agents.{name}.variants tiene niveles desconocidos: "
+            f"{', '.join(invalid_variants)}"
+        )
     return {
         "name": name,
         "model": data.get("model"),
-        "variant": data.get("variant"),
+        "variant": variant,
+        "variants": list(dict.fromkeys(variants)),
         "strengths": list(strengths),
         "max_parallel": max_parallel,
         "paths": list(paths),
@@ -286,3 +328,70 @@ def recommend(
         candidates,
         key=lambda item: (item["cost"], -item["max_parallel"], item["name"]),
     )
+
+
+def route(
+    kind: str,
+    capability_row: dict[str, Any],
+    level: str | None = None,
+) -> dict[str, Any]:
+    """Elige variante y steps para un tipo, sin escalar ni inventar niveles.
+
+    ``level`` fuerza un nivel concreto (p. ej. para una revisión). Si el modelo
+    no expone esa variante, se cae al default del cliente (``variant=None``)
+    en vez de reintentar con un nivel superior.
+    """
+    from .domain import ValidationError
+    from .util import check_enum
+
+    check_enum(kind, KINDS, "tipo")
+    target = (level or ROUTING.get(kind, "medium")).strip().lower()
+    if target not in VARIANT_LEVELS:
+        raise ValidationError(
+            f"Nivel desconocido: {level!r}; usa {', '.join(VARIANT_LEVELS)}"
+        )
+    supported = capability_row.get("variants") or []
+    chosen = target if target in supported else None
+    return {
+        "level": target,
+        "variant": chosen,
+        "model": capability_row.get("model"),
+        "steps": STEPS_BY_LEVEL[target],
+        "fallback": chosen is None,
+    }
+
+
+def assign(
+    kind: str, config: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Plan de asignación: agente recomendado + variante, steps y coste."""
+    selected = recommend(kind, config)
+    plan = route(kind, selected)
+    return {
+        "agent": selected["name"],
+        "kind": kind,
+        "model": plan["model"],
+        "variant": plan["variant"],
+        "level": plan["level"],
+        "steps": plan["steps"],
+        "fallback": plan["fallback"],
+        "max_parallel": selected["max_parallel"],
+        "cost": selected["cost"],
+    }
+
+
+def concurrency_budget(config: dict[str, Any] | None = None) -> int:
+    """Writers simultáneos permitidos: ``orchestrator.max_parallel`` o 3."""
+    from .domain import ValidationError
+
+    raw = (config or {}).get("orchestrator")
+    value = (
+        raw.get("max_parallel", DEFAULT_CONCURRENCY)
+        if isinstance(raw, dict)
+        else DEFAULT_CONCURRENCY
+    )
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 8:
+        raise ValidationError(
+            "orchestrator.max_parallel debe ser un entero entre 1 y 8"
+        )
+    return value
