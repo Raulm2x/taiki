@@ -95,6 +95,12 @@ def run(h: Harness) -> None:
     h.ok(expired["code"] in cleaned, "clean archiva el scratch caducado")
     archived = repo.get_ticket(conn, expired["code"])
     h.ok(archived["archived"], "el scratch caducado queda archivado")
+    h.ok(
+        archived["status"] == "cancelado"
+        and archived["owner_session"] is None
+        and archived["lease_until"] is None,
+        "el scratch archivado no deja un en_progreso fantasma",
+    )
     h.ok("archivar" in _actions(archived), "archivar deja rastro en el historial")
     h.eq(
         [item["actor"] for item in archived["events"] if item["action"] == "archivar"],
@@ -109,6 +115,10 @@ def run(h: Harness) -> None:
     scratch.drop(conn, discarded["code"], actor="usuario")
     dropped = repo.get_ticket(conn, discarded["code"])
     h.ok(dropped["archived"], "drop archiva el scratch")
+    h.ok(
+        dropped["status"] == "cancelado" and dropped["owner_session"] is None,
+        "drop cancela el scratch y libera su claim",
+    )
     h.ok("archivar" in _actions(dropped), "drop deja rastro en el historial")
 
     # ── Hueco real vs código oculto ──────────────────────────────────────

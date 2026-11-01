@@ -102,6 +102,7 @@ MUTATING_TOOLS = frozenset(
         "heartbeat",
         "worktree_create",
         "promote",
+        "scratch_drop",
     }
 )
 
@@ -443,6 +444,7 @@ def _handle_update(
             "paths",
             "tags",
             "parent_id",
+            "assigned_to",
         )
         if key in args
     }
@@ -734,6 +736,24 @@ def _handle_promote(
     )
 
 
+def _handle_scratch_drop(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    session: str | None = None,
+    actor: str = "agente",
+) -> dict[str, Any]:
+    code = args.get("code")
+    if not code:
+        raise domain.ValidationError("El parámetro 'code' es obligatorio")
+    return scratch_lib.drop(
+        conn,
+        code,
+        actor=actor,
+        actor_type="agente",
+        session_id=session,
+    )
+
+
 def _handle_health(
     conn: sqlite3.Connection,
     args: dict[str, Any],
@@ -794,6 +814,7 @@ TOOL_DISPATCH: dict[str, ToolHandler] = {
     "worktree_create": _handle_worktree_create,
     "worktree_list": _handle_worktree_list,
     "promote": _handle_promote,
+    "scratch_drop": _handle_scratch_drop,
     "health": _handle_health,
 }
 

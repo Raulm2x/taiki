@@ -251,7 +251,7 @@ El cliente debe arrancar el proceso con el directorio del proyecto como `cwd`
 
 ### Herramientas MCP
 
-El servidor expone 18 herramientas. El nombre real no lleva prefijo (`list`,
+El servidor expone 19 herramientas. El nombre real no lleva prefijo (`list`,
 `claim`…), aunque algunos clientes las muestren como `taiki_*`.
 
 | Herramienta | Uso |
@@ -265,6 +265,7 @@ El servidor expone 18 herramientas. El nombre real no lleva prefijo (`list`,
 | `status`, `whoami` | Sesiones, claims, worktrees y tu ticket activo |
 | `worktree_create`, `worktree_list` | Aislan la escritura por tarea |
 | `promote` | Convierte un scratch `S-####` en `T-####` |
+| `scratch_drop` | Archiva y cancela un scratch sin consumir `T-####` |
 | `health` | MCP, hooks, claims caducados, solapamientos y worktrees |
 
 Los errores llegan como `{code, message, hint, retryable}` y las herramientas

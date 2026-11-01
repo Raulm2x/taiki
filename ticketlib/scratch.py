@@ -83,12 +83,15 @@ def clean(conn: sqlite3.Connection, at: str | None = None) -> list[str]:
     with db.tx(conn):
         for code in codes:
             row = conn.execute(
-                "SELECT id FROM tickets WHERE code = ? AND archived = 0", (code,)
+                "SELECT id, status FROM tickets WHERE code = ? AND archived = 0",
+                (code,),
             ).fetchone()
             if row is None:
                 continue
             conn.execute(
-                "UPDATE tickets SET archived = 1, updated_at = ? WHERE id = ?",
+                "UPDATE tickets SET archived = 1, status = 'cancelado', "
+                "owner_session = NULL, lease_until = NULL, "
+                "heartbeat_at = NULL, updated_at = ? WHERE id = ?",
                 (ts, row["id"]),
             )
             conn.execute("DELETE FROM meta WHERE key = ?", (_meta_key(code),))
@@ -99,8 +102,8 @@ def clean(conn: sqlite3.Connection, at: str | None = None) -> list[str]:
                 "sistema",
                 "sistema",
                 None,
-                None,
-                None,
+                row["status"],
+                "cancelado",
                 f"Scratch caducado ({code}, TTL {DEFAULT_TTL} min); "
                 "archivado sin tocar la tabla",
             )
@@ -252,7 +255,9 @@ def drop(
         return ticket
     with db.tx(conn):
         conn.execute(
-            "UPDATE tickets SET archived = 1, updated_at = ? WHERE id = ?",
+            "UPDATE tickets SET archived = 1, status = 'cancelado', "
+            "owner_session = NULL, lease_until = NULL, heartbeat_at = NULL, "
+            "updated_at = ? WHERE id = ?",
             (now(), ticket["id"]),
         )
         conn.execute("DELETE FROM meta WHERE key = ?", (_meta_key(ticket["code"]),))
@@ -264,7 +269,7 @@ def drop(
             actor_type,
             session_id,
             ticket["status"],
-            ticket["status"],
+            "cancelado",
             f"Scratch descartado ({code})",
         )
     return repo.get_ticket(conn, code)

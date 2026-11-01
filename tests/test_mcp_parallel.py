@@ -151,6 +151,36 @@ def run(h: Harness) -> None:
             "promote convierte un scratch en ticket real",
         )
 
+        conn = db.connect()
+        try:
+            drop_scratch = scratch.create_or_reuse(
+                conn, agent="opencode", session_id="ses_drop"
+            )
+        finally:
+            conn.close()
+        dropped = handlers.call_tool(
+            "scratch_drop",
+            {"code": drop_scratch["code"]},
+            meta={"sessionId": "ses_drop"},
+        )
+        h.ok(
+            dropped["archived"]
+            and dropped["status"] == "cancelado"
+            and dropped["owner_session"] is None,
+            "scratch_drop archiva y cancela sin dejar claim",
+        )
+
+        reassigned = handlers.call_tool(
+            "update",
+            {"code": other["code"], "assigned_to": "otro-agente"},
+            meta={"sessionId": "ses_tree"},
+        )
+        h.eq(
+            reassigned["assigned_to"],
+            "otro-agente",
+            "update permite reasignar el ticket",
+        )
+
         health = handlers.call_tool("health", {"servers": False}, meta=meta)
         h.ok(
             {"mcp", "hooks", "stale_claims", "overlaps", "ok"} <= set(health),

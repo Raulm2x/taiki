@@ -370,6 +370,11 @@ TOOLS = [
                 "maxLength": 40,
                 "description": "Épica de la tarea; null la devuelve a la raíz",
             },
+            "assigned_to": {
+                "type": ["string", "null"],
+                "maxLength": 80,
+                "description": "Reasigna el ticket; null lo deja sin agente",
+            },
             "agent": AGENT,
             "session_id": SESSION,
         },
@@ -560,6 +565,14 @@ TOOLS = [
         {"code": CODE},
         ("code",),
         title="Promover scratch",
+    ),
+    _tool(
+        "scratch_drop",
+        "Descarta un ticket scratch S-####: lo archiva y lo deja cancelado, "
+        "sin pasar por la tabla ni consumir números T-####.",
+        {"code": CODE},
+        ("code",),
+        title="Descartar scratch",
     ),
     _tool(
         "health",
