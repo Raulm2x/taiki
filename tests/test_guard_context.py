@@ -283,29 +283,34 @@ def run(h: Harness) -> None:
         and guard.normalize_tool("edit_file") == "edit",
         "el guard entiende los nombres de otros agentes",
     )
+    config_dir = Path.home() / ".config"
+    hook_path = str(config_dir / "hook.txt")
     parsed = guard.parse_hook_input(
         {
             "tool_name": "write_file",
-            "tool_input": {"file_path": "/home/rowlm/.config/x"},
+            "tool_input": {"file_path": str(config_dir / "x")},
             "session_id": "ses_hook",
             "agent_name": "antigravity",
         }
     )
     h.ok(
         parsed["tool"] == "write_file"
-        and parsed["path"] == "/home/rowlm/.config/x"
+        and parsed["path"] == str(config_dir / "x")
         and parsed["agent"] == "antigravity",
         "parse_hook_input extrae el evento genérico",
     )
 
+    hook_event = json.dumps(
+        {
+            "tool_name": "write_file",
+            "tool_input": {"path": hook_path},
+            "session_id": "ses_hook_a",
+        }
+    )
     out = io.StringIO()
     saved_stdin = sys.stdin
     try:
-        sys.stdin = io.StringIO(
-            '{"tool_name": "write_file", "tool_input": '
-            '{"path": "/home/rowlm/.config/hook.txt"}, '
-            '"session_id": "ses_hook_a"}'
-        )
+        sys.stdin = io.StringIO(hook_event)
         with contextlib.redirect_stdout(out):
             code = cli.main(["guard", "--hook"])
         payload = json.loads(out.getvalue())
@@ -315,11 +320,7 @@ def run(h: Harness) -> None:
             and payload["ticket"],
             "el modo hook bloquea y crea el ticket",
         )
-        sys.stdin = io.StringIO(
-            '{"tool_name": "write_file", "tool_input": '
-            '{"path": "/home/rowlm/.config/hook.txt"}, '
-            '"session_id": "ses_hook_a"}'
-        )
+        sys.stdin = io.StringIO(hook_event)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             code = cli.main(["guard", "--hook"])

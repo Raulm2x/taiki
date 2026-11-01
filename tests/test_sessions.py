@@ -14,6 +14,8 @@ from tests.support import Harness
 def run(h: Harness) -> None:
     conn = h.conn
     tmp = str(h.tmp)
+    live_dir = str(Path(tmp) / "live-config")
+    Path(live_dir).mkdir()
 
     # ── Sesiones de agente, enlaces ticket:// y TUI ─────────────────────
     oc_db = Path(tmp) / "opencode.db"
@@ -23,7 +25,7 @@ def run(h: Harness) -> None:
     )
     oc.execute(
         "INSERT INTO session_v2 VALUES ('ses_viva1', ?, 'viva')",
-        (str(Path.home() / ".config"),),
+        (live_dir,),
     )
     oc.execute("INSERT INTO session_v2 VALUES ('ses_viva2', '/tmp', 'otra')")
     oc.commit()
@@ -61,7 +63,7 @@ def run(h: Harness) -> None:
     )
     h.ok(
         sessions.session_info(["ses_viva1"])["ses_viva1"]["directory"]
-        == str(Path.home() / ".config"),
+        == live_dir,
         "session_info devuelve el directorio de la sesión",
     )
     h.ok(sessions.existing_sessions([]) == set(), "sin ids no se consulta nada")
@@ -208,24 +210,32 @@ def run(h: Harness) -> None:
         "el color de respaldo es determinista",
     )
 
-    argv = sessions.build_open_command("ses_viva1", directory="/tmp")
-    h.ok(
-        argv[-4:] == ["-e", "opencode", "--session", "ses_viva1"],
-        "el comando abre opencode con la sesión",
-    )
-    argv_agy = sessions.build_open_command("agy_session_123", directory="/tmp")
-    h.ok(
-        argv_agy[-4:] == ["-e", "agy", "--conversation", "agy_session_123"],
-        "build_open_command abre agy --conversation para sesiones de antigravity",
-    )
-    h.ok(
-        "kitty" in argv[0] or "kitty" in " ".join(argv),
-        "el comando usa kitty por defecto",
-    )
-    h.ok(
-        "--directory" in argv and "/tmp" in argv,
-        "el comando respeta el directorio de la sesión",
-    )
+    # La terminal por defecto debe existir en PATH: en CI no hay kitty, así
+    # que el test crea una falsa en vez de depender de la máquina.
+    fake_bin = Path(tmp) / "fake-bin"
+    fake_bin.mkdir()
+    fake_kitty = fake_bin / "kitty"
+    fake_kitty.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_kitty.chmod(0o755)
+    with h.env(PATH=f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}"):
+        argv = sessions.build_open_command("ses_viva1", directory="/tmp")
+        h.ok(
+            argv[-4:] == ["-e", "opencode", "--session", "ses_viva1"],
+            "el comando abre opencode con la sesión",
+        )
+        argv_agy = sessions.build_open_command("agy_session_123", directory="/tmp")
+        h.ok(
+            argv_agy[-4:] == ["-e", "agy", "--conversation", "agy_session_123"],
+            "build_open_command abre agy --conversation para sesiones de antigravity",
+        )
+        h.ok(
+            "kitty" in argv[0] or "kitty" in " ".join(argv),
+            "el comando usa kitty por defecto",
+        )
+        h.ok(
+            "--directory" in argv and "/tmp" in argv,
+            "el comando respeta el directorio de la sesión",
+        )
     h.raises(
         sessions.SessionError,
         lambda: sessions.build_open_command("   "),
@@ -260,7 +270,6 @@ def run(h: Harness) -> None:
         "una terminal desconocida usa el respaldo genérico",
     )
 
-    live_dir = str(Path.home() / ".config")
     choice = sessions.resolve_directory(live_dir, str(Path(tmp) / "nada"))
     h.ok(
         choice.path == live_dir
