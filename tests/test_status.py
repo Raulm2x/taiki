@@ -94,3 +94,77 @@ def run(h: Harness) -> None:
         and any("Estado de sesiones" in line for line in view.HELP_LINES),
         "la TUI expone el modal de sesiones y su atajo",
     )
+
+    # ── Cola del orquestador y métricas ────────────────────────────────
+    verified = repo.create_ticket(conn, title="Verificado", project="taiki")
+    repo.claim_ticket(
+        conn, verified["code"], agent="worker", session_id="ses_v"
+    )
+    repo.complete_ticket(
+        conn,
+        verified["code"],
+        resolution="lista",
+        actor="worker",
+        session_id="ses_v",
+    )
+    repo.transition(
+        conn,
+        verified["code"],
+        "verificado",
+        note="gates verdes",
+        actor="conductor",
+    )
+    blocked = repo.create_ticket(conn, title="Bloqueado", project="taiki")
+    repo.transition(conn, blocked["code"], "en_progreso", actor="worker")
+    repo.transition(
+        conn,
+        blocked["code"],
+        "bloqueado",
+        note="requiere decisión humana",
+        actor="worker",
+    )
+    repo.create_ticket(conn, title="Listo", project="taiki")
+
+    data = status.snapshot(with_servers=False)
+    h.ok(
+        data["queue"]["verifying"] == 1
+        and data["queue"]["blocked"] == 1
+        and data["queue"]["ready"] == 1
+        and data["queue"]["in_progress"] == 2,
+        "la cola cuenta listos, en curso, verificando y bloqueados",
+    )
+    h.eq(
+        data["worktrees"]["count"],
+        1,
+        "status cuenta los worktrees enlazados",
+    )
+    h.ok(
+        data["metrics"]["lead_time_hours"] is not None
+        and data["metrics"]["max_parallel_observed"] >= 2
+        and data["metrics"]["verification_failures"] == 0,
+        "las métricas miden lead time, paralelismo y fallos",
+    )
+
+    repo.transition(
+        conn,
+        verified["code"],
+        "en_progreso",
+        note="revisión: falta un caso",
+        actor="conductor",
+    )
+    failures = status.snapshot(with_servers=False)["metrics"][
+        "verification_failures"
+    ]
+    h.eq(
+        failures,
+        1,
+        "un rechazo desde verificado cuenta como fallo de verificación",
+    )
+    text = "\n".join(status.lines(status.snapshot(with_servers=False)))
+    h.ok(
+        "Cola del orquestador" in text
+        and "verificando" in text
+        and "Métricas" in text
+        and "coste/tokens" in text,
+        "lines muestra la cola y las métricas",
+    )

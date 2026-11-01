@@ -281,6 +281,7 @@ def draw_header(
         f"abiertos {stats.get('abiertos', 0)}",
         f"en progreso {by_status.get('en_progreso', 0)}",
         f"por confirmar {confirmable}",
+        f"verificando {by_status.get('verificado', 0)}",
         f"urgentes {stats.get('urgentes_pendientes', state.urgent_pending())}",
         f"bloqueados {by_status.get('bloqueado', 0)}",
         f"sin asignar {stats.get('sin_agente', 0)}",

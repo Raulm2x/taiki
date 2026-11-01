@@ -99,6 +99,12 @@ paralelizar, la herramienta MCP `schedule` separa las tareas en `parallel`
 (paths disjuntos) y `serial` (solapes, esquema, store core, config o sin
 paths); las migraciones y los merges nunca van en paralelo.
 
+`taiki status` (y el modal `S` de la TUI) muestra la cola del orquestador
+(listos, en curso, verificando, bloqueados y por confirmar), los worktrees y
+métricas: lead time, intentos medios, fallos de verificación y paralelismo
+máximo observado. El coste y los tokens quedan como `no disponible` mientras
+no haya telemetría del proveedor.
+
 ## Estructura
 
 ```

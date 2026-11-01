@@ -26,7 +26,8 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
 5. El asunto del commit debe incluir `T-XXXX`; el hook `commit-msg` lo exige.
 6. El conductor y los subagentes viven en `.opencode/agents/`; consulta el
    routing de variantes y el presupuesto de concurrencia con la herramienta
-   MCP `agents` y `schedule` (paralelismo seguro por paths).
+   MCP `agents` y `schedule` (paralelismo seguro por paths). `taiki status`
+   muestra la cola (listos, en curso, verificando, bloqueados) y métricas.
 
 ## Agentes en paralelo
 

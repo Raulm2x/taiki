@@ -604,3 +604,153 @@ def run(h: Harness) -> None:
         and mcp_plan["requires_worktree"] is True,
         "schedule por MCP devuelve el mismo plan y exige worktree",
     )
+
+    # ── E2E: épica con 3 tareas, paralelismo, bug y confirmación ────────
+    from ticketlib import status as status_lib
+
+    e2e_epic = repo.create_ticket(conn, title="Épica e2e", project="e2e")
+    e2e_tasks = [
+        repo.create_ticket(
+            conn,
+            title=f"E2E {name}",
+            project="e2e",
+            parent_id=e2e_epic["code"],
+            priority=priority,
+            paths=[f"src/e2e_{name.lower()}.py"],
+        )
+        for name, priority in (("A", "alta"), ("B", "alta"), ("C", "media"))
+    ]
+    wave = orchestrator.parallel_plan(conn, project="e2e", limit=2)
+    h.eq(
+        wave["parallel"],
+        [e2e_tasks[0]["code"], e2e_tasks[1]["code"]],
+        "el e2e lanza dos tareas disjuntas en paralelo",
+    )
+
+    for index, task in enumerate(e2e_tasks[:2], start=1):
+        repo.claim_ticket(
+            conn,
+            task["code"],
+            agent="worker",
+            session_id=f"ses_e2e_{index}",
+        )
+    for index, task in enumerate(e2e_tasks[:2], start=1):
+        repo.complete_ticket(
+            conn,
+            task["code"],
+            resolution=f"{task['code']} lista",
+            commit=f"e2e000{index}",
+            actor="worker",
+            session_id=f"ses_e2e_{index}",
+        )
+        repo.transition(
+            conn,
+            task["code"],
+            "verificado",
+            note="gates verdes",
+            actor="conductor",
+        )
+
+    third = e2e_tasks[2]
+    repo.claim_ticket(
+        conn, third["code"], agent="worker", session_id="ses_e2e_3"
+    )
+    repo.complete_ticket(
+        conn,
+        third["code"],
+        resolution="entrega con fallo",
+        commit="e2e0003",
+        actor="worker",
+        session_id="ses_e2e_3",
+    )
+    retried = orchestrator.retry(
+        conn,
+        third["code"],
+        "ruff: E501",
+        agent="worker",
+        session_id="ses_e2e_3",
+    )
+    h.ok(
+        retried["status"] == "en_progreso",
+        "el fallo del e2e reabre la tarea en la misma sesión",
+    )
+
+    e2e_bug = repo.create_ticket(
+        conn,
+        title="Bug e2e: caso límite",
+        kind="bug",
+        project="e2e",
+        parent_id=e2e_epic["code"],
+        paths=["src/e2e_parser.py"],
+        assigned_to="worker",
+    )
+    repo.link_ticket(conn, e2e_bug["code"], "relacionado", third["code"])
+    repo.claim_ticket(
+        conn, e2e_bug["code"], agent="worker", session_id="ses_e2e_bug"
+    )
+    repo.complete_ticket(
+        conn,
+        e2e_bug["code"],
+        resolution="caso cubierto",
+        commit="e2e0004",
+        actor="worker",
+        session_id="ses_e2e_bug",
+    )
+    repo.transition(
+        conn,
+        e2e_bug["code"],
+        "verificado",
+        note="reviewer sin hallazgos",
+        actor="conductor",
+    )
+
+    repo.complete_ticket(
+        conn,
+        third["code"],
+        resolution="corregida",
+        commit="e2e0005",
+        actor="worker",
+        session_id="ses_e2e_3",
+    )
+    repo.transition(
+        conn,
+        third["code"],
+        "verificado",
+        note="gates verdes",
+        actor="conductor",
+    )
+
+    metrics = status_lib.snapshot(with_servers=False)["metrics"]
+    h.ok(
+        metrics["verification_failures"] >= 1
+        and metrics["max_parallel_observed"] >= 2
+        and metrics["lead_time_hours"] is not None,
+        "el e2e deja métricas de fallos, paralelismo y lead time",
+    )
+
+    repo.transition(conn, e2e_epic["code"], "en_progreso", actor="conductor")
+    repo.transition(
+        conn,
+        e2e_epic["code"],
+        "completado",
+        note="todas las tareas verificadas",
+        actor="conductor",
+    )
+    repo.transition(
+        conn,
+        e2e_epic["code"],
+        "verificado",
+        note="gates verdes sobre la épica",
+        actor="conductor",
+    )
+    confirmed = repo.confirm_tickets(conn, [e2e_epic["code"]])
+    h.ok(
+        set(confirmed["confirmed"])
+        == {
+            e2e_epic["code"],
+            *(task["code"] for task in e2e_tasks),
+            e2e_bug["code"],
+        }
+        and repo.get_ticket(conn, e2e_epic["code"])["status"] == "confirmado",
+        "el usuario confirma el e2e completo",
+    )
