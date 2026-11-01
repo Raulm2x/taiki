@@ -202,7 +202,8 @@ Varias sesiones pueden trabajar a la vez sin pisarse:
   `taiki commit -m "..."`. Rechaza el índice fuera de alcance o que solapa con
   otro ticket activo; el hook `pre-commit` (`taiki hook-check-index`) aplica la
   misma regla y exige `TAIKI_TICKET` si hay varios tickets activos.
-- **Merge asistido**: `taiki worktree merge T-XXXX` hace rebase sobre la rama
+- **Merge asistido**: el usuario confirma; solo después el conductor mergea en
+  orden de dependencias. `taiki worktree merge T-XXXX` hace rebase sobre la rama
   principal, ejecuta `tests/run.py` si existe (`--no-tests` para omitir),
   `merge --ff-only` y limpia con `--delete`. Nunca mergea si algo falla.
   Exige que el ticket esté `confirmado`: el commit vive en el worktree, pero

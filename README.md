@@ -47,7 +47,8 @@ nuevo → pendiente → en_progreso → completado → verificado → confirmado
 
 - `completado`: el worker terminó (commit, tests y criterios de aceptación).
 - `verificado`: el conductor revisó y ejecutó los gates con evidencia.
-- `confirmado`: solo lo aplica el usuario desde el CLI; después se mergea.
+- `confirmado`: solo lo aplica el usuario desde el CLI; después el conductor
+  mergea en orden con `taiki worktree merge`.
 - Reabrir un ticket exige un motivo e incrementa el contador de intentos.
 - Cada cambio queda en el historial con actor, sesión y nota.
 

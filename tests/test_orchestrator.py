@@ -79,9 +79,10 @@ def run(h: Harness) -> None:
     )
     h.ok(
         _rule(conductor, "shell", "taiki confirm*") == "deny"
-        and _rule(conductor, "shell", "taiki worktree merge*") == "deny"
+        and _rule(conductor, "shell", "git merge*") == "deny"
+        and _rule(conductor, "shell", "taiki worktree merge*") == "allow"
         and _rule(conductor, "shell", "git push*") == "deny",
-        "el conductor no confirma, no mergea y no publica",
+        "el conductor mergea tras la confirmación pero no confirma ni publica",
     )
     h.ok(
         "verificado" in conductor_body

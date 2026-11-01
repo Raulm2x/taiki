@@ -23,6 +23,9 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
 4. La confirmación es del usuario: `taiki confirm T-0001`. Nunca la ejecutes tú.
    Quien revisa puede marcar `verificado` antes con evidencia
    (`taiki transition T-0001 verificado --note "tests/CI/revisión"`).
+   Tras la confirmación, el conductor mergea solo tickets `confirmado`, en
+   orden de dependencias, con `taiki worktree merge T-XXXX --delete`; el guard
+   rechaza los no confirmados.
 5. El asunto del commit debe incluir `T-XXXX`; el hook `commit-msg` lo exige.
 6. El conductor y los subagentes viven en `.opencode/agents/`; consulta el
    routing de variantes y el presupuesto de concurrencia con la herramienta
@@ -55,10 +58,11 @@ Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
   Durante comandos largos, `taiki heartbeat T-XXXX` renueva el lease.
 - **Al terminar**: commitea en el worktree, marca el ticket `completado` y
   espera la confirmación del usuario. Solo después, `taiki worktree merge
-  T-XXXX --delete` hace rebase, tests, `merge --ff-only` y limpia. El merge
-  rechaza tickets que no estén en `confirmado`; `--force` es el bypass
-  consciente. `taiki confirm` retira solo los worktrees limpios y mergeados
-  (`--keep-worktrees` para conservarlos).
+  T-XXXX --delete` hace rebase, tests, `merge --ff-only` y limpia. El conductor
+  mergea solo tickets `confirmado`, en orden de dependencias; el guard rechaza
+  los no confirmados y `--force` es el bypass consciente. La confirmación sigue
+  siendo del usuario: `taiki confirm` retira solo los worktrees limpios y
+  mergeados (`--keep-worktrees` para conservarlos).
 - **Stagea rutas concretas** (`git add <ruta>`). Si otra sesión tiene un ticket
   activo, el guard bloquea `git add -A`, `git add .`, `git commit -a`,
   `git stash`, `git reset`, `git clean` y `git checkout -- .`.
