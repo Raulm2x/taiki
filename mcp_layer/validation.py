@@ -62,6 +62,18 @@ def _check_value(name: str, value: Any, spec: dict[str, Any]) -> None:
         raise ValidationError(
             f"Valor no permitido para '{name}': {value!r}. Válidos: {values}"
         )
+    if isinstance(value, str) and spec.get("maxLength") is not None:
+        limit = int(spec["maxLength"])
+        if len(value) > limit:
+            raise ValidationError(
+                f"'{name}' supera el máximo de {limit} caracteres"
+            )
+    if isinstance(value, list) and spec.get("maxItems") is not None:
+        limit = int(spec["maxItems"])
+        if len(value) > limit:
+            raise ValidationError(
+                f"'{name}' supera el máximo de {limit} elementos"
+            )
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         minimum = spec.get("minimum")
         maximum = spec.get("maximum")

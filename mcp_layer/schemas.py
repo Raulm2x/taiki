@@ -59,10 +59,12 @@ def _tool(
 
 CODE = {
     "type": "string",
+    "maxLength": 40,
     "description": "Código del ticket, por ejemplo T-0001 o T-0014.2",
 }
 AGENT = {
     "type": "string",
+    "maxLength": 80,
     "description": "Nombre del agente que ejecuta la acción. Al crear, asigna el "
     "ticket a ese agente; en el resto de acciones identifica quién lo hizo",
 }
@@ -89,9 +91,14 @@ TOOLS = [
         "usará el nombre del cliente MCP; el ticket queda asignado y su sesión "
         "se registra sola.",
         {
-            "title": {"type": "string", "description": "Título corto y accionable"},
+            "title": {
+                "type": "string",
+                "maxLength": 200,
+                "description": "Título corto y accionable",
+            },
             "body": {
                 "type": "string",
+                "maxLength": 100_000,
                 "description": "Contexto, criterios de aceptación, pasos para reproducir, etc.",
             },
             "kind": {
@@ -108,24 +115,29 @@ TOOLS = [
             },
             "project": {
                 "type": "string",
+                "maxLength": 200,
                 "description": "Proyecto o repositorio. Por defecto se deduce del directorio actual.",
             },
             "path": {
                 "type": "string",
+                "maxLength": 2_000,
                 "description": "Ruta relevante. Por defecto, el directorio actual.",
             },
             "paths": {
                 "type": "array",
-                "items": {"type": "string"},
+                "items": {"type": "string", "maxLength": 2_000},
+                "maxItems": 200,
                 "description": "Rutas o globs que posee el ticket",
             },
             "tags": {
                 "type": "array",
-                "items": {"type": "string"},
+                "items": {"type": "string", "maxLength": 80},
+                "maxItems": 50,
                 "description": "Etiquetas libres",
             },
             "parent_id": {
                 "type": "string",
+                "maxLength": 40,
                 "description": "Código del ticket padre, si es una subtarea",
             },
             "agent": AGENT,
@@ -145,12 +157,21 @@ TOOLS = [
             "statuses": {
                 "type": "array",
                 "items": {"type": "string", "enum": list(STATUSES)},
+                "maxItems": 10,
                 "description": "Varios estados a la vez; tiene prioridad sobre 'status'",
             },
             "kind": {"type": "string", "enum": list(KINDS)},
             "priority": {"type": "string", "enum": list(PRIORITIES)},
-            "project": {"type": "string", "description": "Filtrar por proyecto"},
-            "assignee": {"type": "string", "description": "Filtrar por agente asignado"},
+            "project": {
+                "type": "string",
+                "maxLength": 200,
+                "description": "Filtrar por proyecto",
+            },
+            "assignee": {
+                "type": "string",
+                "maxLength": 80,
+                "description": "Filtrar por agente asignado",
+            },
             "only_roots": {
                 "type": "boolean",
                 "default": False,
@@ -163,19 +184,23 @@ TOOLS = [
             },
             "parent_id": {
                 "type": "string",
+                "maxLength": 40,
                 "description": "Solo las tareas de esta épica",
             },
             "tag": {
                 "type": "string",
+                "maxLength": 80,
                 "description": "Filtrar por etiqueta",
             },
             "tags": {
                 "type": "array",
-                "items": {"type": "string"},
+                "items": {"type": "string", "maxLength": 80},
+                "maxItems": 50,
                 "description": "Filtrar por una o más etiquetas",
             },
             "query": {
                 "type": "string",
+                "maxLength": 500,
                 "description": "Búsqueda de texto completo en título y descripción",
             },
             "include_archived": {"type": "boolean", "default": False},
@@ -191,7 +216,8 @@ TOOLS = [
             },
             "fields": {
                 "type": "array",
-                "items": {"type": "string"},
+                "items": {"type": "string", "maxLength": 40},
+                "maxItems": 50,
                 "description": "Lista explícita de campos a devolver (incluye body si se pide)",
             },
             "limit": {
@@ -237,6 +263,7 @@ TOOLS = [
                         "committed",
                     ],
                 },
+                "maxItems": 6,
                 "description": "Secciones a incluir; si se omite, se incluyen todas",
             },
             "history_limit": {
@@ -287,24 +314,27 @@ TOOLS = [
         "Actualiza campos descriptivos de un ticket. No cambia el estado.",
         {
             "code": CODE,
-            "title": {"type": "string"},
-            "body": {"type": "string"},
+            "title": {"type": "string", "maxLength": 200},
+            "body": {"type": "string", "maxLength": 100_000},
             "kind": {"type": "string", "enum": list(KINDS)},
             "priority": {"type": "string", "enum": list(PRIORITIES)},
-            "project": {"type": "string"},
-            "path": {"type": "string"},
+            "project": {"type": "string", "maxLength": 200},
+            "path": {"type": "string", "maxLength": 2_000},
             "paths": {
                 "type": "array",
-                "items": {"type": "string"},
+                "items": {"type": "string", "maxLength": 2_000},
+                "maxItems": 200,
                 "description": "Rutas o globs que posee el ticket",
             },
             "tags": {
                 "type": "array",
-                "items": {"type": "string"},
+                "items": {"type": "string", "maxLength": 80},
+                "maxItems": 50,
                 "description": "Reemplaza el conjunto completo de etiquetas",
             },
             "parent_id": {
                 "type": ["string", "null"],
+                "maxLength": 40,
                 "description": "Épica de la tarea; null la devuelve a la raíz",
             },
             "agent": AGENT,
@@ -322,6 +352,7 @@ TOOLS = [
             "status": STATUS,
             "note": {
                 "type": "string",
+                "maxLength": 10_000,
                 "description": "Motivo o contexto. Obligatorio al reabrir.",
             },
             "agent": AGENT,
@@ -339,12 +370,18 @@ TOOLS = [
             "code": CODE,
             "resolution": {
                 "type": "string",
+                "maxLength": 100_000,
                 "description": "Qué se hizo, cómo se verificó y cualquier efecto secundario",
             },
-            "commit": {"type": "string", "description": "Hash o referencia del commit"},
+            "commit": {
+                "type": "string",
+                "maxLength": 200,
+                "description": "Hash o referencia del commit",
+            },
             "files": {
                 "type": "array",
-                "items": {"type": "string"},
+                "items": {"type": "string", "maxLength": 2_000},
+                "maxItems": 500,
                 "description": "Archivos modificados",
             },
             "agent": AGENT,
@@ -359,7 +396,7 @@ TOOLS = [
         "Añade un comentario al historial del ticket (decisiones, bloqueos, hallazgos).",
         {
             "code": CODE,
-            "body": {"type": "string"},
+            "body": {"type": "string", "maxLength": 50_000},
             "agent": AGENT,
             "session_id": SESSION,
         },
@@ -376,7 +413,11 @@ TOOLS = [
                 "enum": list(LINK_KINDS),
                 "description": "Tipo de referencia",
             },
-            "ref": {"type": "string", "description": "Commit, ruta, URL o id de sesión"},
+            "ref": {
+                "type": "string",
+                "maxLength": 2_000,
+                "description": "Commit, ruta, URL o id de sesión",
+            },
             "agent": AGENT,
             "session_id": SESSION,
         },
@@ -461,7 +502,11 @@ TOOLS = [
         "Trabaja dentro de la ruta devuelta para no pisar el árbol compartido.",
         {
             "code": CODE,
-            "title": {"type": "string", "description": "Título para el slug de la rama"},
+            "title": {
+                "type": "string",
+                "maxLength": 200,
+                "description": "Título para el slug de la rama",
+            },
             "force": FORCE,
         },
         ("code",),
@@ -511,7 +556,7 @@ RESOURCES = [
     {
         "uri": "taiki://inbox",
         "name": "Bandeja de entrada",
-        "description": "Tickets en estado nuevo o pendiente",
+        "description": "Tickets abiertos en resumen (máximo 100; usa list para el resto)",
         "mimeType": "application/json",
     },
     {

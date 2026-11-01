@@ -249,6 +249,32 @@ taiki mcp install --antigravity
 El cliente debe arrancar el proceso con el directorio del proyecto como `cwd`
 (es lo habitual). El servidor resuelve `.taiki/` desde ahí.
 
+### Herramientas MCP
+
+El servidor expone 18 herramientas. El nombre real no lleva prefijo (`list`,
+`claim`…), aunque algunos clientes las muestren como `taiki_*`.
+
+| Herramienta | Uso |
+|---|---|
+| `list` | Abiertos en resumen; `include_closed`, `detail`, `fields`, `leaves_only` |
+| `get` | Detalle; `include` y `history_limit` acotan secciones |
+| `next` | Siguiente ticket en resumen; `detail=true` para el registro completo |
+| `create`, `update`, `transition`, `complete`, `comment`, `link` | Ciclo de vida |
+| `claim` | Reclama; `worktree=true`, `lease_minutes`, `steal`, `force` |
+| `heartbeat` | Renueva el lease en comandos largos |
+| `status`, `whoami` | Sesiones, claims, worktrees y tu ticket activo |
+| `worktree_create`, `worktree_list` | Aislan la escritura por tarea |
+| `promote` | Convierte un scratch `S-####` en `T-####` |
+| `health` | MCP, hooks, claims caducados, solapamientos y worktrees |
+
+Los errores llegan como `{code, message, hint, retryable}` y las herramientas
+de lectura llevan `readOnlyHint`. Si el código del MCP cambia, las escrituras
+se bloquean hasta recargarlo: evita datos inconsistentes.
+
+Los worktrees comparten la DB del checkout principal. Aunque el repositorio
+versione `.taiki/config.json`, `taiki` resuelve el `.taiki` principal desde
+cualquier worktree; no se crea una DB vacía dentro de `.worktrees/`.
+
 ## CLI
 
 ```bash

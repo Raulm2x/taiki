@@ -7,7 +7,9 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
 
 - CLI: `taiki` (wrapper `bin/taiki`).
 - MCP: `bin/taiki-mcp`, instalado **solo en este proyecto** con
-  `taiki mcp install`. No hay MCP global.
+  `taiki mcp install`. No hay MCP global. Además del ciclo de vida expone
+  `status`, `whoami`, `heartbeat`, `worktree_create`, `worktree_list`,
+  `promote` y `health`; úsalos antes de coordinar trabajo en paralelo.
 - DB: `.taiki/taiki.db`. `config.json` y `.taiki/.gitignore` se versionan;
   `taiki.db`, `local.json` y `backups/` no.
 - Guard: activo porque `.taiki/config.json` tiene `"guard": true`.
@@ -29,9 +31,11 @@ Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
   Si otra sesión ya tiene el ticket, no lo reclames a la fuerza.
 - **Un worktree por escritor.** Cada tarea que modifique código debe vivir en su
   propio `git worktree` (`.worktrees/<T-XXXX>`, ignorado por Git) con la DB
-  compartida de `.taiki/`. Las lecturas sí pueden compartir el árbol. Si otra
-  sesión está activa, el guard **bloquea escribir en el checkout** sin worktree;
-  el escape consciente es `TAIKI_SHARED_TREE=1`.
+  compartida de `.taiki/`. El worktree puede contener el `.taiki/config.json`
+  versionado, pero `taiki` resuelve siempre la DB del checkout principal; no
+  crees una DB local dentro de `.worktrees/`. Las lecturas sí pueden compartir
+  el árbol. Si otra sesión está activa, el guard **bloquea escribir en el
+  checkout** sin worktree; el escape consciente es `TAIKI_SHARED_TREE=1`.
 - **Al reclamar**: `taiki claim T-XXXX --worktree` crea el worktree y lo enlaza.
   Durante comandos largos, `taiki heartbeat T-XXXX` renueva el lease.
 - **Al terminar**: `taiki worktree merge T-XXXX --delete` hace rebase, tests,

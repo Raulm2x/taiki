@@ -4,17 +4,44 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from ticketlib import db, domain, render, runtime, servers, workspace
+from ticketlib import __version__, db, domain, render, runtime, servers, workspace
 from mcp_layer import errors, handlers, schemas
 
 SERVER_NAME = "taiki"
-SERVER_VERSION = "1.0.0"
+
+
+def _server_version() -> str:
+    """Versión del código en disco (tag/commit) con la versión de paquete."""
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(runtime.ROOT),
+                "describe",
+                "--tags",
+                "--always",
+                "--dirty",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except OSError:
+        pass
+    return __version__
+
+
+SERVER_VERSION = _server_version()
+MAX_REQUEST_BYTES = 4 * 1024 * 1024
 LATEST_PROTOCOL = "2025-11-25"
 SUPPORTED_PROTOCOLS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
 
@@ -110,7 +137,6 @@ def _initialize(params: dict) -> dict:
             "tools": {"listChanged": False},
             "resources": {"subscribe": False, "listChanged": False},
             "prompts": {"listChanged": False},
-            "logging": {},
         },
         "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
         "instructions": schemas.INSTRUCTIONS,
@@ -166,6 +192,9 @@ def main() -> int:
     for line in sys.stdin:
         line = line.strip()
         if not line:
+            continue
+        if len(line.encode("utf-8")) > MAX_REQUEST_BYTES:
+            _reply_error(None, -32600, "Solicitud demasiado grande")
             continue
         try:
             message = json.loads(line)

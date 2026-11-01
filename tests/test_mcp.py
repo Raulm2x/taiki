@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import server as mcp_server
 import tui
@@ -165,6 +166,78 @@ def run(h: Harness) -> None:
         and by_name["get"]["annotations"]["idempotentHint"]
         and not by_name["create"]["annotations"]["readOnlyHint"],
         "las herramientas de lectura se marcan como read-only",
+    )
+
+    # ── Límites de tamaño y bloqueo global de escrituras con MCP viejo ──
+    h.raises(
+        domain.ValidationError,
+        lambda: handlers.call_tool("create", {"title": "x" * 201}),
+        "un título demasiado largo se rechaza",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: handlers.call_tool(
+            "create", {"title": "ok", "body": "x" * 100_001}
+        ),
+        "un body demasiado largo se rechaza",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: handlers.call_tool("list", {"query": "x" * 501}),
+        "una búsqueda demasiado larga se rechaza",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: handlers.call_tool(
+            "complete",
+            {
+                "code": "T-0001",
+                "resolution": "x",
+                "files": ["f"] * 501,
+            },
+        ),
+        "demasiados archivos en complete se rechazan",
+    )
+    original_stale = runtime.is_stale
+    runtime.is_stale = lambda: True
+    try:
+        h.raises(
+            domain.ValidationError,
+            lambda: handlers.call_tool("create", {"title": "MCP viejo"}),
+            "un MCP viejo bloquea cualquier escritura, no solo las subtareas",
+        )
+        h.ok(
+            handlers.call_tool("list", {"limit": 1})["count"] >= 0,
+            "un MCP viejo sigue permitiendo lecturas",
+        )
+    finally:
+        runtime.is_stale = original_stale
+
+    # ── Recursos acotados y versión derivada ────────────────────────────
+    inbox = handlers.read_resource("taiki://inbox")
+    payload = json.loads(inbox["contents"][0]["text"])
+    h.ok(
+        {"count", "total", "truncated", "tickets"} <= set(payload)
+        and all("body" not in item for item in payload["tickets"]),
+        "el recurso inbox devuelve resumen y avisa de truncado",
+    )
+    h.ok(
+        mcp_server.SERVER_VERSION
+        and mcp_server.SERVER_VERSION != "1.0.0",
+        "la versión del servidor se deriva del código",
+    )
+    original_register = mcp_server._register_runtime
+    mcp_server._register_runtime = lambda: None
+    try:
+        initialized = mcp_server._initialize(
+            {"protocolVersion": "2025-06-18", "clientInfo": {"name": "test"}}
+        )
+    finally:
+        mcp_server._register_runtime = original_register
+        handlers.set_client_info(None)
+    h.ok(
+        "logging" not in initialized["capabilities"],
+        "no se anuncia una capacidad de logging sin notificaciones",
     )
 
     # Despacho de herramientas vía call_tool y registro de eventos

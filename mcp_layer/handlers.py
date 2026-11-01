@@ -90,6 +90,20 @@ def _session(meta: Any = None, args: dict[str, Any] | None = None) -> str | None
 
 
 _CLIENT_AGENT = "agente"
+MUTATING_TOOLS = frozenset(
+    {
+        "create",
+        "claim",
+        "update",
+        "transition",
+        "complete",
+        "comment",
+        "link",
+        "heartbeat",
+        "worktree_create",
+        "promote",
+    }
+)
 
 
 def set_client_info(info: Any = None) -> str:
@@ -744,6 +758,14 @@ def call_tool(
     """Despacha la ejecución de una herramienta MCP utilizando TOOL_DISPATCH."""
     args = args or {}
     validation.validate_arguments(name, args)
+    schema = validation.tool_schema(name)
+    base = schema["name"] if schema else name
+    if base in MUTATING_TOOLS and runtime.is_stale():
+        raise domain.ValidationError(
+            "El MCP está desactualizado: no se ejecuta la escritura para no "
+            "dejar datos inconsistentes. Recarga el servidor MCP (el plugin lo "
+            "hace al quedar la sesión idle) o reinicia OpenCode."
+        )
 
     handler = TOOL_DISPATCH.get(name)
     if not handler:
@@ -777,15 +799,21 @@ def read_resource(uri: str) -> dict[str, Any]:
     conn = db.connect()
     try:
         if uri == "taiki://inbox":
-            rows = repo.list_tickets(
-                conn, statuses=["nuevo", "pendiente"], limit=100
-            )
-            data: Any = {"count": len(rows), "tickets": rows}
+            statuses = list(domain.OPEN_STATUSES)
+            rows = repo.list_tickets(conn, statuses=statuses, limit=100)
+            total = repo.count_tickets(conn, statuses=statuses)
+            data: Any = {
+                "count": len(rows),
+                "total": total,
+                "truncated": total > len(rows),
+                "tickets": [_summary(row) for row in rows],
+            }
         elif uri == "taiki://stats":
             data = repo.stats(conn)
         elif uri.startswith("taiki://ticket/"):
             code = unquote(uri.removeprefix("taiki://ticket/"))
             data = repo.get_ticket(conn, code)
+            _limit_history(data, 50)
         else:
             raise domain.NotFoundError(f"Recurso desconocido: {uri}")
     finally:
