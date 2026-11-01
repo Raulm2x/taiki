@@ -896,19 +896,22 @@ python3 tests/run.py --list          # módulos disponibles
 python3 tests/run.py --only guard    # una sola área, con su propia DB temporal
 python3 tests/run.py -k tui -v       # filtrar por nombre y ver el desglose
 python3 tests/run.py --audit         # ruido: duplicados, imports, seeds y línea base
+python3 tests/run.py --strict-budget # falla si se supera el presupuesto de tiempo
 python3 tests/run.py --bench         # benchmarks 20k (connect <10 ms, export <500 ms)
 python3 -m tests.benchmarks          # benchmarks por separado
 ruff check .                         # lint (corrección + ARG)
 mypy                                 # tipos de ticketlib (gradual)
-coverage run tests/run.py && coverage report
+coverage run tests/run.py && coverage json -o coverage.json
+python3 tests/coverage_gate.py coverage.json   # umbral por capa (ratchet)
 python3 selftest.py                  # compatibilidad (delega en tests/run.py)
 TAIKI_DB=/tmp/opencode/taiki.db python3 cli.py list
 ```
 
 `pyproject.toml` declara `requires-python >=3.11`, los entry points `taiki` y
 `taiki-mcp`, la configuración de ruff/mypy y la cobertura. La CI de
-`.github/workflows/ci.yml` ejecuta suite, lint, tipos y los benchmarks en cada
-push y pull request. Los módulos de prueba se descubren automáticamente
+`.github/workflows/ci.yml` ejecuta lint, tipos, la suite con
+`--strict-budget`, la cobertura por capa y los benchmarks en cada push y pull
+request. Los módulos de prueba se descubren automáticamente
 (`tests/test_*.py`); no hay que editar el runner al añadir uno.
 
 Cada módulo de la suite crea su propia base de datos temporal y restaura las
@@ -919,8 +922,18 @@ el total real de comprobaciones, que cubre filtros de tags, subtareas, concurren
 ### Presupuesto y cuarentena
 
 - `tests/budget.toml` fija un presupuesto de tiempo (suite y módulo) y una
-  línea base de comprobaciones con tolerancia. Superarlo genera un **aviso
-  accionable**, nunca un borrado.
+  línea base de comprobaciones con tolerancia. En local superarlo genera un
+  **aviso accionable**; con `--strict-budget` (lo que usa la CI) el tiempo es un
+  **gate duro** y la suite termina con código 1.
+- La cobertura se mide **aparte** del presupuesto de tiempo: la CI ejecuta
+  primero `tests/run.py --strict-budget` sin instrumentar y después
+  `coverage run` + `tests/coverage_gate.py`. Así el coste de coverage no infla
+  el límite de 4 s.
+- `tests/coverage_gate.py` aplica umbrales por capa definidos en
+  `[tool.coverage.taiki]` de `pyproject.toml` (ratchet: solo se suben). Mide
+  `ticketlib` y `mcp_layer` completos, `commands` tal como lo ejerce la suite
+  (los subprocesos de `bin/taiki` no se instrumentan) y `tui` sin `app.py` ni
+  `view.py` (curses); no se persigue cobertura de curses.
 - `tests/quarantine.toml` permite aparcar un módulo con `reason`, `owner` y
   `expires`. Mientras está vigente se ejecuta pero un fallo no bloquea; al
   caducar, la suite falla para forzar la revisión.

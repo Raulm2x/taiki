@@ -25,9 +25,15 @@ jobs:
         run: ruff check .
       - name: Tipos
         run: mypy
-      - name: Suite
-        run: coverage run tests/run.py
-      - name: Cobertura
-        run: coverage report
+      # Gate duro de tiempo: sin coverage para que el presupuesto no se infle.
+      - name: Suite (presupuesto estricto)
+        run: python tests/run.py --strict-budget
+      # La cobertura se mide aparte y no cuenta contra el presupuesto anterior.
+      - name: Cobertura por capa
+        run: |
+          coverage run tests/run.py
+          coverage report
+          coverage json -o coverage.json
+          python tests/coverage_gate.py coverage.json
       - name: Benchmarks
         run: python -m tests.benchmarks

@@ -292,29 +292,44 @@ def format_audit(
     return lines
 
 
+def budget_violations(
+    results: list[dict[str, Any]],
+    budget: dict[str, Any],
+    partial: bool = False,
+) -> list[str]:
+    """Incumplimientos duros de tiempo (suite y por módulo).
+
+    Es la fuente única de los mensajes de tiempo: ``budget_warnings`` los usa
+    para avisar y ``run.py --strict-budget`` para fallar en CI.
+    """
+    violations: list[str] = []
+    suite = budget["suite"]
+    module_limit = float(budget["module"].get("max_seconds", 0))
+    total_time = sum(row.get("elapsed", 0.0) for row in results)
+    max_suite = float(suite.get("max_seconds", 0))
+    if not partial and max_suite and total_time > max_suite:
+        violations.append(
+            f"suite en {total_time:.2f}s supera el presupuesto de {max_suite:.2f}s"
+        )
+    if module_limit:
+        for row in results:
+            if row.get("elapsed", 0.0) > module_limit:
+                violations.append(
+                    f"{row['name']} tarda {row['elapsed']:.2f}s "
+                    f"(máximo {module_limit:.2f}s)"
+                )
+    return violations
+
+
 def budget_warnings(
     results: list[dict[str, Any]],
     budget: dict[str, Any],
     partial: bool = False,
 ) -> list[str]:
     """Avisos accionables por tiempo o desviación de la línea base."""
-    warnings: list[str] = []
+    warnings = budget_violations(results, budget, partial=partial)
     suite = budget["suite"]
-    module_limit = float(budget["module"].get("max_seconds", 0))
-    total_time = sum(row.get("elapsed", 0.0) for row in results)
     total_checks = sum(row.get("checks", 0) for row in results)
-    max_suite = float(suite.get("max_seconds", 0))
-    if not partial and max_suite and total_time > max_suite:
-        warnings.append(
-            f"suite en {total_time:.2f}s supera el presupuesto de {max_suite:.2f}s"
-        )
-    if module_limit:
-        for row in results:
-            if row.get("elapsed", 0.0) > module_limit:
-                warnings.append(
-                    f"{row['name']} tarda {row['elapsed']:.2f}s "
-                    f"(máximo {module_limit:.2f}s)"
-                )
     baseline = int(suite.get("baseline_checks", 0) or 0)
     tolerance = int(suite.get("checks_tolerance", 0) or 0)
     if not partial and baseline and abs(total_checks - baseline) > tolerance:

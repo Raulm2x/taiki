@@ -88,6 +88,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="ejecuta los benchmarks de connect/export a 20k",
     )
+    parser.add_argument(
+        "--strict-budget",
+        action="store_true",
+        help="falla si la suite o un módulo supera el presupuesto de tiempo",
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="mostrar cada módulo")
     args = parser.parse_args(argv)
 
@@ -153,6 +158,13 @@ def main(argv: list[str] | None = None) -> int:
         for item in failures:
             print(f"  - {item}")
         return 1
+    if args.strict_budget:
+        violations = hygiene.budget_violations(results, budget, partial=partial)
+        if violations:
+            print("\nPresupuesto incumplido:")
+            for item in violations:
+                print(f"  - {item}")
+            return 1
     print(f"OK: {total} comprobaciones ({len(names)} módulos, {elapsed:.2f}s)")
     if args.bench:
         from tests import benchmarks

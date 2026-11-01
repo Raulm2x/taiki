@@ -118,6 +118,79 @@ def run(h: Harness) -> None:
         "una ejecución parcial solo avisa del presupuesto por módulo",
     )
 
+    # ── El presupuesto de tiempo también es un gate duro ────────────────
+    h.eq(
+        len(hygiene.budget_violations(results, budget)),
+        2,
+        "budget_violations devuelve suite y módulo fuera de presupuesto",
+    )
+    fast = [{"name": "test_x", "checks": 10, "elapsed": 0.01, "error": None}]
+    h.eq(
+        hygiene.budget_violations(fast, budget),
+        [],
+        "budget_violations no inventa incumplimientos dentro del presupuesto",
+    )
+
+    # ── Umbral de cobertura por capa ────────────────────────────────────
+    from tests import coverage_gate
+
+    fake_files = {
+        "ticketlib/a.py": {"summary": {"covered_lines": 90, "num_statements": 100}},
+        "ticketlib/b.py": {"summary": {"covered_lines": 10, "num_statements": 20}},
+        "tui/app.py": {"summary": {"covered_lines": 0, "num_statements": 500}},
+        "tui/state.py": {"summary": {"covered_lines": 8, "num_statements": 10}},
+        "commands/cli.py": {"summary": {"covered_lines": 1, "num_statements": 10}},
+    }
+    totals = coverage_gate.layer_totals(fake_files, ["tui/app.py"])
+    h.eq(totals["ticketlib"], (100, 120), "layer_totals suma por capa")
+    h.eq(totals["tui"], (8, 10), "layer_totals respeta los ficheros ignorados")
+    h.eq(
+        coverage_gate.evaluate(
+            totals, {"ticketlib": 80, "mcp_layer": 80, "commands": 5}
+        ),
+        ["mcp_layer: sin datos de cobertura (mínimo 80%)"],
+        "evaluate falla si falta una capa y no si supera el mínimo",
+    )
+    h.ok(
+        coverage_gate.evaluate(totals, {"commands": 35}),
+        "evaluate detecta una capa por debajo del umbral",
+    )
+    thresholds, ignore = coverage_gate.load_thresholds()
+    h.ok(
+        {"ticketlib", "mcp_layer", "commands", "tui"} <= set(thresholds)
+        and "tui/app.py" in ignore,
+        "los umbrales por capa están en pyproject.toml",
+    )
+
+    # ── --strict-budget convierte el tiempo en un gate duro ─────────────
+    import contextlib
+    import io
+
+    from tests import run as runner
+
+    original_runner = runner._run_module
+    original_budget_loader = hygiene.load_budget
+    tight = {
+        "suite": {"max_seconds": 1.0, "baseline_checks": 0, "checks_tolerance": 20},
+        "module": {"max_seconds": 0.1},
+    }
+    runner._run_module = lambda name: {
+        "name": name,
+        "checks": 1,
+        "error": None,
+        "elapsed": 99.0,
+    }
+    hygiene.load_budget = lambda path=None: tight
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            strict_code = runner.main(["test_core", "--strict-budget"])
+            loose_code = runner.main(["test_core"])
+        h.eq(strict_code, 1, "--strict-budget falla con un módulo lento")
+        h.eq(loose_code, 0, "sin --strict-budget el tiempo solo avisa")
+    finally:
+        runner._run_module = original_runner
+        hygiene.load_budget = original_budget_loader
+
     quarantine_file = tmp / "quarantine.toml"
     quarantine_file.write_text(
         "[modules.test_x]\n"
