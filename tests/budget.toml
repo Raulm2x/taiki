@@ -6,7 +6,8 @@
 # status a escala y smoke CLI). Techo revisado una vez; a partir de aquí, podar.
 max_seconds = 4.5
 baseline_checks = 1039
-checks_tolerance = 20
+# Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
+checks_tolerance = 12
 
 [module]
 max_seconds = 0.75

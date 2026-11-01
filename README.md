@@ -89,13 +89,18 @@ Taiki incluye un conductor primario y los subagentes `worker`, `worker-low`,
 `worker-medium`, `worker-high` y `reviewer` en `.opencode/agents/`. El conductor planifica, delega, verifica con
 `python3 tests/run.py --verify` y marca `verificado`; solo el usuario confirma
 y mergea. Las capacidades (tipos, variantes, paralelismo y coste) viven en
-`.taiki/config.json` y se consultan con la herramienta MCP `agents`.
+`.taiki/config.json` y se consultan con la herramienta MCP `agents`. Los
+agentes escriben el estado con las herramientas MCP (`claim`, `complete`,
+`transition`, `checkpoint`, `comment`) para conservar `actor`,
+`actor_type=agente` y `owner_session`; el CLI queda para el usuario y
+atribuye sus acciones como tales.
 
 Routing de modelos: `documentacion` → `low`; mantenimiento/funcionalidad →
 `medium`; `bug`/`seguridad` → `high`. Todos los perfiles worker usan
 `opencode-go/deepseek-v4.1-flash` para no disparar el coste en tokens;
 `worker-medium` va sin variante porque deepseek no expone `medium`, así que se
-usa el default del cliente. Si el modelo no expone la variante, se usa el
+usa el default del cliente. El conductor lanza el perfil que devuelve
+`agents`, no el `worker` genérico. Si el modelo no expone la variante, se usa el
 default; nunca se escala en bucle. El límite de writers
 simultáneos es `orchestrator.max_parallel` (3 por defecto). Antes de
 paralelizar, la herramienta MCP `schedule` separa las tareas en `parallel`

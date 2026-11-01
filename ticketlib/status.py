@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from . import audit, db, servers, workspace
-from .domain import OPEN_STATUSES
+from .domain import DEPENDENCY_DONE_STATUSES
 from .store.workflow import stale_claims
 
 DEFAULT_WINDOW = 600
@@ -27,7 +27,7 @@ def _paths(raw: Any) -> list[str]:
 
 def _queue(conn: Any) -> dict[str, int]:
     """Cola del orquestador: listo, en curso, verificando y bloqueado."""
-    placeholders = ", ".join("?" for _ in OPEN_STATUSES)
+    placeholders = ", ".join("?" for _ in DEPENDENCY_DONE_STATUSES)
     counts = {
         row["status"]: row["total"]
         for row in conn.execute(
@@ -41,8 +41,8 @@ def _queue(conn: Any) -> dict[str, int]:
         "AND NOT EXISTS (SELECT 1 FROM links dl "
         "JOIN tickets dt ON dt.code = dl.ref AND dt.archived = 0 "
         "WHERE dl.ticket_id = t.id AND dl.kind = 'depende' "
-        f"AND dt.status IN ({placeholders}))",
-        OPEN_STATUSES,
+        f"AND dt.status NOT IN ({placeholders}))",
+        DEPENDENCY_DONE_STATUSES,
     ).fetchone()[0]
     return {
         "ready": ready,
@@ -251,7 +251,8 @@ def lines(data: dict[str, Any]) -> list[str]:
         f"en curso {queue.get('in_progress', 0)} · "
         f"verificando {queue.get('verifying', 0)} · "
         f"bloqueados {queue.get('blocked', 0)} · "
-        f"por confirmar {queue.get('pending_confirmation', 0)}"
+        f"por confirmar {queue.get('pending_confirmation', 0)} "
+        f"(incl. {queue.get('verifying', 0)} verificando)"
     )
     out.append(f"  worktrees {(data.get('worktrees') or {}).get('count', 0)}")
     metrics = data.get("metrics") or {}

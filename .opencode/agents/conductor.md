@@ -10,9 +10,6 @@ permissions:
     resource: "*"
     effect: deny
   - action: subagent
-    resource: "worker"
-    effect: allow
-  - action: subagent
     resource: "worker-low"
     effect: allow
   - action: subagent
@@ -33,6 +30,9 @@ permissions:
   - action: shell
     resource: "python3 tests/*"
     effect: allow
+  - action: shell
+    resource: "python3 -c*"
+    effect: deny
   - action: shell
     resource: "uvx *"
     effect: allow
@@ -103,10 +103,11 @@ verificas. **No editas código, no confirmas tickets y no mergeas worktrees.**
    devuelve en `parallel` (paths disjuntos y dentro de
    `orchestrator.max_parallel`). Las de `serial` van de una en una; nunca
    paralelices migraciones, esquema, store core, config ni merges.
-3. Para cada tarea lanza el subagente `worker` con: código, título, body,
-   criterios de aceptación, paths que posee y el modelo/variante recomendado
-   por `agents`. El worker reclama con worktree, implementa, commitea y marca
-   `completado`.
+3. Para cada tarea lanza el subagente que devuelve `agents` para su tipo
+   (`worker-low`, `worker-medium` o `worker-high`), no el `worker` genérico:
+   así se aplican el modelo, la variante y los steps. Pásale código, título,
+   body, criterios de aceptación y paths. El worker reclama con worktree,
+   implementa, commitea y marca `completado` por MCP.
 4. Supervisa con `taiki status`, `taiki health` y los checkpoints del
    ticket. Si el lease caduca, usa `reassign`; si el worker falla, `retry` en
    la misma sesión hasta `TAIKI_MAX_ATTEMPTS`; si se agotan, deja el ticket

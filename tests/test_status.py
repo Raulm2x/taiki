@@ -183,3 +183,27 @@ def run(h: Harness) -> None:
         maximum == 2000 and elapsed < 0.1,
         f"el sweep line escala a 2k intervalos ({elapsed:.3f}s)",
     )
+
+    # ── La cola cierra dependencias al verificado ──────────────────────
+    dep_base = repo.create_ticket(conn, title="Base dep", project="taiki")
+    dep_child = repo.create_ticket(conn, title="Hija dep", project="taiki")
+    repo.link_ticket(conn, dep_child["code"], "depende", dep_base["code"])
+    repo.transition(conn, dep_base["code"], "en_progreso", actor="worker")
+    blocked_ready = status.snapshot(with_servers=False)["queue"]["ready"]
+    repo.complete_ticket(
+        conn, dep_base["code"], resolution="lista", actor="worker"
+    )
+    completed_ready = status.snapshot(with_servers=False)["queue"]["ready"]
+    repo.transition(
+        conn,
+        dep_base["code"],
+        "verificado",
+        note="gates verdes",
+        actor="conductor",
+    )
+    verified_ready = status.snapshot(with_servers=False)["queue"]["ready"]
+    h.ok(
+        completed_ready == blocked_ready
+        and verified_ready == blocked_ready + 1,
+        "la cola no cuenta una dependencia completada como lista",
+    )

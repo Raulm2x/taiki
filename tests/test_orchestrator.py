@@ -70,9 +70,12 @@ def run(h: Harness) -> None:
     h.ok(
         _rule(conductor, "edit", "*") == "deny"
         and _rule(conductor, "subagent", "*") == "deny"
-        and _rule(conductor, "subagent", "worker") == "allow"
+        and _rule(conductor, "subagent", "worker") is None
+        and _rule(conductor, "subagent", "worker-low") == "allow"
+        and _rule(conductor, "subagent", "worker-medium") == "allow"
+        and _rule(conductor, "subagent", "worker-high") == "allow"
         and _rule(conductor, "subagent", "reviewer") == "allow",
-        "el conductor no edita y solo lanza worker/reviewer",
+        "el conductor no edita y solo lanza perfiles worker/reviewer",
     )
     h.ok(
         _rule(conductor, "shell", "taiki confirm*") == "deny"
@@ -568,18 +571,10 @@ def run(h: Harness) -> None:
     )
     reasons = {item["code"]: item["reason"] for item in plan["serial"]}
     h.ok(
-        sched_c["code"] in reasons and "solapa" in reasons[sched_c["code"]],
-        "dos tareas con paths solapados se serializan",
-    )
-    h.ok(
-        sched_d["code"] in reasons
-        and "serial" in reasons[sched_d["code"]],
-        "tocar esquema o store core obliga a ejecución serial",
-    )
-    h.ok(
-        sched_e["code"] in reasons
-        and "sin paths" in reasons[sched_e["code"]],
-        "una tarea sin paths no se paraleliza",
+        "solapa" in reasons.get(sched_c["code"], "")
+        and "serial" in reasons.get(sched_d["code"], "")
+        and "sin paths" in reasons.get(sched_e["code"], ""),
+        "solapes, esquema/store y tareas sin paths se serializan",
     )
     h.ok(
         len(plan["parallel"]) <= plan["limit"]
@@ -868,4 +863,115 @@ def run(h: Harness) -> None:
         len(global_plan["parallel"]) == 1
         and len(global_plan["deferred"]) == 1,
         "las tareas activas consumen el presupuesto global",
+    )
+
+    # ── Atribución real por MCP: agente, actor_type y sesión ────────────
+    attr = repo.create_ticket(conn, title="Atribución MCP", project="attr")
+    handlers.call_tool(
+        "claim",
+        {"code": attr["code"], "agent": "worker"},
+        meta={"sessionId": "ses_attr"},
+    )
+    detail = repo.get_ticket(conn, attr["code"])
+    claim_event = next(
+        event
+        for event in detail["events"]
+        if event["action"] == "transicion"
+        and event["to_status"] == "en_progreso"
+    )
+    h.ok(
+        detail["owner_session"] == "ses_attr"
+        and claim_event["actor"] == "worker"
+        and claim_event["actor_type"] == "agente",
+        "claim MCP conserva agente, actor_type y sesión",
+    )
+    handlers.call_tool(
+        "complete",
+        {
+            "code": attr["code"],
+            "agent": "worker",
+            "resolution": "lista por MCP",
+        },
+        meta={"sessionId": "ses_attr"},
+    )
+    detail = repo.get_ticket(conn, attr["code"])
+    close_event = next(
+        event
+        for event in detail["events"]
+        if event["action"] == "transicion" and event["to_status"] == "completado"
+    )
+    h.ok(
+        close_event["actor"] == "worker"
+        and close_event["actor_type"] == "agente",
+        "complete MCP atribuye el cierre al worker",
+    )
+    handlers.call_tool(
+        "transition",
+        {
+            "code": attr["code"],
+            "agent": "conductor",
+            "status": "verificado",
+            "note": "gates verdes",
+        },
+        meta={"sessionId": "ses_conductor"},
+    )
+    detail = repo.get_ticket(conn, attr["code"])
+    verify_event = next(
+        event
+        for event in detail["events"]
+        if event["action"] == "transicion" and event["to_status"] == "verificado"
+    )
+    h.ok(
+        verify_event["actor"] == "conductor"
+        and verify_event["actor_type"] == "agente",
+        "transition MCP atribuye la verificación al conductor",
+    )
+    cp_attr = repo.create_ticket(
+        conn, title="Checkpoint con atribución", project="attr"
+    )
+    handlers.call_tool(
+        "claim",
+        {"code": cp_attr["code"], "agent": "worker"},
+        meta={"sessionId": "ses_cp_attr"},
+    )
+    handlers.call_tool(
+        "checkpoint",
+        {"code": cp_attr["code"], "agent": "worker", "note": "avance"},
+        meta={"sessionId": "ses_cp_attr"},
+    )
+    cp_detail = repo.get_ticket(conn, cp_attr["code"])
+    h.ok(
+        cp_detail["comments"][-1]["author"] == "worker"
+        and cp_detail["owner_session"] == "ses_cp_attr",
+        "checkpoint MCP conserva autor y sesión",
+    )
+
+    # ── Prompts: writes por MCP y perfil recomendado ────────────────────
+    h.ok(
+        "worker-low" in conductor_body
+        and "agents" in conductor_body
+        and "`worker` genérico" in conductor_body
+        and "worker" not in conductor_allowed,
+        "el conductor lanza el perfil recomendado y no el worker genérico",
+    )
+    h.ok(
+        all(
+            token not in worker_body
+            for token in (
+                "taiki claim",
+                "taiki complete T-",
+                "taiki comment",
+                "taiki transition T-",
+            )
+        )
+        and "`claim`" in worker_body
+        and "`complete`" in worker_body
+        and "`checkpoint`" in worker_body,
+        "el worker usa MCP para claim/complete/checkpoint",
+    )
+    h.ok(
+        _rule(worker, "shell", "python3 *") is None
+        and _rule(worker, "shell", "python3 -c*") == "deny"
+        and _rule(worker, "shell", "python3 tests/*") == "allow",
+        "el worker no puede ejecutar python3 -c",
     )
