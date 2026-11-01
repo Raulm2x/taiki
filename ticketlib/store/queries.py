@@ -423,12 +423,25 @@ def activity_by_day(
     days = max(1, min(int(days), 3660))
     end = today or datetime.now().date().isoformat()
     start = (date.fromisoformat(end) - timedelta(days=days - 1)).isoformat()
+    # El límite superior abarca el día final completo: los timestamps son ISO
+    # con prefijo YYYY-MM-DD, así que comparar contra el día siguiente evita
+    # aplicar substr() en el WHERE y permite usar idx_events_ts.
+    after_end = (date.fromisoformat(end) + timedelta(days=1)).isoformat()
 
-    where = ["substr(e.ts, 1, 10) >= ?", "substr(e.ts, 1, 10) <= ?", "t.archived = 0"]
-    params: list[Any] = [start, end]
+    where = ["e.ts >= ?", "e.ts < ?"]
+    params: list[Any] = [start, after_end]
     if project:
-        where.append("t.project = ?")
+        where.append(
+            "e.ticket_id IN (SELECT id FROM tickets "
+            "WHERE archived = 0 AND project = ?)"
+        )
         params.append(project)
+    else:
+        # Sin filtro de proyecto no hace falta unir tickets: basta excluir
+        # los archivados (normalmente pocos) con una subconsulta.
+        where.append(
+            "e.ticket_id NOT IN (SELECT id FROM tickets WHERE archived = 1)"
+        )
     if agent:
         where.append("e.actor = ?")
         params.append(agent)
@@ -439,7 +452,7 @@ def activity_by_day(
         "SUM(CASE WHEN e.action = 'crear' THEN 1 ELSE 0 END) AS creados, "
         "SUM(CASE WHEN e.action = 'transicion' AND e.to_status = 'completado' "
         "THEN 1 ELSE 0 END) AS completados "
-        "FROM events e JOIN tickets t ON t.id = e.ticket_id "
+        "FROM events e "
         f"WHERE {' AND '.join(where)} "
         "GROUP BY day",
         params,
@@ -494,6 +507,15 @@ def missing_codes(conn: sqlite3.Connection) -> list[dict[str, str]]:
     llegaron a crear ticket.
     """
     next_number = int(db.meta_get(conn, TICKET_COUNTER, "1") or "1")
+    expected = max(0, next_number - 1)
+    # Camino rápido: si hay tantos códigos planos T- como números emitidos,
+    # no falta ninguno. Evita materializar los 20k códigos en Python.
+    flat = conn.execute(
+        "SELECT COUNT(*) FROM tickets "
+        "WHERE code GLOB 'T-*' AND instr(code, '.') = 0"
+    ).fetchone()[0]
+    if flat == expected:
+        return []
     existing = {
         row[0]
         for row in conn.execute(

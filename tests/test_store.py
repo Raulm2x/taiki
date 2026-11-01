@@ -70,6 +70,57 @@ def run(h: Harness) -> None:
         "la búsqueda ve el título nuevo y deja de ver el viejo",
     )
 
+    # ── Índices para las consultas calientes ─────────────────────────────
+    indexes = {
+        row["name"]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index'"
+        )
+    }
+    h.ok(
+        {"idx_events_ts", "idx_events_action", "idx_tickets_updated"} <= indexes,
+        "existen los índices de events(ts/action) y tickets(updated_at)",
+    )
+    plans = {
+        "action": conn.execute(
+            "EXPLAIN QUERY PLAN SELECT note FROM events "
+            "WHERE action = 'renumerar'"
+        ).fetchall(),
+        "updated": conn.execute(
+            "EXPLAIN QUERY PLAN SELECT MAX(updated_at) FROM tickets"
+        ).fetchall(),
+        "day": conn.execute(
+            "EXPLAIN QUERY PLAN SELECT substr(e.ts, 1, 10) AS day, COUNT(*) "
+            "FROM events e WHERE e.ts >= ? AND e.ts < ? "
+            "AND e.ticket_id NOT IN "
+            "(SELECT id FROM tickets WHERE archived = 1) GROUP BY day",
+            ("2026-01-01", "2027-01-01"),
+        ).fetchall(),
+    }
+    details = {
+        key: " | ".join(row["detail"] for row in rows)
+        for key, rows in plans.items()
+    }
+    h.ok(
+        "idx_events_action" in details["action"],
+        "missing_codes usa idx_events_action",
+    )
+    h.ok(
+        "idx_tickets_updated" in details["updated"],
+        "db_stamp usa idx_tickets_updated",
+    )
+    h.ok(
+        "idx_events_ts" in details["day"] and "SCAN events" not in details["day"],
+        "activity_by_day recorre events por idx_events_ts sin SCAN",
+    )
+    h.ok(
+        not any(
+            row["name"] == "idx_tags_tag"
+            for row in conn.execute("PRAGMA index_list(tags)")
+        ),
+        "no se añade un índice redundante para tags(tag)",
+    )
+
     # Atomicidad en claim_ticket
     t_atomic = repo.create_ticket(conn, title="Ticket para prueba atómica de claim")
     h.ok(t_atomic["status"] == "nuevo", "ticket inicia en estado nuevo")

@@ -51,6 +51,7 @@ CREATE INDEX IF NOT EXISTS idx_tickets_project   ON tickets(project);
 CREATE INDEX IF NOT EXISTS idx_tickets_priority  ON tickets(priority);
 CREATE INDEX IF NOT EXISTS idx_tickets_archived  ON tickets(archived);
 CREATE INDEX IF NOT EXISTS idx_tickets_parent_id ON tickets(parent_id);
+CREATE INDEX IF NOT EXISTS idx_tickets_updated   ON tickets(updated_at);
 
 CREATE TABLE IF NOT EXISTS events (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,6 +67,8 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_ticket ON events(ticket_id);
+CREATE INDEX IF NOT EXISTS idx_events_ts     ON events(ts);
+CREATE INDEX IF NOT EXISTS idx_events_action ON events(action);
 
 CREATE TABLE IF NOT EXISTS comments (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
