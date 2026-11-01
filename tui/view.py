@@ -315,7 +315,7 @@ def draw_header(
         line += " · hay más (n)"
     put(win, 1, 0, line[: max(0, width - 1)], curses.A_DIM)
     if state.mcp_orphans:
-        warning = f"⚠ {state.mcp_orphans} MCP huérfano(s) (ticket servers --prune) "
+        warning = f"⚠ {state.mcp_orphans} MCP huérfano(s) (taiki servers --prune) "
     elif state.mcp_stale:
         warning = "⚠ MCP desactualizado (recarga al quedar idle) "
         if len(line) + len(warning) + 2 <= width:
@@ -829,7 +829,7 @@ def draw_too_small(win, width: int, height: int, minimum: int) -> None:
         win,
         1,
         0,
-        "Amplía la ventana o usa `ticket list` mientras tanto.",
+        "Amplía la ventana o usa `taiki list` mientras tanto.",
         curses.A_DIM,
     )
     win.refresh()

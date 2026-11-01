@@ -122,7 +122,7 @@ def audit(
     limit: int = 100,
     stalled_days: int = 2,
 ) -> dict[str, Any]:
-    """Resumen completo para ``ticket audit``."""
+    """Resumen completo para ``taiki audit``."""
     fleet = servers.inventory(conn)
     return {
         "repo": str(Path(repo).expanduser().resolve()),

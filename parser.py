@@ -55,7 +55,7 @@ from ticketlib.domain import KINDS, LINK_KINDS, PRIORITIES, STATUSES
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="ticket", description="Sistema de tickets local"
+        prog="taiki", description="Sistema de tickets local"
     )
     parser.add_argument("--db", help="Ruta alternativa de la base de datos")
     parser.set_defaults(func=cmd_overview)
@@ -466,7 +466,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.db:
-        os.environ["TICKETS_DB"] = args.db
+        os.environ["TAIKI_DB"] = args.db
     try:
         return args.func(args)
     except domain.TicketError as exc:

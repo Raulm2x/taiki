@@ -1,4 +1,4 @@
-"""Comando ``ticket servers``: inventario y limpieza de servidores MCP."""
+"""Comando ``taiki servers``: inventario y limpieza de servidores MCP."""
 
 from __future__ import annotations
 

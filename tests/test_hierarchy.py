@@ -335,7 +335,7 @@ def run(h: Harness) -> None:
         cli.main(["list", "--all"])
     h.ok(
         "oculta" in out.getvalue(),
-        "ticket list avisa de las tareas ocultas",
+        "taiki list avisa de las tareas ocultas",
     )
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
@@ -345,14 +345,14 @@ def run(h: Harness) -> None:
         suffix in out.getvalue()
         and task_a["code"] not in out.getvalue()
         and epic["code"] in out.getvalue(),
-        "ticket list --tree muestra solo el sufijo de la tarea",
+        "taiki list --tree muestra solo el sufijo de la tarea",
     )
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
         cli.main(["show", epic["code"]])
     h.ok(
         "Progreso: 2/2" in out.getvalue(),
-        "ticket show muestra el progreso de la épica",
+        "taiki show muestra el progreso de la épica",
     )
 
     mcp_roots = handlers.call_tool(

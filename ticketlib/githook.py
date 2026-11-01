@@ -2,43 +2,49 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 from typing import Any
 
+from . import env as envlib
 from .domain import TicketError
 from .store.relations import TICKET_CODE_RE
 
-HOOK_BEGIN = "# >>> tickets auto-link >>>"
-HOOK_END = "# <<< tickets auto-link <<<"
+HOOK_BEGIN = "# >>> taiki auto-link >>>"
+HOOK_END = "# <<< taiki auto-link <<<"
 HOOK_BLOCK = (
     f"{HOOK_BEGIN}\n"
-    "if command -v ticket >/dev/null 2>&1; then\n"
-    "    ticket auto-link --quiet || true\n"
+    "if command -v taiki >/dev/null 2>&1; then\n"
+    "    taiki auto-link --quiet || true\n"
     "fi\n"
     f"{HOOK_END}\n"
 )
+LEGACY_HOOK = ("# >>> tickets auto-link >>>", "# <<< tickets auto-link <<<")
 
-COMMIT_MSG_BEGIN = "# >>> tickets commit-msg >>>"
-COMMIT_MSG_END = "# <<< tickets commit-msg <<<"
+COMMIT_MSG_BEGIN = "# >>> taiki commit-msg >>>"
+COMMIT_MSG_END = "# <<< taiki commit-msg <<<"
 COMMIT_MSG_BLOCK = (
     f"{COMMIT_MSG_BEGIN}\n"
-    "if command -v ticket >/dev/null 2>&1; then\n"
-    '    ticket hook-check-msg "$1" || exit 1\n'
+    "if command -v taiki >/dev/null 2>&1; then\n"
+    '    taiki hook-check-msg "$1" || exit 1\n'
     "fi\n"
     f"{COMMIT_MSG_END}\n"
 )
+LEGACY_COMMIT_MSG = (
+    "# >>> tickets commit-msg >>>",
+    "# <<< tickets commit-msg <<<",
+)
 
-PRE_PUSH_BEGIN = "# >>> tickets pre-push >>>"
-PRE_PUSH_END = "# <<< tickets pre-push <<<"
+PRE_PUSH_BEGIN = "# >>> taiki pre-push >>>"
+PRE_PUSH_END = "# <<< taiki pre-push <<<"
 PRE_PUSH_BLOCK = (
     f"{PRE_PUSH_BEGIN}\n"
-    "if command -v ticket >/dev/null 2>&1; then\n"
-    '    ticket hook-check-push "$@" || exit 1\n'
+    "if command -v taiki >/dev/null 2>&1; then\n"
+    '    taiki hook-check-push "$@" || exit 1\n'
     "fi\n"
     f"{PRE_PUSH_END}\n"
 )
+LEGACY_PRE_PUSH = ("# >>> tickets pre-push >>>", "# <<< tickets pre-push <<<")
 
 BYPASS_TOKEN = "[sin-ticket]"
 DISABLED_VALUES = {"0", "off", "false", "no", "disabled"}
@@ -58,38 +64,61 @@ def _git_dir(root: Path) -> Path:
     return value if value.is_absolute() else root / value
 
 
-def _install(repo: str | Path, name: str, begin: str, block: str) -> Path:
+def _remove_block(content: str, begin: str, end: str) -> str:
+    """Quita un bloque delimitado y las líneas en blanco que deje de más."""
+    while begin in content:
+        start = content.index(begin)
+        try:
+            stop = content.index(end, start) + len(end)
+        except ValueError:  # bloque a medias: no se toca
+            break
+        content = content[:start] + content[stop:]
+        content = content.replace("\n\n\n", "\n\n")
+    return content
+
+
+def _install(
+    repo: str | Path,
+    name: str,
+    begin: str,
+    block: str,
+    legacy: tuple[str, str] | None = None,
+) -> Path:
     root = Path(repo).expanduser().resolve()
     hooks = _git_dir(root) / "hooks"
     hooks.mkdir(parents=True, exist_ok=True)
     hook = hooks / name
 
-    if hook.exists():
-        content = hook.read_text(encoding="utf-8")
-        if begin in content:
-            return hook
+    original = (
+        hook.read_text(encoding="utf-8") if hook.exists() else "#!/bin/sh\n"
+    )
+    content = _remove_block(original, *legacy) if legacy else original
+    if begin not in content:
         content = content.rstrip("\n") + "\n\n" + block
-    else:
-        content = "#!/bin/sh\n\n" + block
-
-    hook.write_text(content, encoding="utf-8")
-    hook.chmod(0o755)
+    content = content.rstrip("\n") + "\n"
+    if content != original or not hook.exists():
+        hook.write_text(content, encoding="utf-8")
+        hook.chmod(0o755)
     return hook
 
 
 def install_post_commit_hook(repo: str | Path = ".") -> Path:
     """Instala (idempotente) el autollenazado en el ``post-commit`` del repo."""
-    return _install(repo, "post-commit", HOOK_BEGIN, HOOK_BLOCK)
+    return _install(repo, "post-commit", HOOK_BEGIN, HOOK_BLOCK, LEGACY_HOOK)
 
 
 def install_commit_msg_hook(repo: str | Path = ".") -> Path:
     """Instala (idempotente) la guardia de ``commit-msg``: exige T-XXXX."""
-    return _install(repo, "commit-msg", COMMIT_MSG_BEGIN, COMMIT_MSG_BLOCK)
+    return _install(
+        repo, "commit-msg", COMMIT_MSG_BEGIN, COMMIT_MSG_BLOCK, LEGACY_COMMIT_MSG
+    )
 
 
 def install_pre_push_hook(repo: str | Path = ".") -> Path:
     """Instala (idempotente) el bloqueo de push con tickets sin confirmar."""
-    return _install(repo, "pre-push", PRE_PUSH_BEGIN, PRE_PUSH_BLOCK)
+    return _install(
+        repo, "pre-push", PRE_PUSH_BEGIN, PRE_PUSH_BLOCK, LEGACY_PRE_PUSH
+    )
 
 
 def check_push(
@@ -171,9 +200,10 @@ def check_commit_message(conn: Any, message: str) -> dict[str, Any]:
 
     Solo la primera línea (asunto) bloquea: el cuerpo puede citar códigos
     antiguos o renumerados al explicar el cambio. Se puede saltar con
-    ``TICKETS_HOOK=off`` o con ``[sin-ticket]`` en el propio mensaje.
+    ``TAIKI_HOOK=off`` (o el alias ``TICKETS_HOOK``) o con ``[sin-ticket]`` en
+    el propio mensaje.
     """
-    disabled = str(os.environ.get("TICKETS_HOOK", "")).strip().lower()
+    disabled = str(envlib.get("HOOK", "")).strip().lower()
     if disabled in DISABLED_VALUES:
         return {"ok": True, "skipped": "env", "codes": [], "missing": [],
                 "unconfirmed": [], "warnings": []}

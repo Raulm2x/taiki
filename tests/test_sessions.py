@@ -388,7 +388,7 @@ def run(h: Harness) -> None:
         desktop.exists() and "x-scheme-handler/ticket" in content,
         "scheme-install crea el handler de escritorio",
     )
-    h.ok("ticket open %u" in content, "el handler ejecuta ticket open")
+    h.ok("taiki open %u" in content, "el handler ejecuta taiki open")
     h.ok(deeplink.scheme_installed(), "scheme_installed detecta el handler")
     h.ok(deeplink.uninstall_scheme(), "scheme-uninstall elimina el handler")
     h.ok(

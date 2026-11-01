@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
+import subprocess
+from pathlib import Path
+
 import cli
 from ticketlib import domain, repo
 from tui import actions as tui_actions
@@ -165,4 +169,18 @@ def run(h: Harness) -> None:
     h.ok(
         payload.startswith("\033]52;c;") and payload.endswith("\033\\"),
         "osc52 genera la secuencia de copiado",
+    )
+
+    # ── Wrapper del CLI ─────────────────────────────────────────────────
+    root = Path(__file__).resolve().parent.parent
+    env = {**os.environ, "TAIKI_QUIET": "1"}
+    result = subprocess.run(
+        [str(root / "bin" / "taiki"), "--help"],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    h.ok(
+        result.returncode == 0 and "usage: taiki" in result.stdout,
+        "bin/taiki arranca el CLI como taiki",
     )

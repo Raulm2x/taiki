@@ -35,7 +35,7 @@ GITIGNORE_NAME = ".gitignore"
 
 MISSING = (
     "No hay una base de datos Taiki en este proyecto.\n"
-    "Crea una con: ticket init --workspace"
+    "Crea una con: taiki init --workspace"
 )
 
 GITIGNORE = """# Base de datos y estado local de Taiki

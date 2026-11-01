@@ -1,6 +1,6 @@
 """Enlaces ``ticket://`` y su handler de escritorio.
 
-``ticket scheme-install`` registra un ``.desktop`` que abre
+``taiki scheme-install`` registra un ``.desktop`` que abre
 ``ticket://open/T-0001`` con el propio CLI, de modo que un hipervínculo OSC 8
 pueda lanzar la sesión del agente desde cualquier terminal.
 """
@@ -55,13 +55,13 @@ def parse_target(value: str) -> str:
 
 
 def _cli_executable() -> str:
-    preferred = Path.home() / ".local" / "bin" / "ticket"
+    preferred = Path.home() / ".local" / "bin" / "taiki"
     if preferred.exists():
         return str(preferred)
-    found = shutil.which("ticket")
+    found = shutil.which("taiki")
     if found:
         return found
-    return "ticket"
+    return "taiki"
 
 
 def desktop_entry() -> str:

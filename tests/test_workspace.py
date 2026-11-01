@@ -18,7 +18,7 @@ def run(h: Harness) -> None:
     # ── Descubrimiento del workspace ────────────────────────────────────
     (home / ".taiki").mkdir(parents=True)
     (home / "otro").mkdir(parents=True)
-    with h.env(HOME=str(home), TICKETS_DB=None):
+    with h.env(HOME=str(home), TAIKI_DB=None, TICKETS_DB=None):
         h.eq(
             workspace.find_workspace(home / "otro"),
             None,
@@ -32,7 +32,7 @@ def run(h: Harness) -> None:
     h.ok((folder / "config.json").is_file(), "init_workspace crea config.json")
     h.ok((folder / ".gitignore").is_file(), "init_workspace crea .gitignore")
 
-    with h.env(HOME=str(home), TICKETS_DB=None):
+    with h.env(HOME=str(home), TAIKI_DB=None, TICKETS_DB=None):
         h.eq(
             workspace.find_workspace(nested),
             folder,
@@ -70,7 +70,12 @@ def run(h: Harness) -> None:
     )
 
     # ── Precedencia de la base de datos ──────────────────────────────────
-    with h.env(HOME=str(home), XDG_DATA_HOME=str(tmp / "xdg"), TICKETS_DB=None):
+    with h.env(
+        HOME=str(home),
+        XDG_DATA_HOME=str(tmp / "xdg"),
+        TAIKI_DB=None,
+        TICKETS_DB=None,
+    ):
         missing = workspace.resolve(home / "otro")
         h.eq(missing["source"], "missing", "sin .taiki el origen es missing")
         h.eq(missing["db"], None, "sin .taiki no hay DB implícita")
@@ -85,11 +90,20 @@ def run(h: Harness) -> None:
                 tmp / "explicita.db",
                 "TAIKI_DB tiene prioridad sobre el proyecto",
             )
-        with h.env(TICKETS_DB=str(tmp / "alias.db")):
+        with h.env(TAIKI_DB=None, TICKETS_DB=str(tmp / "alias.db")):
             h.eq(
                 workspace.resolve_db(nested),
                 tmp / "alias.db",
                 "TICKETS_DB se mantiene como alias",
+            )
+        with h.env(
+            TAIKI_DB=str(tmp / "nueva.db"),
+            TICKETS_DB=str(tmp / "alias.db"),
+        ):
+            h.eq(
+                workspace.resolve_db(nested),
+                tmp / "nueva.db",
+                "TAIKI_DB gana sobre el alias TICKETS_DB",
             )
 
         h.eq(

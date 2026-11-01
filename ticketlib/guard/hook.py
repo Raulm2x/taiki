@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
+from .. import env as envlib
 from .commands import command_is_mutating, path_guarded
 
 WRITE_TOOLS = {
@@ -68,7 +68,7 @@ def parse_hook_input(payload: Any) -> dict[str, Any]:
     agent = (
         data.get("agent")
         or data.get("agent_name")
-        or os.environ.get("TICKETS_AGENT")
+        or envlib.get("AGENT")
         or "agente"
     )
     return {

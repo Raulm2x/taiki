@@ -372,8 +372,12 @@ def call_tool(
     args = args or {}
 
     handler = TOOL_DISPATCH.get(name)
-    if not handler and name.startswith("tickets_"):
-        handler = TOOL_DISPATCH.get(name.removeprefix("tickets_"))
+    if not handler:
+        for prefix in ("taiki_", "tickets_"):
+            if name.startswith(prefix):
+                handler = TOOL_DISPATCH.get(name.removeprefix(prefix))
+                if handler:
+                    break
 
     if not handler:
         raise domain.NotFoundError(f"Herramienta desconocida: {name}")
@@ -393,17 +397,20 @@ def call_tool(
 
 
 def read_resource(uri: str) -> dict[str, Any]:
+    # Acepta el esquema nuevo y el histórico `tickets://` como alias.
+    if uri.startswith("tickets://"):
+        uri = "taiki://" + uri.removeprefix("tickets://")
     conn = db.connect()
     try:
-        if uri == "tickets://inbox":
+        if uri == "taiki://inbox":
             rows = repo.list_tickets(
                 conn, statuses=["nuevo", "pendiente"], limit=100
             )
             data: Any = {"count": len(rows), "tickets": rows}
-        elif uri == "tickets://stats":
+        elif uri == "taiki://stats":
             data = repo.stats(conn)
-        elif uri.startswith("tickets://ticket/"):
-            code = unquote(uri.removeprefix("tickets://ticket/"))
+        elif uri.startswith("taiki://ticket/"):
+            code = unquote(uri.removeprefix("taiki://ticket/"))
             data = repo.get_ticket(conn, code)
         else:
             raise domain.NotFoundError(f"Recurso desconocido: {uri}")
@@ -444,7 +451,7 @@ def _next_prompt(ticket: dict[str, Any] | None) -> str:
     if ticket is None:
         return (
             "No hay tickets pendientes ni nuevos. Si vas a hacer trabajo que no está "
-            "registrado, créalo antes con tickets_create."
+            "registrado, créalo antes con taiki_create."
         )
     body = ticket.get("body") or "(sin descripción)"
     return f"""\
@@ -457,10 +464,10 @@ Proyecto: {ticket.get('project') or '-'}
 {body}
 
 Pasos:
-1. Reclámalo con tickets_claim(code="{ticket['code']}", agent="<tu nombre>").
+1. Reclámalo con taiki_claim(code="{ticket['code']}", agent="<tu nombre>").
 2. Inspecciona el código y aplica el cambio mínimo.
 3. Verifica el resultado.
-4. Ciérralo con tickets_complete(code="{ticket['code']}", resolution="...", commit="...").
+4. Ciérralo con taiki_complete(code="{ticket['code']}", resolution="...", commit="...").
 No lo confirmes: esa transición la hace el usuario con el CLI.
 """
 
@@ -475,7 +482,7 @@ def _review_prompt(rows: list[dict[str, Any]]) -> str:
         )
     lines += [
         "",
-        "Pide al usuario que revise y ejecute `ticket confirm <código>` para cada uno.",
+        "Pide al usuario que revise y ejecute `taiki confirm <código>` para cada uno.",
     ]
     return "\n".join(lines)
 

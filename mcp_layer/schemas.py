@@ -8,12 +8,12 @@ INSTRUCTIONS = """\
 Sistema de tickets local compartido entre agentes y el usuario.
 
 Flujo de trabajo:
-1. Ningún cambio sin ticket. Antes de editar o ejecutar algo que escriba, comprueba que tienes un ticket en "en_progreso": si no, créalo con tickets_create y reclámalo con tickets_claim. El guard de OpenCode bloquea la primera escritura y deja un ticket automático reclamado; ajústalo con tickets_update si el título no encaja.
-2. Al empezar, consulta tickets_list con status="pendiente" (o usa tickets_next) y revisa también "en_progreso" para no duplicar trabajo.
-3. Si descubres trabajo nuevo, regístralo con tickets_create; no lo dejes solo en el chat. Para objetivos con varias tareas, crea una épica y las tareas con parent_id (T-0014.01, T-0014.02…).
-4. Al terminar, usa tickets_complete con una resolución concreta y el commit o los archivos tocados.
+1. Ningún cambio sin ticket. Antes de editar o ejecutar algo que escriba, comprueba que tienes un ticket en "en_progreso": si no, créalo con taiki_create y reclámalo con taiki_claim. El guard de OpenCode bloquea la primera escritura y deja un ticket automático reclamado; ajústalo con taiki_update si el título no encaja.
+2. Al empezar, consulta taiki_list con status="pendiente" (o usa taiki_next) y revisa también "en_progreso" para no duplicar trabajo.
+3. Si descubres trabajo nuevo, regístralo con taiki_create; no lo dejes solo en el chat. Para objetivos con varias tareas, crea una épica y las tareas con parent_id (T-0014.01, T-0014.02…).
+4. Al terminar, usa taiki_complete con una resolución concreta y el commit o los archivos tocados.
 5. Nunca muevas un ticket a "confirmado": esa transición la hace el usuario con el CLI.
-6. Usa tickets_comment para decisiones o bloqueos y tickets_link para commits, archivos y URLs.
+6. Usa taiki_comment para decisiones o bloqueos y taiki_link para commits, archivos y URLs.
 7. Incluye el código T-XXXX en el asunto del commit: el hook commit-msg lo exige.
 
 Estados: nuevo → pendiente → en_progreso → completado → confirmado.
@@ -266,13 +266,13 @@ TOOLS = [
 
 RESOURCES = [
     {
-        "uri": "tickets://inbox",
+        "uri": "taiki://inbox",
         "name": "Bandeja de entrada",
         "description": "Tickets en estado nuevo o pendiente",
         "mimeType": "application/json",
     },
     {
-        "uri": "tickets://stats",
+        "uri": "taiki://stats",
         "name": "Estadísticas",
         "description": "Conteos por estado, tipo, prioridad y proyecto",
         "mimeType": "application/json",
@@ -281,7 +281,7 @@ RESOURCES = [
 
 RESOURCE_TEMPLATES = [
     {
-        "uriTemplate": "tickets://ticket/{code}",
+        "uriTemplate": "taiki://ticket/{code}",
         "name": "Ticket",
         "description": "Detalle completo de un ticket por código (T-0001)",
         "mimeType": "application/json",

@@ -47,7 +47,7 @@ _MUTATING = re.compile(
 
 # Comandos de lectura o que no tocan el árbol de trabajo: nunca piden ticket.
 _SAFE_COMMANDS = {
-    "ticket",
+    "taiki",
     "ps",
     "grep",
     "rg",

@@ -119,7 +119,7 @@ def cmd_open(args: argparse.Namespace) -> int:
 def cmd_scheme_install(args: argparse.Namespace) -> int:
     path = deeplink.install_scheme()
     print(f"Handler ticket:// registrado: {path}")
-    print("Ctrl+clic sobre AGENTE en `ticket list` abrirá la sesión.")
+    print("Ctrl+clic sobre AGENTE en `taiki list` abrirá la sesión.")
     return 0
 
 
@@ -139,7 +139,7 @@ def cmd_tui(args: argparse.Namespace) -> int:
     if not info["exists"]:
         print(
             "No hay una base de datos Taiki en este proyecto.\n"
-            "Crea una con: ticket init --workspace",
+            "Crea una con: taiki init --workspace",
             file=sys.stderr,
         )
         return 1

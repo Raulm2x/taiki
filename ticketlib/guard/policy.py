@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from .. import db, repo, scratch, workspace
+from .. import db, env, repo, scratch, workspace
 from ..domain import TicketError
 from ..util import normalize_agent, resolve_scope
 from .commands import command_touches_home, path_guarded
@@ -14,14 +14,14 @@ from .context import auto_title, find_active, find_pending, find_session_epic, s
 from .hook import is_mutating
 
 DISABLED_VALUES = {"0", "off", "false", "no", "disabled"}
-AUTO_ENV = "TICKETS_GUARD_AUTO"
+AUTO_ENV = "GUARD_AUTO"
 AUTO_MODES = {"off", "scratch", "ticket", "auto"}
 
 
 def disabled(environ: dict[str, str] | None = None) -> bool:
-    """``TICKETS_GUARD=off`` desactiva el guard (escape hatch manual)."""
-    env = os.environ if environ is None else environ
-    return str(env.get("TICKETS_GUARD", "")).strip().lower() in DISABLED_VALUES
+    """``TAIKI_GUARD=off`` (o el alias ``TICKETS_GUARD``) desactiva el guard."""
+    env_vars = os.environ if environ is None else environ
+    return str(env.get("GUARD", "", env_vars)).strip().lower() in DISABLED_VALUES
 
 
 def _allowed(
@@ -56,8 +56,8 @@ def auto_mode(environ: dict[str, str] | None = None) -> str:
     - ``ticket``: siempre visible (comportamiento anterior).
     - ``off``: no crea nada; solo bloquea con instrucciones.
     """
-    env = os.environ if environ is None else environ
-    value = str(env.get(AUTO_ENV, "")).strip().lower()
+    env_vars = os.environ if environ is None else environ
+    value = str(env.get(AUTO_ENV, "", env_vars)).strip().lower()
     return value if value in AUTO_MODES else "auto"
 
 
@@ -146,13 +146,13 @@ def _message(
     else:
         return (
             "Sin ticket activo y no se pudo crear uno automáticamente. "
-            "Crea el ticket con tickets_create, reclámalo con tickets_claim "
+            "Crea el ticket con taiki_create, reclámalo con taiki_claim "
             "y repite la acción."
         )
     return (
         f"{head}\n"
-        "Revisa el título y el cuerpo con tickets_update si hace falta, "
-        f"sigue con el trabajo y al terminar usa tickets_complete {code}."
+        "Revisa el título y el cuerpo con taiki_update si hace falta, "
+        f"sigue con el trabajo y al terminar usa taiki_complete {code}."
     )
 
 
@@ -183,7 +183,7 @@ def evaluate(
     config = workspace.load_config(workspace.find_workspace(session_base))
     enabled = config.get("guard")
     if enabled is None:
-        enabled = bool(os.environ.get("TAIKI_DB") or os.environ.get("TICKETS_DB"))
+        enabled = bool(env.get("DB"))
     if not enabled:
         return _allowed("disabled", session)
     try:

@@ -1,4 +1,4 @@
-"""TUI de tickets: ``ticket tui``.
+"""TUI de tickets: ``taiki tui``.
 
 - ``state.py``      — estado, filtros y geometría, sin curses (testeable).
 - ``detail.py``     — contenido del panel de detalle y de actividad.

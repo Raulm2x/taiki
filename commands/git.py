@@ -120,7 +120,7 @@ def cmd_hook_check_push(args: argparse.Namespace) -> int:
             detail = item["reason"] or "sin ticket"
         print(f"  {item['commit'][:12]}  {detail}", file=sys.stderr)
     print(
-        "Push bloqueado: confirma los tickets con `ticket confirm …` "
+        "Push bloqueado: confirma los tickets con `taiki confirm …` "
         "antes de publicar.",
         file=sys.stderr,
     )
@@ -198,7 +198,7 @@ def cmd_audit(args: argparse.Namespace) -> int:
         if item["state"] in ("huérfano", "desactualizado", "sin registro"):
             print(f"  {item['pid']}  {item['state']}  padre {item['ppid'] or '-'}")
     if server_summary["orphans"] or server_summary["dead"]:
-        print("  Limpia con: ticket servers --prune --apply")
+        print("  Limpia con: taiki servers --prune --apply")
     if server_summary["stale"]:
         print(
             "  El plugin intenta recargarlo al quedar la sesión idle; "

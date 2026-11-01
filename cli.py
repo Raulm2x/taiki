@@ -7,7 +7,7 @@ La implementación está dividida en:
 - ``parser.py``    — argumentos y ``main()``.
 - ``ticketlib/``   — dominio, almacén, sesiones y presentación.
 
-Este módulo se mantiene como fachada para ``bin/ticket`` y para las pruebas.
+Este módulo se mantiene como fachada para ``bin/taiki`` y para las pruebas.
 """
 
 from __future__ import annotations

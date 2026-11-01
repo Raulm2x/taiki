@@ -1,4 +1,4 @@
-"""Comando ``ticket guard``: ¿hay ticket activo para esta acción?"""
+"""Comando ``taiki guard``: ¿hay ticket activo para esta acción?"""
 
 from __future__ import annotations
 

@@ -1,7 +1,7 @@
 """Instalación opt-in del MCP de Taiki en un proyecto.
 
 Taiki no registra un servidor MCP global: cada proyecto decide si lo quiere.
-``ticket mcp install`` escribe la configuración del cliente en la raíz del
+``taiki mcp install`` escribe la configuración del cliente en la raíz del
 proyecto y activa el guard en ``.taiki/config.json``. ``uninstall`` deshace
 ambos cambios.
 """
@@ -19,7 +19,8 @@ from typing import Any
 from ticketlib import workspace
 from ticketlib.domain import TicketError
 
-MCP_NAME = "tickets"
+MCP_NAME = "taiki"
+LEGACY_NAME = "tickets"
 SERVER = Path(__file__).resolve().parent.parent / "server.py"
 
 
@@ -76,27 +77,9 @@ def _install_with_cli(root: Path) -> str | None:
     return (result.stdout or "").strip() or None
 
 
-def install_opencode(root: Path) -> dict[str, Any]:
-    """Registra el MCP solo para este proyecto."""
-    output = _install_with_cli(root)
-    if output is not None:
-        return {"client": "opencode", "method": "cli", "detail": output}
-
-    path = _opencode_config(root)
-    data = _read_json(path)
-    servers = data.setdefault("mcp", {}).setdefault("servers", {})
-    servers[MCP_NAME] = {"type": "local", "command": server_command()}
-    _write_json(path, data)
-    return {"client": "opencode", "method": "file", "detail": str(path)}
-
-
-def uninstall_opencode(root: Path) -> Path | None:
-    """Quita el MCP del proyecto sin tocar el resto de su configuración."""
-    candidates = [
-        root / "opencode.json",
-        root / ".opencode" / "opencode.json",
-    ]
-    for path in candidates:
+def _drop_server(root: Path, name: str) -> Path | None:
+    """Quita una entrada de MCP del proyecto; ``None`` si no estaba."""
+    for path in (root / "opencode.json", root / ".opencode" / "opencode.json"):
         if not path.is_file():
             continue
         try:
@@ -104,12 +87,35 @@ def uninstall_opencode(root: Path) -> Path | None:
         except (OSError, json.JSONDecodeError):
             continue
         servers = (data.get("mcp") or {}).get("servers") or {}
-        if MCP_NAME not in servers:
+        if name not in servers:
             continue
-        servers.pop(MCP_NAME, None)
+        servers.pop(name, None)
         _write_json(path, data)
         return path
     return None
+
+
+def install_opencode(root: Path) -> dict[str, Any]:
+    """Registra el MCP solo para este proyecto (retira la entrada histórica)."""
+    output = _install_with_cli(root)
+    _drop_server(root, LEGACY_NAME)
+    if output is not None:
+        return {"client": "opencode", "method": "cli", "detail": output}
+
+    path = _opencode_config(root)
+    data = _read_json(path)
+    servers = data.setdefault("mcp", {}).setdefault("servers", {})
+    servers.pop(LEGACY_NAME, None)
+    servers[MCP_NAME] = {"type": "local", "command": server_command()}
+    _write_json(path, data)
+    return {"client": "opencode", "method": "file", "detail": str(path)}
+
+
+def uninstall_opencode(root: Path) -> Path | None:
+    """Quita el MCP del proyecto sin tocar el resto de su configuración."""
+    removed = _drop_server(root, MCP_NAME)
+    legacy = _drop_server(root, LEGACY_NAME)
+    return removed or legacy
 
 
 def install_antigravity() -> dict[str, Any]:

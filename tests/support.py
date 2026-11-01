@@ -13,10 +13,15 @@ from ticketlib import db
 # Variables que cada módulo debe poder fijar sin filtrarse al siguiente.
 ISOLATED_ENV = (
     "TAIKI_DB",
+    "TAIKI_GUARD",
+    "TAIKI_GUARD_AUTO",
+    "TAIKI_HOOK",
+    "TAIKI_AGENT",
     "TICKETS_DB",
     "TICKETS_GUARD",
     "TICKETS_GUARD_AUTO",
     "TICKETS_HOOK",
+    "TICKETS_AGENT",
     "OPENCODE_DB",
     "OPENCODE_SESSION_ID",
     "XDG_DATA_HOME",
@@ -55,7 +60,7 @@ class Harness:
                 os.environ[name] = value
 
     def __enter__(self) -> "Harness":
-        self._apply_env(TICKETS_DB=str(self.tmp / "tickets.db"))
+        self._apply_env(TAIKI_DB=str(self.tmp / "tickets.db"))
         expected = (self.tmp / "tickets.db").resolve()
         if db.db_path().resolve() != expected:
             raise RuntimeError(

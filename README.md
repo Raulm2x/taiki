@@ -6,9 +6,9 @@ documentación, seguridad) y para que el usuario revise y confirme lo hecho.
 
 - **Proyecto**: `~/Projects/taiki` (repo independiente; `~/.config/tickets` solo
   conserva un shim de compatibilidad).
-- **Servidor MCP**: `tickets` (stdio). No hay servidor global: se instala por
-  proyecto con `ticket mcp install`.
-- **CLI**: `ticket` para uso humano.
+- **Servidor MCP**: `taiki` (stdio). No hay servidor global: se instala por
+  proyecto con `taiki mcp install`.
+- **CLI**: `taiki` para uso humano.
 - **Base de datos**: una por proyecto en `.taiki/taiki.db`. Sin base de datos
   global: usar Taiki es una decisión de cada proyecto.
 
@@ -30,7 +30,7 @@ La base de datos se resuelve, por orden:
 1. `TAIKI_DB` o el alias histórico `TICKETS_DB` (override explícito).
 2. El `.taiki/` más cercano subiendo desde el directorio actual. La búsqueda se
    detiene antes de `$HOME` para no heredar un `~/.taiki` en todos los proyectos.
-3. Si no hay ninguno, error claro con `ticket init --workspace`.
+3. Si no hay ninguno, error claro con `taiki init --workspace`.
 
 `config.json`:
 
@@ -45,7 +45,7 @@ La base de datos se resuelve, por orden:
 }
 ```
 
-- `guard` es opt-in: `ticket mcp install` lo activa; `ticket mcp uninstall` lo
+- `guard` es opt-in: `taiki mcp install` lo activa; `taiki mcp uninstall` lo
   desactiva.
 - `local.json` permite sobrescribir ajustes que no deben viajar en Git.
 
@@ -66,16 +66,16 @@ nuevo → pendiente → en_progreso → completado → confirmado
 ```
 taiki/
 ├── server.py              entrada MCP (transporte stdio JSON-RPC)
-├── cli.py                 fachada del CLI (compatibilidad y `bin/ticket`)
+├── cli.py                 fachada del CLI (compatibilidad y `bin/taiki`)
 ├── parser.py              argumentos y `main()`
 ├── commands/              un módulo por área de comandos
 │   ├── common.py          conexión, salida y lectura de cuerpo
 │   ├── tickets.py         list, show, new, update, claim, next, stats, export
 │   ├── workflow.py        transition, confirm, reopen, complete, comment
 │   ├── git.py             link, auto-link, hook-install, audit
-│   ├── guard.py           ticket guard (¿hay ticket activo para esta acción?)
+│   ├── guard.py           taiki guard (¿hay ticket activo para esta acción?)
 │   ├── mcp.py             instala/retira el MCP solo en el proyecto actual
-│   ├── servers.py         ticket servers (inventario y limpieza de MCP)
+│   ├── servers.py         taiki servers (inventario y limpieza de MCP)
 │   └── system.py          open, scheme-install, scheme-uninstall, tui
 ├── tui/                   TUI en curses
 │   ├── state.py           estado, filtros y geometría (sin curses)
@@ -107,8 +107,8 @@ taiki/
 │   ├── test_githook.py    commit-msg, pre-push y auditoría
 │   └── test_hygiene.py    pruebas del propio auditor
 ├── selftest.py            shim compatible -> `tests/run.py`
-├── bin/ticket             wrapper del CLI
-├── bin/tickets-mcp        wrapper del servidor MCP
+├── bin/taiki              wrapper del CLI
+├── bin/taiki-mcp          wrapper del servidor MCP
 ├── mcp_layer/
 │   ├── schemas.py         tools, recursos, prompts e instrucciones
 │   └── handlers.py        despachador declarativo y resolución de sesiones multi-entorno
@@ -151,20 +151,44 @@ wrappers resuelven su propia ruta con `readlink -f`, así que funcionan tanto
 desde el repo como a través de un enlace simbólico.
 
 ```bash
-ln -sfn ~/Projects/taiki/bin/ticket ~/.local/bin/ticket
-ln -sfn ~/Projects/taiki/bin/tickets-mcp ~/.local/bin/tickets-mcp
+ln -sfn ~/Projects/taiki/bin/taiki ~/.local/bin/taiki
+ln -sfn ~/Projects/taiki/bin/taiki-mcp ~/.local/bin/taiki-mcp
 ```
+
+Los wrappers `bin/ticket` y `bin/tickets-mcp` se retiraron cuando el comando
+`taiki` quedó asentado. Si todavía tienes hooks antiguos en otro repositorio,
+migralos antes de actualizar:
+
+```bash
+cd /ruta/al/repo && taiki hook-install
+```
+
+### Migración desde `ticket`
+
+Taiki se llamaba `ticket` hasta esta versión. El comando y los wrappers
+antiguos ya no existen; la compatibilidad de **datos** se mantiene:
+
+| Antes | Ahora | Notas |
+| --- | --- | --- |
+| `ticket <cmd>` | `taiki <cmd>` | el alias se retiró; usa `taiki` |
+| MCP `tickets` (tools `tickets_*`) | MCP `taiki` (tools `taiki_*`) | `tickets_*` y los recursos `tickets://` siguen aceptándose |
+| `TICKETS_DB`, `TICKETS_GUARD`, `TICKETS_GUARD_AUTO`, `TICKETS_HOOK`, `TICKETS_AGENT` | `TAIKI_*` | las antiguas se leen como alias; las nuevas tienen prioridad |
+| Hooks `# >>> tickets ... >>>` | `# >>> taiki ... >>>` | `taiki hook-install` reescribe los bloques sin duplicarlos |
+
+`taiki mcp install` retira la entrada histórica `tickets` de `opencode.json` y
+registra `taiki`. Después de actualizar, reinicia OpenCode para que recargue el
+servidor MCP con el nombre nuevo.
 
 ### Activar Taiki en un proyecto
 
 ```bash
 cd ~/Projects/mi-proyecto
-ticket init --workspace          # crea .taiki/ con su DB y config.json
-ticket mcp install               # registra el MCP solo en este proyecto
-ticket mcp install --antigravity # opcional: Antigravity solo tiene alcance global
+taiki init --workspace          # crea .taiki/ con su DB y config.json
+taiki mcp install               # registra el MCP solo en este proyecto
+taiki mcp install --antigravity # opcional: Antigravity solo tiene alcance global
 ```
 
-`ticket mcp install` escribe la configuración del cliente en la raíz del
+`taiki mcp install` escribe la configuración del cliente en la raíz del
 proyecto (`opencode.json`) y activa `guard` en `.taiki/config.json`. En OpenCode
 cada proyecto arranca su propia instancia MCP con su propia DB; no hay un
 servidor global siempre activo.
@@ -172,13 +196,13 @@ servidor global siempre activo.
 Para quitarlo:
 
 ```bash
-ticket mcp uninstall             # retira el MCP y desactiva el guard
+taiki mcp uninstall             # retira el MCP y desactiva el guard
 ```
 
 Atajo equivalente:
 
 ```bash
-ticket init --workspace --mcp
+taiki init --workspace --mcp
 ```
 
 ### Antigravity
@@ -188,7 +212,7 @@ El CLI de Antigravity no ofrece alcance por proyecto: `agy mcp add` escribe en
 por defecto; si lo quieres ahí, instálalo explícitamente:
 
 ```bash
-ticket mcp install --antigravity
+taiki mcp install --antigravity
 ```
 
 ### Otros clientes MCP
@@ -196,7 +220,7 @@ ticket mcp install --antigravity
 ```json
 {
   "mcpServers": {
-    "tickets": {
+    "taiki": {
       "command": "python3",
       "args": ["/home/rowlm/Projects/taiki/server.py"]
     }
@@ -210,50 +234,50 @@ El cliente debe arrancar el proceso con el directorio del proyecto como `cwd`
 ## CLI
 
 ```bash
-ticket list                     # abiertos, del código más reciente al más antiguo
-ticket list --all               # incluye completados, confirmados y cancelados
-ticket list -s pendiente -p alta
-ticket list --sort priority     # prioridad y antigüedad (orden antiguo)
-ticket list --limit 20 --offset 20  # paginación
-ticket list --tag noctalia      # filtrar por etiqueta
-ticket list --tree              # épicas con sus tareas, indentadas
-ticket list --flat              # todas las tareas, sin plegar
-ticket list --parent T-0014     # solo las tareas de una épica
-ticket show T-0001              # detalle completo (incluye jerarquía de subtareas)
-ticket new -t "Revisar backups" -k mantenimiento -p alta --tags backup infra
-ticket new -t "Subtarea" --parent T-0014  # crea T-0014.01, T-0014.02…
-ticket attach T-0014 T-0008 T-0009   # agrupa tickets existentes bajo una épica
-ticket detach T-0008                  # la devuelve a la raíz
-ticket renumber                      # simula pasar T-0023… a T-0022.01, .02…
-ticket renumber --apply              # renombra los códigos planos
-ticket claim T-0001
-ticket complete T-0001 -r "Qué se hizo y cómo se verificó" --commit abc1234
-ticket confirm T-0001           # solo usuario
-ticket confirm T-0003 T-0004    # varios a la vez, atómico
-ticket reopen T-0001 --why "Reaparece el fallo"
-ticket reject T-0001 --why "Falta cubrir el caso vacío"  # reabre y cuenta iteración
-ticket comment T-0001 "Nota"
-ticket transition T-0001 bloqueado --note "Espera respuesta"
-ticket stats
-ticket next
-ticket scratch                   # ticket temporal oculto para pruebas
-ticket scratch --list            # scratch vivos (código, caducidad, título)
-ticket scratch --clean           # archiva los caducados
-ticket scratch --promote T-0040  # lo devuelve a la tabla
-ticket list --include-scratch    # los muestra en el listado
-ticket export -o ~/tickets.json
-ticket link T-0001 commit abc1234
-ticket auto-link --commit HEAD  # enlaza los T-XXXX del mensaje
-ticket guard --tool write --path ~/.config/x --session ses_abc  # ¿hay ticket?
-ticket servers                  # inventario de servidores MCP
-ticket servers --prune --apply  # limpia huérfanos y registros muertos
-ticket servers --prune --apply --duplicates  # además, duplicados (conserva el nuevo)
-ticket audit --days 14          # commits sin ticket, huecos y estado del MCP
-ticket hook-install             # post-commit + commit-msg + pre-push
-ticket                          # resumen rápido + abiertos
-ticket open T-0004              # abre la sesión del agente en kitty
-ticket scheme-install           # registra ticket:// para Ctrl+clic
-ticket tui                      # TUI con toggles para confirmar
+taiki list                     # abiertos, del código más reciente al más antiguo
+taiki list --all               # incluye completados, confirmados y cancelados
+taiki list -s pendiente -p alta
+taiki list --sort priority     # prioridad y antigüedad (orden antiguo)
+taiki list --limit 20 --offset 20  # paginación
+taiki list --tag noctalia      # filtrar por etiqueta
+taiki list --tree              # épicas con sus tareas, indentadas
+taiki list --flat              # todas las tareas, sin plegar
+taiki list --parent T-0014     # solo las tareas de una épica
+taiki show T-0001              # detalle completo (incluye jerarquía de subtareas)
+taiki new -t "Revisar backups" -k mantenimiento -p alta --tags backup infra
+taiki new -t "Subtarea" --parent T-0014  # crea T-0014.01, T-0014.02…
+taiki attach T-0014 T-0008 T-0009   # agrupa tickets existentes bajo una épica
+taiki detach T-0008                  # la devuelve a la raíz
+taiki renumber                      # simula pasar T-0023… a T-0022.01, .02…
+taiki renumber --apply              # renombra los códigos planos
+taiki claim T-0001
+taiki complete T-0001 -r "Qué se hizo y cómo se verificó" --commit abc1234
+taiki confirm T-0001           # solo usuario
+taiki confirm T-0003 T-0004    # varios a la vez, atómico
+taiki reopen T-0001 --why "Reaparece el fallo"
+taiki reject T-0001 --why "Falta cubrir el caso vacío"  # reabre y cuenta iteración
+taiki comment T-0001 "Nota"
+taiki transition T-0001 bloqueado --note "Espera respuesta"
+taiki stats
+taiki next
+taiki scratch                   # ticket temporal oculto para pruebas
+taiki scratch --list            # scratch vivos (código, caducidad, título)
+taiki scratch --clean           # archiva los caducados
+taiki scratch --promote T-0040  # lo devuelve a la tabla
+taiki list --include-scratch    # los muestra en el listado
+taiki export -o ~/tickets.json
+taiki link T-0001 commit abc1234
+taiki auto-link --commit HEAD  # enlaza los T-XXXX del mensaje
+taiki guard --tool write --path ~/.config/x --session ses_abc  # ¿hay ticket?
+taiki servers                  # inventario de servidores MCP
+taiki servers --prune --apply  # limpia huérfanos y registros muertos
+taiki servers --prune --apply --duplicates  # además, duplicados (conserva el nuevo)
+taiki audit --days 14          # commits sin ticket, huecos y estado del MCP
+taiki hook-install             # post-commit + commit-msg + pre-push
+taiki                          # resumen rápido + abiertos
+taiki open T-0004              # abre la sesión del agente en kitty
+taiki scheme-install           # registra ticket:// para Ctrl+clic
+taiki tui                      # TUI con toggles para confirmar
 ```
 
 `--json` está disponible en `list`, `show`, `stats`, `next`, `guard` y `audit`.
@@ -275,8 +299,8 @@ tareas colgando de él. Así la lista no crece con cada paso.
   se reclaman sus tareas.
 - **Siguiente**: `next` nunca devuelve una épica, solo trabajo accionable.
 - **Códigos planos**: si un proceso antiguo creó tareas con código normal
-  (`T-0023` bajo `T-0022`), `ticket renumber --apply` los pasa a `.01`, `.02`…
-  `ticket audit` los lista. Los adoptados con `attach` nunca se tocan.
+  (`T-0023` bajo `T-0022`), `taiki renumber --apply` los pasa a `.01`, `.02`…
+  `taiki audit` los lista. Los adoptados con `attach` nunca se tocan.
 
 ```
 T-0014       Jerarquía de tickets          [2/3]
@@ -286,10 +310,10 @@ T-0014       Jerarquía de tickets          [2/3]
 ```
 
 ```bash
-ticket new -t "Dashboard TUI 2.0" -p alta        # épica (T-0014)
-ticket new -t "Panel de detalle" --parent T-0014 # T-0014.01
-ticket attach T-0014 T-0008 T-0009                # adoptar tickets sueltos
-ticket list --tree
+taiki new -t "Dashboard TUI 2.0" -p alta        # épica (T-0014)
+taiki new -t "Panel de detalle" --parent T-0014 # T-0014.01
+taiki attach T-0014 T-0008 T-0009                # adoptar tickets sueltos
+taiki list --tree
 ```
 
 ### Listado largo y paginación
@@ -330,20 +354,20 @@ enlace; si no lo pasa, la columna usa el actor del último evento.
   que los pendientes resalten.
 
 ```bash
-ticket scheme-install     # registra el handler ticket:// en ~/.local/share/applications
-ticket open T-0004        # herdr si está disponible; si no, kitty
-ticket open T-0004 --herdr --print-only   # plan de herdr sin tocar nada
-ticket open T-0004 --new --space current  # otra sesión en el workspace actual
+taiki scheme-install     # registra el handler ticket:// en ~/.local/share/applications
+taiki open T-0004        # herdr si está disponible; si no, kitty
+taiki open T-0004 --herdr --print-only   # plan de herdr sin tocar nada
+taiki open T-0004 --new --space current  # otra sesión en el workspace actual
 ```
 
-`ticket open` usa `TICKET_TERMINAL` (por defecto `kitty`) y abre
+`taiki open` usa `TICKET_TERMINAL` (por defecto `kitty`) y abre
 la terminal ejecutando `opencode --session <id>` o `agy --conversation <id>`
 según corresponda dentro del directorio de la sesión. Si corre bajo UWSM,
 confinará la app con `uwsm app --`.
 
 **Con herdr disponible** (dentro de un pane con `HERDR_ENV=1`, desde la TUI
 lanzada fuera —se detecta por el socket— o con `--herdr`) no se lanza una
-terminal aparte: `ticket open` y la tecla `o` de la TUI usan la API de herdr.
+terminal aparte: `taiki open` y la tecla `o` de la TUI usan la API de herdr.
 
 1. Si la sesión del ticket ya vive en un pane (`agent_session.value`), solo
    hacen foco: no se duplica nada.
@@ -381,7 +405,7 @@ perderse en `DEVNULL`.
 ### Confirmar en lote
 
 ```bash
-ticket confirm T-0003 T-0004
+taiki confirm T-0003 T-0004
 ```
 
 `confirm` valida **todos** los códigos antes de escribir y aplica el lote en
@@ -395,7 +419,7 @@ una sola transacción:
 - otro estado o código inexistente → **no se confirma ninguno** y sale con
   código 1 listando los problemas por stderr.
 
-### TUI (`ticket tui`)
+### TUI (`taiki tui`)
 
 ```
  Tickets  abiertos 6 · en progreso 5 · por confirmar 3 · urgentes 0 · bloqueados 1
@@ -440,7 +464,7 @@ enlazar un commit y abrir la sesión del agente.
   búsqueda `/` usa FTS (título, cuerpo y código), añade las coincidencias en
   **comentarios** y resalta lo encontrado en la lista y en el panel; también
   mira proyecto, agente y etiquetas. `O` alterna el orden código/prioridad
-  (`ticket tui --order priority`).
+  (`taiki tui --order priority`).
 - **Paginación**: al llegar al final (o con `n`) se cargan 200 tickets más;
   el indicador `hay más` desaparece cuando ya está todo.
 - `espacio`/`enter` marca (solo `completado`), `a` marca todos los
@@ -464,28 +488,28 @@ enlazar un commit y abrir la sesión del agente.
 
 ### Automatización y backup
 
-- `ticket auto-link` lee el mensaje del commit (`git show -s --format=%B`) y
+- `taiki auto-link` lee el mensaje del commit (`git show -s --format=%B`) y
   enlaza el hash a cada ticket existente mencionado como `T-XXXX`. Los códigos
   sin ticket se reportan por stderr sin romper el commit.
-- `ticket hook-install` añade bloques gestionados al `post-commit`
+- `taiki hook-install` añade bloques gestionados al `post-commit`
   (autollenazado), al `commit-msg` (exige `T-XXXX` **confirmado** en el asunto)
   y al `pre-push` (bloquea commits nuevos con tickets sin confirmar); ejecutarlo
   dos veces no duplica nada y respeta hooks previos.
-- `ticket audit` revisa commits sin ticket, tickets `en_progreso` sin actividad,
+- `taiki audit` revisa commits sin ticket, tickets `en_progreso` sin actividad,
   cerrados sin resolución, tareas con código plano, huecos de numeración,
   cerrados **sin commit enlazado** y si el MCP en ejecución cargó el código
   actual.
 - **Commit relacionado**: no hay flag de «commiteado»; se deriva de los enlaces
-  `kind=commit`. `ticket show` y el panel de detalle muestran
+  `kind=commit`. `taiki show` y el panel de detalle muestran
   `Commit: abc1234` (o `+N` si hay varios). Al enlazar se normaliza al hash
   completo y se evita duplicar corto/largo; no se toca la tabla.
 - **MCP desactualizado**: el servidor MCP es un proceso de larga vida; tras
   cambiar su código sigue con la versión anterior hasta reiniciar OpenCode.
   Al conectar guarda en `meta` una huella (`mcp_fingerprint`), el pid y la hora;
-  `ticket audit` la compara con el código en disco y la TUI muestra
+  `taiki audit` la compara con el código en disco y la TUI muestra
   `⚠ MCP desactualizado` en la cabecera. Reinicia OpenCode para quitarlo.
 - **Códigos**: no se reciclan. Un hueco (`T-0018`) significa que ese número se
-  asignó y luego se renombró o canceló; `ticket audit` lo explica con el evento
+  asignó y luego se renombró o canceló; `taiki audit` lo explica con el evento
   `renumerar` o lo marca como «sin rastro».
 - `scripts/tickets-backup.sh` usa `sqlite3 .backup` (seguro con la DB abierta)
   y conserva 14 días en `~/.local/share/tickets/backups/`. El timer de usuario
@@ -496,29 +520,29 @@ enlazar un commit y abrir la sesión del agente.
 El trabajo se entrega **antes** de publicarse:
 
 1. El agente implementa y completa el ticket.
-2. El usuario revisa y confirma con `ticket confirm` (o `c` en la TUI).
+2. El usuario revisa y confirma con `taiki confirm` (o `c` en la TUI).
 3. Solo entonces se hace commit y push.
 
 El `commit-msg` exige que los tickets del asunto estén en **`confirmado`**, no
 solo que existan; el `pre-push` revisa los commits nuevos y bloquea el push si
 alguno referencia un ticket sin confirmar. Saltos: `[sin-ticket]` para commits
-de mantenimiento o `TICKETS_HOOK=off`.
+de mantenimiento o `TAIKI_HOOK=off`.
 
 Si la revisión rechaza el trabajo:
 
 ```bash
-ticket reject T-0033 --why "Falta el caso de error"
+taiki reject T-0033 --why "Falta el caso de error"
 ```
 
 El ticket vuelve a `en_progreso`, deja un comentario con el motivo y, al
 volver a completarlo, sube el contador **`iterations`**. Se muestra en
-`ticket show`, en el panel de detalle de la TUI (`Iteraciones`) y en JSON:
+`taiki show`, en el panel de detalle de la TUI (`Iteraciones`) y en JSON:
 `iterations: 2` significa dos entregas, la segunda tras un rechazo.
 
 ### Guard: ningún cambio sin ticket
 
 Las instrucciones se las puede saltar un agente; el guard las hace cumplir.
-`ticket guard` decide si una acción que escribe puede pasar:
+`taiki guard` decide si una acción que escribe puede pasar:
 
 - Si la sesión ya tiene un ticket `en_progreso` (o lo tiene un ancestro, en el
   caso de un subagente), pasa.
@@ -536,18 +560,19 @@ padre seguirá esperando a que la tarea nueva termine.
 
 **Sin épica, el ticket automático es un scratch oculto** (TTL 120 min): el
 guard desbloquea igual, pero no aparece en `list`/`stats`/`next`/TUI. Si el
-trabajo es real, `ticket scratch --promote T-XXXX`; si no, caduca solo.
-`TICKETS_GUARD_AUTO` cambia la política: `scratch` (siempre oculto), `ticket`
+trabajo es real, `taiki scratch --promote T-XXXX`; si no, caduca solo.
+`TAIKI_GUARD_AUTO` cambia la política: `scratch` (siempre oculto), `ticket`
 (siempre visible) u `off` (bloquear sin crear nada).
 
 El segundo intento ya pasa: el agente nunca se queda atascado, pero no puede
 escribir sin que exista un ticket. Lecturas, rutas fuera del HOME (`/tmp`,
-`/usr`, `/var/cache`…) y `TICKETS_GUARD=off` no se bloquean.
+`/usr`, `/var/cache`…) y `TAIKI_GUARD=off` no se bloquean.
 
 **Publicar no pide ticket.** El clasificador (`split_commands`) trocea el
 comando por `;`, `&&`, `||`, `|` y saltos de línea respetando comillas, ignora
 heredocs y redirecciones inocuas (`2>&1`, `>/dev/null`) y aplica una allowlist:
-`git add/commit/push/tag/fetch/log/diff/…`, `ticket` y las lecturas habituales
+`git add/commit/push/tag/fetch/log/diff/…`, `taiki` y las
+lecturas habituales
 pasan; solo bloquea escrituras reales (redirección a un fichero, `sed -i`,
 `rm/mv/cp/tee`, `git checkout/reset/clean/stash`, `find -delete`, `xargs rm`…).
 Así `cd ~/.config && git push 2>&1 | tail` funciona sin ticket, y la puerta de
@@ -560,41 +585,41 @@ modelo lo vea; cachea la autorización 30 s por sesión y falla abierto si el CL
 no responde.
 
 ```bash
-ticket guard --tool write --path ~/.config/AGENTS.md --session ses_abc
-ticket guard --tool bash --command "git commit -m 'x (T-0017)'" --session ses_abc
-TICKETS_GUARD=off ticket guard --tool write --path ~/.config/x  # bypass
+taiki guard --tool write --path ~/.config/AGENTS.md --session ses_abc
+taiki guard --tool bash --command "git commit -m 'x (T-0017)'" --session ses_abc
+TAIKI_GUARD=off taiki guard --tool write --path ~/.config/x  # bypass
 ```
 
-El `commit-msg` instalado por `ticket hook-install` exige un `T-XXXX` existente
+El `commit-msg` instalado por `taiki hook-install` exige un `T-XXXX` existente
 **en el asunto**. Los códigos del cuerpo se avisan sin bloquear, para poder
 explicar renumeraciones o historia. Para commits que no son trabajo de un
-ticket, escribe `[sin-ticket]` o usa `TICKETS_HOOK=off`.
+ticket, escribe `[sin-ticket]` o usa `TAIKI_HOOK=off`.
 
 ### Tickets temporales (scratch)
 
 Para pruebas o exploración sin ensuciar la tabla:
 
 ```bash
-ticket scratch -t "Probar migración" --ttl 30
+taiki scratch -t "Probar migración" --ttl 30
 # T-0040  scratch (en_progreso, caduca 2026-10-31T18:30:00-05:00)
-ticket scratch --list
-ticket scratch --clean
+taiki scratch --list
+taiki scratch --clean
 ```
 
 - Es un ticket normal con el marcador interno `_scratch` y `_scratch-sesion:<id>`
   (reservados: la etiqueta de tema `scratch` sigue siendo libre); el guard lo
   acepta como activo, pero **no aparece** en `list`, `stats`, `next`, `audit`
-  ni en la TUI. Se ve con `ticket list --include-scratch`.
-- `ticket scratch` **reutiliza** el scratch vivo de la misma sesión (no crea
+  ni en la TUI. Se ve con `taiki list --include-scratch`.
+- `taiki scratch` **reutiliza** el scratch vivo de la misma sesión (no crea
   uno por comando) y archiva los caducados al crear otro.
-- `--ttl` son minutos (120 por defecto); al vencer, `ticket scratch --clean` lo
+- `--ttl` son minutos (120 por defecto); al vencer, `taiki scratch --clean` lo
   archiva. `--promote` lo devuelve a la tabla conservando historial; `--drop`
   lo archiva. `confirm` los rechaza a propósito.
 - `export` los incluye: es un respaldo, no una vista.
 
 ### Servidores MCP
 
-`ticket servers` cruza el registro `mcp_servers` con `/proc` para saber qué
+`taiki servers` cruza el registro `mcp_servers` con `/proc` para saber qué
 procesos del servidor MCP están vivos y con quién:
 
 ```
@@ -611,25 +636,25 @@ procesos del servidor MCP están vivos y con quién:
 
 Al arrancar, el MCP borra del registro las filas de procesos que ya no
 existen (autohigiene, sin matar nada). `tickets-servers.timer` ejecuta
-`ticket servers --prune --apply` a diario.
+`taiki servers --prune --apply` a diario.
 
-`ticket servers --prune` simula la limpieza y `--apply` termina huérfanos y
+`taiki servers --prune` simula la limpieza y `--apply` termina huérfanos y
 borra registros muertos: espera la muerte tras `SIGTERM`, escala a `SIGKILL` y
 solo borra la fila cuando consta muerto. Los duplicados no se tocan salvo con
 `--duplicates`, que conserva el proceso más reciente.
 
 El inventario no se limita a tickets: descubre cualquier MCP hijo del proceso
 `opencode serve` (heurística por "mcp"/`server.py`), le deduce el nombre y lo
-marca igual. Así un segundo servidor entra solo en `ticket servers`. **Nunca** se toca un proceso con padre vivo: una
+marca igual. Así un segundo servidor entra solo en `taiki servers`. **Nunca** se toca un proceso con padre vivo: una
 sesión idle durante horas conserva su servidor, y `--prune` revalida el padre
 justo antes de enviar el `SIGTERM`. El latido es informativo, no decide.
 
-El plugin `tickets-servers.js` pide a OpenCode que recargue el MCP cuando la
+El plugin `taiki-servers.js` pide a OpenCode que recargue el MCP cuando la
 huella no coincide, al quedar la sesión idle y una sola vez por huella (sin
 bucles); después comprueba si el proceso reinició de verdad y lo deja en el
-log. Mientras siga viejo, `tickets create` con `parent_id` **rechaza** la tarea
+log. Mientras siga viejo, `taiki create` con `parent_id` **rechaza** la tarea
 (compara la huella cargada con la del disco) para no numerarla mal a mitad de
-turno. `ticket audit` y la cabecera de la TUI muestran huérfanos y
+turno. `taiki audit` y la cabecera de la TUI muestran huérfanos y
 desactualizados con el comando para arreglarlo.
 
 ### Guard en otros agentes
@@ -639,7 +664,7 @@ pre-herramienta, el contrato es un JSON por stdin:
 
 ```bash
 echo '{"tool_name":"write_file","tool_input":{"path":"/ruta"},"session_id":"ses_x","agent":"antigravity"}' \
-  | ticket guard --hook
+  | taiki guard --hook
 # {"decision":"deny","action":"created","ticket":"T-0031","reason":"…"}  (exit 2)
 ```
 
@@ -665,30 +690,30 @@ echo '{"tool_name":"write_file","tool_input":{"path":"/ruta"},"session_id":"ses_
 | `stats` | Resumen por estado, tipo, prioridad y proyecto |
 | `next` | Siguiente ticket pendiente |
 
-Recursos: `tickets://inbox`, `tickets://stats`, `tickets://ticket/{code}`.
-Prompts: `tickets:next`, `tickets:review`.
+Recursos: `taiki://inbox`, `taiki://stats`, `taiki://ticket/{code}`.
+Prompts: `taiki:next`, `taiki:review`.
 
 Resolución de sesiones automática compatible con `sessionId`, `session_id`, `AGY_SESSION_ID` y `ai.opencode/sessionID`.
 
 ## Flujo recomendado para agentes
 
-1. Al empezar: `tickets_list` con `status="pendiente"` o `tickets_next`.
-2. Antes de tocar código: `tickets_claim`. Si no hay ticket, créalo primero: el
+1. Al empezar: `taiki_list` con `status="pendiente"` o `taiki_next`.
+2. Antes de tocar código: `taiki_claim`. Si no hay ticket, créalo primero: el
    guard (cuando el proyecto lo tiene activado) bloquea la primera escritura y
    deja un ticket automático reclamado.
-3. Trabajo nuevo descubierto: `tickets_create` **pasando siempre `agent`**; el
+3. Trabajo nuevo descubierto: `taiki_create` **pasando siempre `agent`**; el
    ticket queda asignado a ese agente desde su creación.
-4. Al terminar: `tickets_complete` con resolución y commit.
-5. Nunca `confirmado`: eso lo hace el usuario con `ticket confirm`.
+4. Al terminar: `taiki_complete` con resolución y commit.
+5. Nunca `confirmado`: eso lo hace el usuario con `taiki confirm`.
 
 ## Datos y respaldo
 
 - La DB vive en `.taiki/taiki.db` del proyecto y está ignorada por Git.
-- Respaldo lógico: `ticket export -o ~/tickets.json`.
+- Respaldo lógico: `taiki export -o ~/tickets.json`.
 - Respaldo físico: `sqlite3 .taiki/taiki.db ".backup /ruta/copia.db"`.
 - `scripts/tickets-backup.sh` respalda las DB de los `.taiki/` encontrados y
   conserva 14 días.
-- Para usar otra DB: `TAIKI_DB=/ruta/taiki.db ticket list` (o el alias
+- Para usar otra DB: `TAIKI_DB=/ruta/taiki.db taiki list` (o el alias
   `TICKETS_DB`). `--db` sigue funcionando.
 - No guardes secretos en los tickets.
 
@@ -701,7 +726,7 @@ python3 tests/run.py --only guard    # una sola área, con su propia DB temporal
 python3 tests/run.py -k tui -v       # filtrar por nombre y ver el desglose
 python3 tests/run.py --audit         # ruido: duplicados, imports, seeds y línea base
 python3 selftest.py                  # compatibilidad (delega en tests/run.py)
-TICKETS_DB=/tmp/opencode/tickets.db python3 cli.py list
+TAIKI_DB=/tmp/opencode/taiki.db python3 cli.py list
 ```
 
 Cada módulo de la suite crea su propia base de datos temporal y restaura las
@@ -737,19 +762,19 @@ printf '%s\n' \
   instancia resuelve su `.taiki/` al vuelo y nunca comparte DB con otro proyecto.
 - El registro de procesos (`~/.local/share/taiki/registry.db`) es global y solo
   guarda PID, padre, huella, versión y workspace. No contiene tickets.
-- `ticket servers` muestra la columna `ESPACIO` para saber qué instancia sirve a
+- `taiki servers` muestra la columna `ESPACIO` para saber qué instancia sirve a
   qué proyecto; `--prune` limpia huérfanos sin tocar procesos con padre vivo.
 - No hay MCP global ni base de datos global. Un directorio sin `.taiki/` no
   arranca una instancia útil: el servidor responde con el error de
-  `ticket init --workspace`.
-- Los códigos (`T-0001`) son por proyecto. `ticket open T-0001` resuelve con el
+  `taiki init --workspace`.
+- Los códigos (`T-0001`) son por proyecto. `taiki open T-0001` resuelve con el
   `cwd`; enlazar entre proyectos necesitará incluir el workspace en el enlace
   (pendiente).
 
 ## Notas de diseño
 
 - El estado es un contrato de flujo, no una frontera de seguridad: un agente con
-  acceso al shell podría ejecutar `ticket confirm`. La separación evita errores
+  acceso al shell podría ejecutar `taiki confirm`. La separación evita errores
   accidentales, no un atacante.
 - SQLite en modo WAL con `busy_timeout` y transacciones `BEGIN IMMEDIATE` reentrantes permite alta concurrencia segura sin condiciones de carrera.
 - Resolución de ámbito inteligente: `resolve_scope` localiza la raíz del repositorio Git hacia arriba para asociar el proyecto correcto incluso al ejecutar desde subdirectorios.

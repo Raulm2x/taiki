@@ -169,6 +169,19 @@ def run(h: Harness) -> None:
         and not off["ticket"],
         "TICKETS_GUARD_AUTO=off bloquea sin crear nada",
     )
+    off_new = guard.evaluate(
+        tool="write",
+        session="ses_guard_auto_off_new",
+        agent="opencode",
+        path=str(Path.home() / ".config/x"),
+        environ={"TAIKI_GUARD_AUTO": "off"},
+    )
+    h.ok(
+        not off_new["allow"]
+        and off_new["action"] == "blocked"
+        and not off_new["ticket"],
+        "TAIKI_GUARD_AUTO=off bloquea sin crear nada",
+    )
     forced = guard.evaluate(
         tool="write",
         session="ses_guard_auto_ticket",
@@ -285,6 +298,17 @@ def run(h: Harness) -> None:
     h.ok(
         guard.evaluate(
             tool="write",
+            session="ses_guard_d2",
+            agent="opencode",
+            path=str(Path.home() / ".config/x"),
+            environ={"TAIKI_GUARD": "off"},
+        )["action"]
+        == "disabled",
+        "TAIKI_GUARD=off desactiva el guard",
+    )
+    h.ok(
+        guard.evaluate(
+            tool="write",
             session="ses_guard_e",
             agent="opencode",
             path="/tmp/opencode/x",
@@ -374,7 +398,7 @@ def run(h: Harness) -> None:
         code == 3
         and not guard_payload["allow"]
         and guard_payload["ticket"],
-        "ticket guard devuelve 3 y JSON",
+        "taiki guard devuelve 3 y JSON",
     )
 
     # ── Guard: publicar no exige ticket y las lecturas tampoco ───
@@ -386,7 +410,7 @@ def run(h: Harness) -> None:
             "git add -A && git commit -m 'x (T-0001)' && git push"
         )
         and not guard.command_is_mutating('python3 -c "print(1 > 0)"')
-        and not guard.command_is_mutating("ticket list --limit 5")
+        and not guard.command_is_mutating("taiki list --limit 5")
         and not guard.command_is_mutating("git stash list")
         and guard.command_is_mutating("echo hola > nota.txt")
         and guard.command_is_mutating("sed -i 's/a/b/' f")
@@ -511,7 +535,7 @@ def run(h: Harness) -> None:
         code = cli.main(["scratch", "--list"])
     h.ok(
         code == 0 and "scratch" in out.getvalue().lower(),
-        "ticket scratch --list responde por CLI",
+        "taiki scratch --list responde por CLI",
     )
     out = io.StringIO()
     with contextlib.redirect_stdout(out):

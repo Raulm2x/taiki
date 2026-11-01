@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ticketlib import db, domain, render, runtime, servers, workspace
 from mcp_layer import handlers, schemas
 
-SERVER_NAME = "tickets"
+SERVER_NAME = "taiki"
 SERVER_VERSION = "1.0.0"
 LATEST_PROTOCOL = "2025-11-25"
 SUPPORTED_PROTOCOLS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
@@ -67,7 +67,7 @@ def _register_runtime() -> None:
         try:
             servers.register(
                 registry,
-                "tickets",
+                "taiki",
                 SERVER_VERSION,
                 workspace=str(info["workspace"] or info["db"]),
             )

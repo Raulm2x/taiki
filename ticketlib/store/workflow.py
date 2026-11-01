@@ -293,7 +293,7 @@ def confirm_tickets(
         ).fetchone()
         if scratch_tag:
             errors[row["code"]] = (
-                "es un ticket scratch; usa `ticket scratch --promote` "
+                "es un ticket scratch; usa `taiki scratch --promote` "
                 "o `--drop`"
             )
             continue

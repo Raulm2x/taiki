@@ -192,6 +192,8 @@ def run(h: Harness) -> None:
     h.ok("ticket" in mcp_next, "call_tool('next') devuelve clave 'ticket'")
 
     # Despacho por alias con prefijo tickets_ (compatibilidad de namespace)
+    taiki_alias = handlers.call_tool("taiki_stats")
+    h.ok("total" in taiki_alias, "call_tool('taiki_stats') despacha mediante alias")
     alias_stats = handlers.call_tool("tickets_stats")
     h.ok("total" in alias_stats, "call_tool('tickets_stats') despacha correctamente mediante alias")
 

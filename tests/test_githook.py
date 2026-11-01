@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from ticketlib import audit as audit_lib, githook, repo
-from tests.seeds import repo_with_hooks
+from tests.seeds import git_repo, repo_with_hooks
 from tests.support import Harness
 
 
@@ -101,6 +101,13 @@ def run(h: Harness) -> None:
         and wrong_subject["missing"] == ["T-8888"],
         "el asunto manda aunque el cuerpo tenga un ticket válido",
     )
+    os.environ["TAIKI_HOOK"] = "off"
+    h.ok(
+        githook.check_commit_message(conn, "sin ticket")["skipped"]
+        == "env",
+        "TAIKI_HOOK=off desactiva commit-msg",
+    )
+    os.environ.pop("TAIKI_HOOK", None)
     os.environ["TICKETS_HOOK"] = "off"
     h.ok(
         githook.check_commit_message(conn, "sin ticket")["skipped"]
@@ -163,4 +170,29 @@ def run(h: Harness) -> None:
         data["hooks"]
         == {"post-commit": True, "commit-msg": True, "pre-push": True},
         "audit informa de los tres hooks del repo",
+    )
+
+    # ── Migración de hooks históricos ticket -> taiki ──────────────────
+    legacy_repo = git_repo(Path(tmp) / "legacy_repo")
+    legacy_hook = legacy_repo / ".git" / "hooks" / "post-commit"
+    legacy_hook.write_text(
+        "#!/bin/sh\n"
+        "# >>> tickets auto-link >>>\n"
+        "if command -v ticket >/dev/null 2>&1; then\n"
+        "    ticket auto-link --quiet || true\n"
+        "fi\n"
+        "# <<< tickets auto-link <<<\n",
+        encoding="utf-8",
+    )
+    githook.install_post_commit_hook(legacy_repo)
+    migrated = legacy_hook.read_text(encoding="utf-8")
+    h.ok(
+        "taiki auto-link" in migrated and "tickets auto-link" not in migrated,
+        "hook-install migra el bloque histórico a taiki",
+    )
+    githook.install_post_commit_hook(legacy_repo)
+    h.eq(
+        legacy_hook.read_text(encoding="utf-8").count("taiki auto-link"),
+        migrated.count("taiki auto-link"),
+        "reinstalar el hook migrado no duplica el bloque",
     )

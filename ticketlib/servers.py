@@ -152,7 +152,7 @@ def hygiene(
 
 def register(
     conn: Any,
-    name: str = "tickets",
+    name: str = "taiki",
     version: str = "",
     connection: str | None = None,
     workspace: str | None = None,
@@ -265,7 +265,7 @@ def inventory(
                 "pid": pid,
                 "ppid": ppid,
                 "name": row.get("name")
-                or (process_name(info) if info else "tickets"),
+                or (process_name(info) if info else "taiki"),
                 "fingerprint": fingerprint,
                 "version": row.get("version"),
                 "started_at": started_at,

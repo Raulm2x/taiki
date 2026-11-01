@@ -182,8 +182,8 @@ def resume_args(backend: str | None, session_id: str) -> list[str]:
 def prompt_text(code: str, title: str) -> str:
     return (
         f"Trabaja el ticket {code}: {title}. "
-        f"Reclámalo con tickets_claim si no está en progreso y, al terminar, "
-        f"ciérralo con tickets_complete."
+        f"Reclámalo con taiki_claim si no está en progreso y, al terminar, "
+        f"ciérralo con taiki_complete."
     )
 
 

@@ -344,14 +344,15 @@ def run(h: Harness) -> None:
             "instancias de proyectos distintos no se marcan duplicadas",
         )
 
-        servers.register(fleet, "tickets", "test")
+        servers.register(fleet, "taiki", "test")
         row = fleet.execute(
             "SELECT * FROM mcp_servers WHERE pid = ?", (os.getpid(),)
         ).fetchone()
         h.ok(
             row is not None
-            and row["fingerprint"] == runtime.code_fingerprint(),
-            "el proceso se registra con su huella",
+            and row["fingerprint"] == runtime.code_fingerprint()
+            and row["name"] == "taiki",
+            "el proceso se registra con su huella y nombre taiki",
         )
         servers.heartbeat(fleet, connection="ses_x")
         row = fleet.execute(
