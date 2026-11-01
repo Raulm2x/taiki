@@ -203,6 +203,12 @@ def run(h: Harness) -> None:
 
     exported = repo.export_all(conn)
     h.ok(len(exported["tickets"]) == 2, "export debe incluir 2 tickets")
+    for exported_ticket in exported["tickets"]:
+        h.eq(
+            exported_ticket,
+            repo.get_ticket(conn, exported_ticket["code"]),
+            f"export conserva la forma de get_ticket ({exported_ticket['code']})",
+        )
 
     # ── Commit relacionado: hash completo, dedupe y detalle ────────────
     git_repo = Path(tmp) / "commit_repo"
@@ -348,6 +354,33 @@ def run(h: Harness) -> None:
     h.ok(
         mcp_all["total"] == total_open,
         "call_tool('list') con include_closed cuenta todos",
+    )
+
+    # ── List sin body salvo que se pida detalle ──────────────────────────
+    lean = repo.list_tickets(conn, limit=None)
+    h.ok(
+        lean and all("body" not in ticket for ticket in lean),
+        "list omite body/resolution sin detail",
+    )
+    detailed = repo.list_tickets(conn, limit=None, detail=True)
+    h.ok(
+        all(
+            "body" in ticket and "resolution" in ticket
+            for ticket in detailed
+        ),
+        "list con detail=True conserva body/resolution",
+    )
+    mcp_lean = handlers.call_tool("list", {"limit": 5})
+    h.ok(
+        mcp_lean["tickets"]
+        and all("body" not in ticket for ticket in mcp_lean["tickets"]),
+        "list MCP no arrastra body en resumen",
+    )
+    mcp_detail = handlers.call_tool("list", {"limit": 5, "detail": True})
+    h.ok(
+        mcp_detail["tickets"]
+        and all("body" in ticket for ticket in mcp_detail["tickets"]),
+        "list MCP con detail=true incluye body",
     )
 
     # ── complete_ticket es atómico: sin enlaces no hay cierre ────────────

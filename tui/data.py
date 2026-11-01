@@ -60,7 +60,7 @@ def load_snapshot(
     agent: str | None = None,
 ) -> Snapshot:
     """Lee tickets, sesiones, métricas, actividad y códigos que coinciden."""
-    tickets = repo.list_tickets(conn, limit=limit, order=order)
+    tickets = repo.list_tickets(conn, limit=limit, order=order, detail=True)
     activity = repo.recent_events(conn, limit=40)
     stats = repo.stats(conn)
     heatmap = repo.activity_by_day(conn, days=371, project=project, agent=agent)

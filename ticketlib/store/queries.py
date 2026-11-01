@@ -226,13 +226,15 @@ def list_tickets(
     roots_only: bool = False,
     leaves_only: bool = False,
     include_scratch: bool = False,
+    detail: bool = False,
 ) -> list[dict[str, Any]]:
     """Lista tickets con filtros, paginación, orden y jerarquía.
 
     Por defecto devuelve primero los códigos más recientes (descendente).
     ``order="priority"`` mantiene el orden por prioridad y antigüedad.
     ``roots_only`` deja solo las raíces; ``parent_id`` filtra los hijos de un
-    ticket; ``leaves_only`` excluye las épicas con tareas.
+    ticket; ``leaves_only`` excluye las épicas con tareas. Sin ``detail`` no
+    se leen ``body`` ni ``resolution``: el listado no los necesita.
     """
     check_enum(order, ORDER_MODES, "orden")
     parent_pk = UNSET
@@ -257,8 +259,16 @@ def list_tickets(
         include_scratch,
     )
 
+    if detail:
+        columns = "t.*"
+    else:
+        columns = ", ".join(
+            f"t.{row['name']}"
+            for row in conn.execute("PRAGMA table_info(tickets)")
+            if row["name"] not in ("body", "resolution")
+        )
     sql = (
-        "SELECT t.*, "
+        f"SELECT {columns}, "
         "(SELECT group_concat(tag, ',') FROM tags WHERE ticket_id = t.id) AS tags_csv "
         "FROM tickets t" + join
     )

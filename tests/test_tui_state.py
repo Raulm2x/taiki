@@ -198,7 +198,7 @@ def run(h: Harness) -> None:
     repo.update_ticket(
         conn, tagged["code"], body="cuerpo con aguja-secreta"
     )
-    filters_state.load(repo.list_tickets(conn, limit=None))
+    filters_state.load(repo.list_tickets(conn, limit=None, detail=True))
     filters_state.set_filter("tag", "aguja-ui")
     h.ok(
         [t["code"] for t in filters_state.visible()] == [tagged["code"]],

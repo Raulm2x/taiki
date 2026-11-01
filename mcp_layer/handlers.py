@@ -387,6 +387,10 @@ def _handle_list(
     limit = args.get("limit", 20)
     offset = args.get("offset", 0)
     order = args.get("order", "code")
+    fields = args.get("fields") or ()
+    detail = bool(args.get("detail", False)) or bool(
+        {"body", "resolution"} & {str(name) for name in fields}
+    )
     rows = repo.list_tickets(
         conn,
         **filters,
@@ -394,6 +398,7 @@ def _handle_list(
         limit=limit,
         offset=offset,
         order=order,
+        detail=detail,
     )
     total = repo.count_tickets(conn, **filters, **hierarchy)
     hidden = 0
