@@ -445,11 +445,10 @@ def run(h: Harness) -> None:
         },
     )
     h.ok(
-        len(limited["links"]) == 2
-        and limited["links_total"] == 4
+        len(limited["links"]) == 1
         and len(limited["commits"]) == 1
         and limited["commits_total"] == 3,
-        "get acota enlaces y commits con sus totales",
+        "get separa enlaces de commits y los acota",
     )
     limited_batch = handlers.call_tool(
         "get", {"code": batch["code"], "subtasks_limit": 1}
@@ -478,6 +477,24 @@ def run(h: Harness) -> None:
         trimmed["comments_total"],
         6,
         "get informa del total de comentarios truncados",
+    )
+    h.ok(
+        all(
+            set(event) <= {"ts", "actor", "action", "note"}
+            for event in trimmed["events"]
+        ),
+        "get devuelve eventos slim por defecto",
+    )
+    detailed_events = handlers.call_tool(
+        "get",
+        {"code": mcp_created["code"], "events_detail": True},
+    )
+    h.ok(
+        any(
+            "session_id" in event or "actor_type" in event
+            for event in detailed_events["events"]
+        ),
+        "events_detail=true recupera todos los campos",
     )
     only_comments = handlers.call_tool(
         "get",
@@ -517,6 +534,16 @@ def run(h: Harness) -> None:
         meta={"sessionId": "session-claim-111"},
     )
     h.ok(mcp_completed["status"] == "completado", "call_tool('complete') pasa estado a completado")
+    completed_full = handlers.call_tool(
+        "get", {"code": mcp_created["code"]}
+    )
+    h.ok(
+        all(
+            event.get("note") != completed_full.get("resolution")
+            for event in completed_full["events"]
+        ),
+        "get no repite la resolución en el evento de cierre",
+    )
 
     open_only = handlers.call_tool("list", {"limit": 200})
     h.ok(

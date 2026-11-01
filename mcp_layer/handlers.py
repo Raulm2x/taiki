@@ -431,10 +431,24 @@ def _handle_get(
         for section in DETAIL_SECTIONS:
             if section not in keep:
                 ticket.pop(section, None)
-    _limit_history(ticket, args.get("history_limit", 50))
-    _limit_section(ticket, "links", args.get("links_limit", 50))
-    _limit_section(ticket, "subtasks", args.get("subtasks_limit", 50))
-    _limit_section(ticket, "commits", args.get("commits_limit", 50))
+    # Los commits ya están en ``commits``; no repetirlos como enlaces.
+    if ticket.get("links") and ticket.get("commits"):
+        ticket["links"] = [
+            link for link in ticket["links"] if link.get("kind") != "commit"
+        ]
+    resolution = ticket.get("resolution")
+    if resolution:
+        for event in ticket.get("events", []):
+            if event.get("note") == resolution:
+                event.pop("note", None)
+    if not args.get("events_detail", False):
+        for event in ticket.get("events", []):
+            for key in ("actor_type", "from_status", "to_status", "session_id"):
+                event.pop(key, None)
+    _limit_history(ticket, args.get("history_limit", 15))
+    _limit_section(ticket, "links", args.get("links_limit", 20))
+    _limit_section(ticket, "subtasks", args.get("subtasks_limit", 20))
+    _limit_section(ticket, "commits", args.get("commits_limit", 20))
     return ticket
 
 
