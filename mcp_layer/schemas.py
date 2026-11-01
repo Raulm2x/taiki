@@ -9,7 +9,7 @@ Sistema de tickets local compartido entre agentes y el usuario.
 
 Flujo de trabajo:
 1. Ningún cambio sin ticket. Antes de editar o ejecutar algo que escriba, comprueba que tienes un ticket en "en_progreso": si no, créalo con create y reclámalo con claim. En clientes que prefijan el servidor verás taiki_create/taiki_claim; el nombre real es create/claim. El guard de OpenCode puede crear un ticket temporal S-#### oculto; si el trabajo es real, crea el ticket adecuado.
-2. Al empezar, usa list (por defecto solo abiertos y en resumen) o next, y revisa también "en_progreso" para no duplicar trabajo. Para el detalle de un ticket usa get (include y history_limit acotan secciones).
+2. Al empezar, usa list (por defecto solo abiertos y en resumen) o next, y revisa también "en_progreso" para no duplicar trabajo. Para el detalle de un ticket usa get (include y history_limit acotan secciones). Si hay otra sesión activa, consulta status y whoami; reclama con worktree=true para aislar la escritura y usa heartbeat en comandos largos.
 3. Si descubres trabajo nuevo, regístralo con create; no lo dejes solo en el chat. Para objetivos con varias tareas, crea una épica y las tareas con parent_id (T-0014.01, T-0014.02…). Declara las rutas que posee con paths.
 4. Pasa agent cuando puedas; si lo omites se usa el nombre del cliente. No reclames una épica: reclama una de sus tareas.
 5. Al terminar, usa complete con una resolución concreta y el commit o los archivos tocados.
@@ -267,6 +267,17 @@ TOOLS = [
                 "default": False,
             },
             "force": FORCE,
+            "worktree": {
+                "type": "boolean",
+                "default": False,
+                "description": "Crea y enlaza un worktree para el ticket",
+            },
+            "lease_minutes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1440,
+                "description": "Minutos de lease (por defecto TAIKI_LEASE_MINUTES)",
+            },
         },
         ("code",),
         title="Reclamar ticket",
@@ -394,6 +405,103 @@ TOOLS = [
             },
         },
         title="Siguiente ticket",
+        read_only=True,
+        idempotent=True,
+    ),
+    _tool(
+        "status",
+        "Foto del proyecto: sesiones activas, claims, leases, worktrees, "
+        "solapamientos y servidores MCP. Úsalo antes de escribir si hay otros "
+        "agentes.",
+        {
+            "window": {
+                "type": "integer",
+                "minimum": 60,
+                "maximum": 86400,
+                "default": 600,
+                "description": "Ventana de actividad reciente en segundos",
+            },
+            "servers": {
+                "type": "boolean",
+                "default": False,
+                "description": "Incluye el inventario de servidores MCP",
+            },
+        },
+        title="Estado del proyecto",
+        read_only=True,
+        idempotent=True,
+    ),
+    _tool(
+        "whoami",
+        "Devuelve tu agente y sesión resueltos, el ticket activo, su lease y "
+        "su worktree. Úsalo para comprobar quién eres antes de coordinar.",
+        {},
+        title="Quién soy",
+        read_only=True,
+        idempotent=True,
+    ),
+    _tool(
+        "heartbeat",
+        "Renueva el lease del ticket activo o del código indicado. Llámalo "
+        "durante comandos largos para que otra sesión no lo tome por muerto.",
+        {
+            "code": CODE,
+            "minutes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1440,
+                "description": "Minutos de lease (por defecto TAIKI_LEASE_MINUTES)",
+            },
+        },
+        title="Renovar lease",
+    ),
+    _tool(
+        "worktree_create",
+        "Crea (o reutiliza) el worktree del ticket reclamado y lo enlaza. "
+        "Trabaja dentro de la ruta devuelta para no pisar el árbol compartido.",
+        {
+            "code": CODE,
+            "title": {"type": "string", "description": "Título para el slug de la rama"},
+            "force": FORCE,
+        },
+        ("code",),
+        title="Crear worktree",
+    ),
+    _tool(
+        "worktree_list",
+        "Lista los worktrees del proyecto, opcionalmente filtrados por ticket.",
+        {"code": CODE},
+        title="Listar worktrees",
+        read_only=True,
+        idempotent=True,
+    ),
+    _tool(
+        "promote",
+        "Promueve un ticket scratch S-#### a un ticket real T-####. Úsalo "
+        "cuando el trabajo temporal del guard resulta ser real.",
+        {"code": CODE},
+        ("code",),
+        title="Promover scratch",
+    ),
+    _tool(
+        "health",
+        "Comprueba el estado del MCP, hooks, claims caducados, solapamientos, "
+        "worktrees y servidores. Úsalo si algo no cuadra.",
+        {
+            "days": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 365,
+                "default": 2,
+                "description": "Días para detectar tickets estancados",
+            },
+            "servers": {
+                "type": "boolean",
+                "default": True,
+                "description": "Incluye el resumen de servidores MCP",
+            },
+        },
+        title="Salud del proyecto",
         read_only=True,
         idempotent=True,
     ),

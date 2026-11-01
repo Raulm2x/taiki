@@ -23,6 +23,7 @@ MODULES = (
     "test_store",
     "test_scratch",
     "test_mcp",
+    "test_mcp_parallel",
     "test_sessions",
     "test_cli",
     "test_tui_state",

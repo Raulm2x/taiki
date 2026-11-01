@@ -4,10 +4,25 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import unquote
 
-from ticketlib import db, domain, render, repo, runtime, workspace
+from ticketlib import (
+    audit as audit_lib,
+    db,
+    domain,
+    githook,
+    render,
+    repo,
+    runtime,
+    scratch as scratch_lib,
+    servers as servers_lib,
+    status as status_lib,
+    workspace,
+    worktree as worktree_lib,
+)
+from ticketlib.guard.context import find_active, session_chain
 from ticketlib.util import normalize_agent, resolve_scope
 
 from . import validation
@@ -119,6 +134,14 @@ DETAIL_SECTIONS = (
     "committed",
 )
 PREVIEW_CHARS = 240
+
+
+def _project_root() -> Path:
+    """Raíz del proyecto de la DB activa, no la del cwd del servidor."""
+    info = workspace.resolve()
+    if info.get("workspace"):
+        return Path(info["workspace"]).parent
+    return workspace.project_root()
 
 
 def _summary(ticket: dict[str, Any], *, preview: bool = False) -> dict[str, Any]:
@@ -283,6 +306,33 @@ def _handle_get(
     return ticket
 
 
+def _attach_worktree(
+    conn: sqlite3.Connection,
+    ticket: dict[str, Any],
+    *,
+    title: str | None = None,
+) -> dict[str, Any]:
+    """Crea (o reutiliza) el worktree del ticket y lo enlaza."""
+    root = _project_root()
+    found = worktree_lib.locate(root, ticket["code"])
+    if found is None:
+        created = worktree_lib.create(
+            root, ticket["code"], title=title or ticket.get("title")
+        )
+        path, branch = str(created["path"]), created["branch"]
+    else:
+        path = str(found["path"])
+        branch = found.get("branch")
+    repo.link_ticket(conn, ticket["code"], "worktree", path)
+    if branch:
+        repo.link_ticket(conn, ticket["code"], "rama", branch)
+    updated = repo.get_ticket(conn, ticket["code"])
+    updated["worktree"] = path
+    if branch:
+        updated["branch"] = branch
+    return updated
+
+
 def _handle_claim(
     conn: sqlite3.Connection,
     args: dict[str, Any],
@@ -292,7 +342,7 @@ def _handle_claim(
     code = args.get("code")
     if not code:
         raise domain.ValidationError("El parámetro 'code' es obligatorio")
-    return repo.claim_ticket(
+    ticket = repo.claim_ticket(
         conn,
         code,
         agent=actor,
@@ -300,7 +350,11 @@ def _handle_claim(
         steal=bool(args.get("steal")),
         force=bool(args.get("force")),
         anonymous_owner=True,
+        lease_minutes=args.get("lease_minutes"),
     )
+    if args.get("worktree"):
+        ticket = _attach_worktree(conn, ticket)
+    return ticket
 
 
 def _handle_update(
@@ -463,6 +517,196 @@ def _handle_next(
     return {"ticket": _summary(ticket, preview=True)}
 
 
+def _handle_status(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    session: str | None = None,
+    actor: str = "agente",
+) -> dict[str, Any]:
+    try:
+        window = max(60, min(int(args.get("window", 600)), 86400))
+    except (TypeError, ValueError):
+        window = 600
+    return status_lib.snapshot(
+        window=window,
+        with_servers=bool(args.get("servers", False)),
+        conn=conn,
+    )
+
+
+def _handle_whoami(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    session: str | None = None,
+    actor: str = "agente",
+) -> dict[str, Any]:
+    info = workspace.resolve()
+    config = workspace.load_config(info["workspace"]) if info["workspace"] else {}
+    data: dict[str, Any] = {
+        "agent": actor,
+        "session": session,
+        "project": info["project"],
+        "db": str(info["db"]) if info["db"] else None,
+        "guard": bool(config.get("guard")),
+    }
+    active = find_active(conn, session_chain(session), actor)
+    if active is None:
+        data["active"] = None
+        return data
+    summary = _summary(active)
+    summary["lease_until"] = active.get("lease_until")
+    found = worktree_lib.locate(_project_root(), active["code"])
+    summary["worktree"] = str(found["path"]) if found else None
+    data["active"] = summary
+    return data
+
+
+def _handle_heartbeat(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    session: str | None = None,
+    actor: str = "agente",
+) -> dict[str, Any]:
+    code = args.get("code")
+    if not code:
+        active = find_active(conn, session_chain(session), actor)
+        if active is None:
+            raise domain.ValidationError(
+                "No hay ticket activo; indica code o reclama uno con claim."
+            )
+        code = active["code"]
+    ticket = repo.get_ticket(conn, code)
+    owner = ticket["owner_session"]
+    if owner and not (
+        session == owner or (session is None and owner == f"agent:{actor}")
+    ):
+        raise domain.PermissionDenied(
+            f"{code} pertenece a la sesión {owner}; no puedes renovar su lease."
+        )
+    renewed = repo.heartbeat_ticket(
+        conn,
+        code,
+        session,
+        minutes=args.get("minutes"),
+        min_interval=0,
+    )
+    if not renewed:
+        raise domain.TransitionError(
+            f"No se pudo renovar {code}: no está en progreso o la sesión no es la dueña."
+        )
+    updated = repo.get_ticket(conn, code)
+    return {
+        "code": code,
+        "renewed": True,
+        "heartbeat_at": updated["heartbeat_at"],
+        "lease_until": updated["lease_until"],
+    }
+
+
+def _handle_worktree_create(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    session: str | None = None,
+    actor: str = "agente",
+) -> dict[str, Any]:
+    code = args.get("code")
+    if not code:
+        raise domain.ValidationError("El parámetro 'code' es obligatorio")
+    ticket = repo.get_ticket(conn, code)
+    if ticket["status"] != "en_progreso" and not args.get("force"):
+        raise domain.ValidationError(
+            f"{code} no está en progreso; reclámalo antes de crear el worktree."
+        )
+    owner = ticket["owner_session"]
+    if owner and not args.get("force") and not (
+        session == owner or (session is None and owner == f"agent:{actor}")
+    ):
+        raise domain.PermissionDenied(
+            f"{code} está reclamado por la sesión {owner}."
+        )
+    updated = _attach_worktree(conn, ticket, title=args.get("title"))
+    return {
+        "code": code,
+        "path": updated["worktree"],
+        "branch": updated.get("branch"),
+    }
+
+
+def _handle_worktree_list(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    session: str | None = None,
+    actor: str = "agente",
+) -> dict[str, Any]:
+    root = _project_root()
+    items = worktree_lib.list_worktrees(root)
+    code = args.get("code")
+    if code:
+        items = [
+            item
+            for item in items
+            if str(item.get("branch") or "").startswith(f"agent/{code}")
+            or Path(item.get("path", "")).name == code
+        ]
+    return {"count": len(items), "worktrees": items}
+
+
+def _handle_promote(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    session: str | None = None,
+    actor: str = "agente",
+) -> dict[str, Any]:
+    code = args.get("code")
+    if not code:
+        raise domain.ValidationError("El parámetro 'code' es obligatorio")
+    return scratch_lib.promote(
+        conn,
+        code,
+        actor=actor,
+        actor_type="agente",
+        session_id=session,
+    )
+
+
+def _handle_health(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    session: str | None = None,
+    actor: str = "agente",
+) -> dict[str, Any]:
+    root = _project_root()
+    try:
+        days = max(1, min(int(args.get("days", 2)), 365))
+    except (TypeError, ValueError):
+        days = 2
+    stale = [item["code"] for item in repo.stale_claims(conn)]
+    overlaps = audit_lib.overlaps(conn)
+    unresolved = audit_lib.unresolved(conn)
+    dirty_files = audit_lib.dirty(root)
+    data: dict[str, Any] = {
+        "ok": not stale and not overlaps and not unresolved and not dirty_files,
+        "mcp": runtime.status(conn),
+        "hooks": githook.hooks_installed(root),
+        "stale_claims": stale,
+        "overlaps": overlaps[:20],
+        "unresolved": unresolved[:20],
+        "dirty": dirty_files[:20],
+        "gaps": audit_lib.code_gaps(conn)[:20],
+        "stalled": audit_lib.stalled(conn, days=days)[:20],
+        "worktrees": audit_lib.worktrees(conn, root)[:20],
+    }
+    if args.get("servers", True):
+        registry = db.connect(workspace.registry_path())
+        try:
+            data["servers"] = servers_lib.summary(
+                servers_lib.inventory(registry)
+            )
+        finally:
+            registry.close()
+    return data
+
+
 # ---------------------------------------------------------------------------
 # Tabla de Despacho (Registry)
 # ---------------------------------------------------------------------------
@@ -479,6 +723,13 @@ TOOL_DISPATCH: dict[str, ToolHandler] = {
     "link": _handle_link,
     "stats": _handle_stats,
     "next": _handle_next,
+    "status": _handle_status,
+    "whoami": _handle_whoami,
+    "heartbeat": _handle_heartbeat,
+    "worktree_create": _handle_worktree_create,
+    "worktree_list": _handle_worktree_list,
+    "promote": _handle_promote,
+    "health": _handle_health,
 }
 
 

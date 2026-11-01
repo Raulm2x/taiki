@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -106,6 +107,23 @@ def run(h: Harness) -> None:
             "proyecto",
             "resolve devuelve el proyecto del checkout principal",
         )
+        # En un repo real, `.taiki/config.json` viaja al worktree por Git.
+        # No debe convertir el worktree en un workspace con DB vacía.
+        (path / ".taiki").mkdir()
+        (path / ".taiki" / "config.json").write_text("{}\n", encoding="utf-8")
+        try:
+            h.eq(
+                workspace.find_workspace(path),
+                folder,
+                "un .taiki versionado en el worktree no crea una DB local",
+            )
+            h.eq(
+                workspace.resolve_db(path),
+                info["db"],
+                "el .taiki del worktree sigue apuntando a la DB principal",
+            )
+        finally:
+            shutil.rmtree(path / ".taiki")
 
     # ── Listado, estado y avisos ────────────────────────────────────────
     listed = worktree.list_worktrees(root)

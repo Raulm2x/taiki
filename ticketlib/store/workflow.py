@@ -183,6 +183,7 @@ def claim_ticket(
     force: bool = False,
     steal: bool = False,
     anonymous_owner: bool = False,
+    lease_minutes: int | None = None,
 ) -> dict[str, Any]:
     agent = normalize_agent(agent)
     with db.tx(conn):
@@ -254,7 +255,11 @@ def claim_ticket(
                     f"La sesión ya tiene {other['code']} en progreso; "
                     "complétalo antes de reclamar otro ticket."
                 )
-        lease_until = _future(_lease_minutes())
+        try:
+            minutes = max(1, min(int(lease_minutes or _lease_minutes()), 24 * 60))
+        except (TypeError, ValueError):
+            minutes = _lease_minutes()
+        lease_until = _future(minutes)
         if row["status"] == "en_progreso":
             conn.execute(
                 "UPDATE tickets SET assigned_to = ?, updated_at = ?, "

@@ -120,6 +120,15 @@ def find_workspace(start: str | Path | None = None) -> Path | None:
     del checkout principal: la base de datos es compartida.
     """
     base = _base(start)
+    main = main_worktree(base)
+    root = find_git_root(base)
+    # Un worktree ligado puede contener un `.taiki/config.json` versionado.
+    # Ese marcador no debe crear una DB local: la DB vive en el checkout
+    # principal para que todos los agentes compartan tickets.
+    if main is not None and root is not None and root.resolve() != main.resolve():
+        marker = main / MARKER
+        if marker.is_dir():
+            return marker
     home = Path.home().resolve()
     stop = {home, Path(home.anchor)}
     for candidate in (base, *base.parents):
@@ -128,7 +137,6 @@ def find_workspace(start: str | Path | None = None) -> Path | None:
         marker = candidate / MARKER
         if marker.is_dir():
             return marker
-    main = main_worktree(base)
     if main is not None:
         marker = main / MARKER
         if marker.is_dir():

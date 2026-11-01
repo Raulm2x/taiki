@@ -1,0 +1,159 @@
+"""Herramientas MCP de paralelismo: estado, leases, worktrees y scratch."""
+
+from __future__ import annotations
+
+import subprocess
+from datetime import datetime, timedelta
+from pathlib import Path
+
+from mcp_layer import handlers
+from ticketlib import db, domain, repo, scratch, workspace
+from tests.seeds import git_repo
+from tests.support import Harness
+
+
+def _git(root: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(root), *args], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise AssertionError(result.stderr)
+    return result.stdout.strip()
+
+
+def run(h: Harness) -> None:
+    tmp = Path(h.tmp)
+    root = git_repo(tmp / "proyecto")
+    (root / "src").mkdir()
+    (root / "src" / "app.py").write_text("print('hola')\n", encoding="utf-8")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-m", "init")
+    info = workspace.init_workspace(root, name="Proyecto")
+    db_path = str(info["db"])
+
+    with h.env(TAIKI_DB=db_path):
+        conn = db.connect()
+        try:
+            ticket = repo.create_ticket(conn, title="Paralelo", project="proyecto")
+            other = repo.create_ticket(
+                conn, title="Con worktree", project="proyecto"
+            )
+            third = repo.create_ticket(conn, title="Con lease", project="proyecto")
+            scratch_ticket = scratch.create_or_reuse(
+                conn, agent="opencode", session_id="ses_scratch"
+            )
+        finally:
+            conn.close()
+
+        meta = {"sessionId": "ses_par"}
+        claimed = handlers.call_tool(
+            "claim", {"code": ticket["code"], "agent": "opencode"}, meta=meta
+        )
+        h.eq(claimed["owner_session"], "ses_par", "claim MCP fija la sesión")
+
+        snap = handlers.call_tool("status", {"servers": False}, meta=meta)
+        h.ok(
+            any(
+                item["code"] == ticket["code"] and item["session"] == "ses_par"
+                for item in snap["sessions"]
+            ),
+            "status lista la sesión y su ticket",
+        )
+        me = handlers.call_tool("whoami", {}, meta=meta)
+        h.eq(me["session"], "ses_par", "whoami devuelve la sesión")
+        h.eq(
+            me["active"]["code"],
+            ticket["code"],
+            "whoami devuelve el ticket activo",
+        )
+
+        reader = db.connect()
+        try:
+            past = (
+                datetime.now().astimezone() - timedelta(minutes=5)
+            ).isoformat(timespec="seconds")
+            reader.execute(
+                "UPDATE tickets SET heartbeat_at = ?, lease_until = ? "
+                "WHERE code = ?",
+                (past, past, ticket["code"]),
+            )
+            reader.commit()
+        finally:
+            reader.close()
+        hb = handlers.call_tool("heartbeat", {}, meta=meta)
+        h.ok(
+            hb["renewed"] and hb["lease_until"],
+            "heartbeat renueva el lease del ticket activo",
+        )
+        h.raises(
+            domain.PermissionDenied,
+            lambda: handlers.call_tool(
+                "heartbeat",
+                {"code": ticket["code"]},
+                meta={"sessionId": "ses_otra"},
+            ),
+            "otra sesión no renueva el lease",
+        )
+
+        tree = handlers.call_tool(
+            "worktree_create", {"code": ticket["code"]}, meta=meta
+        )
+        h.ok(
+            Path(tree["path"]).is_dir()
+            and str(tree["branch"]).startswith("agent/"),
+            "worktree_create crea el worktree y la rama",
+        )
+        listed = handlers.call_tool(
+            "worktree_list", {"code": ticket["code"]}, meta=meta
+        )
+        h.ok(listed["count"] >= 1, "worktree_list encuentra el worktree")
+        h.raises(
+            domain.PermissionDenied,
+            lambda: handlers.call_tool(
+                "worktree_create",
+                {"code": ticket["code"]},
+                meta={"sessionId": "ses_otra"},
+            ),
+            "otra sesión no crea el worktree de un ticket ajeno",
+        )
+
+        tree_claim = handlers.call_tool(
+            "claim",
+            {"code": other["code"], "agent": "opencode", "worktree": True},
+            meta={"sessionId": "ses_tree"},
+        )
+        h.ok(
+            Path(tree_claim["worktree"]).is_dir(),
+            "claim con worktree crea y enlaza el árbol",
+        )
+        lease_claim = handlers.call_tool(
+            "claim",
+            {
+                "code": third["code"],
+                "agent": "opencode",
+                "lease_minutes": 5,
+            },
+            meta={"sessionId": "ses_lease"},
+        )
+        h.ok(
+            lease_claim["lease_until"] is not None,
+            "claim acepta lease_minutes",
+        )
+
+        promoted = handlers.call_tool(
+            "promote",
+            {"code": scratch_ticket["code"]},
+            meta={"sessionId": "ses_scratch"},
+        )
+        h.ok(
+            promoted["code"].startswith("T-")
+            and not scratch.is_scratch(promoted),
+            "promote convierte un scratch en ticket real",
+        )
+
+        health = handlers.call_tool("health", {"servers": False}, meta=meta)
+        h.ok(
+            {"mcp", "hooks", "stale_claims", "overlaps", "ok"} <= set(health),
+            "health devuelve el estado del MCP y del proyecto",
+        )
+        h.eq(len(health["hooks"]), 4, "health informa de los cuatro hooks")

@@ -35,11 +35,16 @@ def _recent(value: str | None, window: int) -> bool:
 
 
 def snapshot(
-    window: int = DEFAULT_WINDOW, *, with_servers: bool = True
+    window: int = DEFAULT_WINDOW,
+    *,
+    with_servers: bool = True,
+    conn: Any = None,
 ) -> dict[str, Any]:
     """Foto del proyecto: tickets activos, dueños, leases, worktrees y MCP."""
     info = workspace.resolve()
-    conn = db.connect()
+    own = conn is None
+    if own:
+        conn = db.connect()
     try:
         rows = conn.execute(
             "SELECT code, title, status, priority, assigned_to, owner_session, "
@@ -54,7 +59,8 @@ def snapshot(
         stale = {item["code"] for item in stale_claims(conn)}
         overlaps = audit.overlaps(conn)
     finally:
-        conn.close()
+        if own:
+            conn.close()
 
     worktrees: dict[str, dict[str, str]] = {}
     for link in links:
