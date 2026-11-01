@@ -5,5 +5,7 @@ __pycache__/
 *.db-wal
 *.db-shm
 .venv/
+*.egg-info/
+.coverage
 opencode.json
 .worktrees/
