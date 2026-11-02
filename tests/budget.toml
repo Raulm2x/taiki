@@ -5,8 +5,10 @@
 # P4 (T-0028) añadió integración real (dependencias, orquestador, scheduler,
 # status a escala y smoke CLI). Techo revisado una vez; a partir de aquí, podar.
 # P4: integración real (status, atribución, worktree y smoke opt-in).
-max_seconds = 5.0
-baseline_checks = 1039
+# P0/P1 (T-0045.01): +2 módulos de memoria (105 comprobaciones) y el esquema v5.
+# Revisión única del techo para la fundación de memoria; a partir de aquí, podar.
+max_seconds = 5.5
+baseline_checks = 1158
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
 

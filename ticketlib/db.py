@@ -139,6 +139,142 @@ AFTER UPDATE OF title, body, code ON tickets BEGIN
 END;
 """
 
+# Esquema v5: memoria semántica. Se define como sentencias sueltas para que
+# ``_migrate_v5`` pueda reaplicarlas de forma idempotente dentro de una
+# transacción (``executescript`` haría un commit implícito).
+MEMORY_DDL: tuple[str, ...] = (
+    """
+CREATE TABLE IF NOT EXISTS memories (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    code            TEXT NOT NULL UNIQUE,
+    scope           TEXT NOT NULL DEFAULT 'project',
+    kind            TEXT NOT NULL,
+    "key"           TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    description     TEXT NOT NULL DEFAULT '',
+    content         TEXT NOT NULL,
+    paths           TEXT,
+    kinds           TEXT,
+    status          TEXT NOT NULL DEFAULT 'proposed',
+    confidence      REAL NOT NULL DEFAULT 0.5,
+    source          TEXT NOT NULL DEFAULT 'agent',
+    actor           TEXT,
+    session_id      TEXT,
+    ticket_id       TEXT,
+    supersedes_id   INTEGER REFERENCES memories(id),
+    superseded_by   TEXT,
+    pinned          INTEGER NOT NULL DEFAULT 0,
+    locked          INTEGER NOT NULL DEFAULT 0,
+    use_count       INTEGER NOT NULL DEFAULT 0,
+    helpful_count   INTEGER NOT NULL DEFAULT 0,
+    unhelpful_count INTEGER NOT NULL DEFAULT 0,
+    last_used_at    TEXT,
+    last_briefed_at TEXT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    archived_at     TEXT,
+    fingerprint     TEXT NOT NULL
+)
+""",
+    """
+CREATE TABLE IF NOT EXISTS memory_evidence (
+    memory_id  INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    kind       TEXT NOT NULL,
+    ref        TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(memory_id, kind, ref)
+)
+""",
+    """
+CREATE TABLE IF NOT EXISTS memory_files (
+    memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    path      TEXT NOT NULL,
+    content   TEXT NOT NULL,
+    sha256    TEXT NOT NULL,
+    PRIMARY KEY (memory_id, path)
+)
+""",
+    """
+CREATE TABLE IF NOT EXISTS memory_usage (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts         TEXT NOT NULL,
+    memory_id  INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    session_id TEXT,
+    action     TEXT NOT NULL,
+    helpful    INTEGER,
+    note       TEXT
+)
+""",
+    """
+CREATE TABLE IF NOT EXISTS memory_ledger (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          TEXT NOT NULL,
+    actor       TEXT,
+    actor_type  TEXT NOT NULL DEFAULT 'agente',
+    session_id  TEXT,
+    action      TEXT NOT NULL,
+    memory_id   INTEGER,
+    before_hash TEXT,
+    after_hash  TEXT,
+    reason      TEXT,
+    meta        TEXT
+)
+""",
+    """
+CREATE TABLE IF NOT EXISTS memory_blobs (
+    sha256     TEXT PRIMARY KEY,
+    content    TEXT NOT NULL,
+    created_at TEXT NOT NULL
+)
+""",
+    "CREATE INDEX IF NOT EXISTS idx_memories_scope_status_kind "
+    "ON memories(scope, status, kind)",
+    'CREATE INDEX IF NOT EXISTS idx_memories_key ON memories("key")',
+    "CREATE INDEX IF NOT EXISTS idx_memories_ticket ON memories(ticket_id)",
+    "CREATE INDEX IF NOT EXISTS idx_memories_fingerprint "
+    "ON memories(fingerprint)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_evidence_ref "
+    "ON memory_evidence(ref)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_usage_memory "
+    "ON memory_usage(memory_id, ts)",
+    """
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+    title,
+    description,
+    content,
+    "key",
+    code,
+    content='memories',
+    content_rowid='id',
+    tokenize='unicode61 remove_diacritics 2'
+)
+""",
+    """
+CREATE TRIGGER IF NOT EXISTS memories_fts_ai AFTER INSERT ON memories BEGIN
+    INSERT INTO memories_fts(rowid, title, description, content, "key", code)
+    VALUES (new.id, new.title, new.description, new.content, new."key", new.code);
+END
+""",
+    """
+CREATE TRIGGER IF NOT EXISTS memories_fts_ad AFTER DELETE ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, title, description, content, "key", code)
+    VALUES ('delete', old.id, old.title, old.description, old.content, old."key", old.code);
+END
+""",
+    """
+CREATE TRIGGER IF NOT EXISTS memories_fts_au
+AFTER UPDATE OF title, description, content, "key", code ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, title, description, content, "key", code)
+    VALUES ('delete', old.id, old.title, old.description, old.content, old."key", old.code);
+    INSERT INTO memories_fts(rowid, title, description, content, "key", code)
+    VALUES (new.id, new.title, new.description, new.content, new."key", new.code);
+END
+""",
+)
+
+MEMORY_SCHEMA_SQL = ";\n".join(sql.strip() for sql in MEMORY_DDL) + ";"
+SCHEMA_SQL = SCHEMA_SQL + "\n" + MEMORY_SCHEMA_SQL
+
 
 def db_path(start: str | Path | None = None) -> Path:
     """Prioridad: TAIKI_DB/TICKETS_DB > .taiki del proyecto > global."""
@@ -266,10 +402,22 @@ def _migrate_v4(conn: sqlite3.Connection, force: bool = False) -> None:
         conn.execute(sql)
 
 
+def _migrate_v5(conn: sqlite3.Connection, force: bool = False) -> None:
+    """Memoria semántica: tablas, índices, FTS5 y sus triggers."""
+    for sql in MEMORY_DDL:
+        conn.execute(sql)
+    meta_set(
+        conn,
+        "next_memory_number",
+        meta_get(conn, "next_memory_number", "1") or "1",
+    )
+
+
 MIGRATIONS = {
     2: _migrate_v2,
     3: _migrate_v3,
     4: _migrate_v4,
+    5: _migrate_v5,
 }
 
 
@@ -294,6 +442,7 @@ def migrate(conn: sqlite3.Connection, force: bool = False) -> None:
         conn.executescript(SCHEMA_SQL)
         with tx(conn):
             meta_set(conn, "next_ticket_number", "1")
+            meta_set(conn, "next_memory_number", "1")
             meta_set(conn, "created_at", now())
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         return
