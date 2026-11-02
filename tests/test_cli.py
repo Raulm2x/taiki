@@ -55,18 +55,15 @@ def run(h: Harness) -> None:
         and t_pending["code"] in bad["errors"],
         "un ticket no completado se reporta como error",
     )
-    h.ok(
-        repo.get_ticket(conn, c4["code"])["status"] == "completado",
-        "un lote inválido no confirma ninguno",
-    )
     missing = repo.confirm_tickets(conn, [c5["code"], "T-9999"])
     h.ok(
         missing["confirmed"] == [] and "T-9999" in missing["errors"],
         "un código inexistente se reporta como error",
     )
     h.ok(
-        repo.get_ticket(conn, c5["code"])["status"] == "completado",
-        "un código inexistente no confirma el resto",
+        repo.get_ticket(conn, c4["code"])["status"] == "completado"
+        and repo.get_ticket(conn, c5["code"])["status"] == "completado",
+        "un lote inválido no confirma ninguno de sus tickets válidos",
     )
     dup = repo.confirm_tickets(conn, [c5["code"], c5["code"]])
     h.ok(

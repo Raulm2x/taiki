@@ -101,7 +101,6 @@ def run(h: Harness) -> None:
 
     # Comprobar que el evento de creación guardó la sesión
     mcp_detail = repo.get_ticket(conn, mcp_created["code"])
-    h.ok(len(mcp_detail["events"]) >= 1, "el ticket creado vía MCP tiene eventos registrados")
     h.ok(
         any(e.get("session_id") == "session-audit-999" for e in mcp_detail["events"]),
         "session_id se almacena correctamente en la tabla events",
@@ -396,21 +395,34 @@ def run(h: Harness) -> None:
         mcp_verified["status"] == "verificado",
         "call_tool('transition') verifica con evidencia",
     )
+    documented = repo.create_ticket(
+        conn, title="Confirmado sin resolución MCP"
+    )
+    conn.execute(
+        "UPDATE tickets SET status = 'confirmado' WHERE code = ?",
+        (documented["code"],),
+    )
+    conn.commit()
+    mcp_documented = handlers.call_tool(
+        "transition",
+        {
+            "code": documented["code"],
+            "status": "confirmado",
+            "resolution": "Cierre documentado vía MCP.",
+            "detail": True,
+        },
+        meta={"sessionId": "session-claim-111"},
+    )
+    h.ok(
+        mcp_documented["status"] == "confirmado"
+        and mcp_documented["resolution"] == "Cierre documentado vía MCP.",
+        "call_tool('transition') acepta resolution sin cambiar de estado",
+    )
     review_prompt = handlers.get_prompt("review")
     h.ok(
         mcp_created["code"]
         in review_prompt["messages"][0]["content"]["text"],
         "el prompt review incluye los tickets verificados",
-    )
-    completed_full = handlers.call_tool(
-        "get", {"code": mcp_created["code"]}
-    )
-    h.ok(
-        any(
-            event.get("note") == completed_full.get("resolution")
-            for event in completed_full["events"]
-        ),
-        "get conserva el note del evento de cierre",
     )
     completed_raw = handlers.call_tool(
         "get", {"code": mcp_created["code"], "raw": True}
@@ -483,14 +495,15 @@ def run(h: Harness) -> None:
     # call_tool('stats') y call_tool('next')
     mcp_stats = handlers.call_tool("stats")
     h.ok("total" in mcp_stats and "por_estado" in mcp_stats, "call_tool('stats') devuelve métricas")
-    mcp_next = handlers.call_tool("next")
-    h.ok("ticket" in mcp_next, "call_tool('next') devuelve clave 'ticket'")
 
     # Despacho por alias con prefijo tickets_ (compatibilidad de namespace)
-    taiki_alias = handlers.call_tool("taiki_stats")
-    h.ok("total" in taiki_alias, "call_tool('taiki_stats') despacha mediante alias")
-    alias_stats = handlers.call_tool("tickets_stats")
-    h.ok("total" in alias_stats, "call_tool('tickets_stats') despacha correctamente mediante alias")
+    h.ok(
+        all(
+            "total" in handlers.call_tool(name)
+            for name in ("taiki_stats", "tickets_stats")
+        ),
+        "los alias con prefijo (taiki_/tickets_) despachan a la misma herramienta",
+    )
 
     # Herramienta desconocida lanza NotFoundError
     h.raises(

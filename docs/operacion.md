@@ -269,8 +269,12 @@ Varias sesiones pueden trabajar a la vez sin pisarse:
 - **Merge asistido**: el usuario confirma; solo después el conductor mergea en
   orden de dependencias. `taiki worktree merge T-XXXX` hace rebase sobre
   `orchestrator.integration_branch` (`develop` por defecto), ejecuta
-  `tests/run.py` si existe (`--no-tests` para omitir), `merge --ff-only` y
-  limpia con `--delete`. Nunca mergea si algo falla. Si `develop` no existe,
+  `tests/run.py --strict-budget` si existe (`--no-tests` para omitir),
+  `merge --ff-only` y limpia con `--delete`. El presupuesto de la suite es
+  global (techo de comprobaciones y tiempo de toda la suite, no por módulo):
+  el merge usa el mismo gate que la CI, así que si la acumulación de checks
+  deja la suite por encima del techo el merge falla ahí y no mergea nada.
+  Nunca mergea si algo falla. Si `develop` no existe,
   avisa y usa la rama actual sin romper. Exige que el ticket esté
   `confirmado`: el commit vive en el worktree, pero la rama de integración solo
   recibe lo que el usuario ya revisó. `main` no se toca aquí: solo la release
@@ -294,6 +298,17 @@ taiki worktree merge T-0001 --delete
 # main no se toca aquí: solo cambia con una release
 taiki release
 ```
+
+`taiki release` aplana `develop` en un commit de `main`, crea el tag y después
+**reconcilia** `develop` con `main` (`git merge --no-ff`, idempotente y sin
+reescribir `main`), restaurando la rama en la que estabas. Sin ese paso la
+segunda release fallaría porque el commit del squash no existe en `develop`.
+El resultado incluye `reconciled` y `reconcile_command` (también en `--json`);
+si el merge conflictúa, la release ya está publicada, se aborta el merge y se
+informa `reconcile_error` para resolverlo a mano. Para deshacer una release,
+`git revert <commit-de-release>` en `main`; el merge de reconciliación de
+`develop` no estorba y solo se revierte con
+`git revert -m 1 <commit-de-reconciliación>` si hace falta.
 
 
 ## Tickets temporales (scratch)

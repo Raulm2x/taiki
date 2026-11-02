@@ -7,7 +7,11 @@ Flujo:
 
 1. Comprueba que la rama de integración (``orchestrator.integration_branch``,
    ``develop`` por defecto) esté limpia y al día con su remoto, y que ``main``
-   sea su ancestro.
+   sea su ancestro. Si va por detrás, el error pide ``git pull --ff-only``; si
+   va por delante, ``git push origin <rama>``; si ha divergido, resolver
+   pull/rebase antes. ``--allow-ahead`` permite liberar con la rama por delante
+   (y nunca por detrás): el release queda solo en local y hay que subirla
+   después.
 2. Ejecuta los gates (``tests/run.py --verify``). Se puede inyectar otro
    comando con ``TAIKI_RELEASE_VERIFY`` o ``--verify-cmd``; el defecto es el
    gate real.
@@ -16,12 +20,20 @@ Flujo:
    de commit. No se reescribe ``main``.
 4. Actualiza ``CHANGELOG.md`` (lo crea si falta) y etiqueta el commit con un
    tag anotado ``vX.Y.Z``.
+5. Reconcilia la integración con ``main``: el squash deja en ``main`` un commit
+   que la rama de integración no tiene, así que se integra de vuelta con
+   ``git merge --no-ff`` (idempotente: no hace nada si ``main`` ya es
+   ancestro). Sin este paso la segunda release fallaría por la comprobación de
+   ancestro. Al terminar se restaura el checkout original.
 
 La versión sube según los commits: ``!`` o ``BREAKING CHANGE`` → major,
 ``feat`` → minor y el resto → patch; ``--bump`` fuerza el incremento.
 
 Rollback: ``git revert <commit>`` del commit de release (y retira el tag si aún
-no se publicó). Nunca se reescribe ``main`` publicado.
+no se publicó). Nunca se reescribe ``main`` publicado. La reconciliación es un
+merge normal: se deshace con ``git revert -m 1 <commit-de-reconciliación>`` en
+la rama de integración o, mejor, revirtiendo el commit de release y volviendo a
+reconciliar.
 """
 
 from __future__ import annotations
@@ -247,6 +259,70 @@ def _verify_command(explicit: str | list[str] | None) -> list[str]:
     return list(DEFAULT_VERIFY)
 
 
+def _reconcile(
+    root: Path, branch: str, main: str, version: str, original: str
+) -> dict[str, Any]:
+    """Integra ``main`` en ``branch`` tras el squash, sin tocar ``main``.
+
+    Idempotente: si ``main`` ya es ancestro de la integración no hace nada. Un
+    conflicto se aborta y se informa; la release ya está publicada y no se
+    revierte por ello. Restaura el checkout original pase lo que pase.
+    """
+    outcome: dict[str, Any] = {
+        "reconciled": False,
+        "reconcile_command": None,
+    }
+    if _git_ok(root, "merge-base", "--is-ancestor", main, branch):
+        return outcome
+    message = f"chore: reconciliar {branch} tras v{version}"
+    command = (
+        f"git switch {branch} && git merge --no-ff --no-verify {main} "
+        f"-m {shlex.quote(message)}"
+    )
+    outcome["reconcile_command"] = command
+    result = subprocess.run(
+        ["git", "-C", str(root), "checkout", branch],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "merge",
+                "--no-ff",
+                "--no-verify",
+                "-m",
+                message,
+                main,
+            ],
+            capture_output=True,
+            text=True,
+        )
+    if result.returncode == 0:
+        outcome["reconciled"] = True
+    else:
+        subprocess.run(
+            ["git", "-C", str(root), "merge", "--abort"],
+            capture_output=True,
+            text=True,
+        )
+        outcome["reconcile_error"] = (result.stderr or result.stdout).strip()
+    if original != branch:
+        restored = subprocess.run(
+            ["git", "-C", str(root), "checkout", original],
+            capture_output=True,
+            text=True,
+        )
+        if restored.returncode != 0:
+            outcome["reconcile_error"] = (
+                restored.stderr or restored.stdout
+            ).strip()
+    return outcome
+
+
 def run(
     root: str | Path | None = None,
     *,
@@ -255,9 +331,17 @@ def run(
     bump: str | None = None,
     dry_run: bool = False,
     no_verify: bool = False,
+    allow_ahead: bool = False,
     verify_cmd: str | list[str] | None = None,
 ) -> dict[str, Any]:
-    """Publica la integración en ``main`` y devuelve el resumen del release."""
+    """Publica la integración en ``main`` y devuelve el resumen del release.
+
+    ``allow_ahead`` permite liberar cuando la integración va por delante de su
+    upstream y no por detrás. La release queda solo en local: el riesgo es
+    publicar un tag cuyo commit de integración no está en el remoto, así que
+    hay que subir la rama a mano después. Nunca permite una rama por detrás ni
+    una divergencia.
+    """
     if bump and bump not in BUMPS:
         raise TicketError(f"--bump debe ser uno de: {', '.join(BUMPS)}")
     base = Path(root).expanduser().resolve() if root else workspace.project_root()
@@ -285,10 +369,25 @@ def run(
             int(value)
             for value in _git(base, "rev-list", "--left-right", "--count", f"{branch}...{upstream}").split()
         )
-        if ahead or behind:
+        remote = upstream.split("/", 1)[0] if "/" in upstream else "origin"
+        counts = f"ahead {ahead}, behind {behind}"
+        if ahead and behind:
             raise TicketError(
-                f"{branch} no está al día con {upstream} "
-                f"(ahead {ahead}, behind {behind}); sincroniza antes de liberar"
+                f"{branch} y {upstream} han divergido ({counts}); resuelve la "
+                f"divergencia antes de liberar (git pull --rebase {remote} "
+                f"{branch} y resuelve los conflictos)"
+            )
+        if behind:
+            raise TicketError(
+                f"{branch} va {behind} commit(s) por detrás de {upstream} "
+                f"({counts}); trae los cambios antes de liberar: "
+                f"git switch {branch} && git pull --ff-only"
+            )
+        if ahead and not allow_ahead:
+            raise TicketError(
+                f"{branch} va {ahead} commit(s) por delante de {upstream} "
+                f"({counts}); sube la rama antes de liberar: "
+                f"git push {remote} {branch}"
             )
     if not _git_ok(base, "merge-base", "--is-ancestor", main, branch):
         raise TicketError(
@@ -322,6 +421,9 @@ def run(
         "commits": len(commits),
         "message": message,
         "dry_run": dry_run,
+        "allow_ahead": allow_ahead,
+        "reconciled": False,
+        "reconcile_command": None,
     }
     if dry_run:
         return summary
@@ -374,6 +476,7 @@ def run(
     _git(base, "commit", "--no-verify", "-m", message)
     commit = _git(base, "rev-parse", "HEAD")
     _git(base, "tag", "-a", tag, "-m", f"Release {tag}")
+    summary.update(_reconcile(base, branch, main, version, original))
     summary.update(
         {
             "commit": commit,
@@ -397,6 +500,7 @@ def cmd_release(args: argparse.Namespace) -> int:
             bump=getattr(args, "bump", None),
             dry_run=bool(getattr(args, "dry_run", False)),
             no_verify=bool(getattr(args, "no_verify", False)),
+            allow_ahead=bool(getattr(args, "allow_ahead", False)),
             verify_cmd=getattr(args, "verify_cmd", None),
         )
     except TicketError as exc:
@@ -408,10 +512,32 @@ def cmd_release(args: argparse.Namespace) -> int:
     if result["dry_run"]:
         print(f"Release {result['tag']} ({result['integration']} → {result['main']})")
         print(result["message"])
+        if result.get("allow_ahead"):
+            print(
+                f"allow-ahead: {result['integration']} va por delante de su "
+                "upstream; la release no hará push."
+            )
         print("dry-run: no se ha escrito nada.")
         return 0
     print(f"Release {result['tag']} publicada en {result['main']}: {result['commit'][:12]}")
     print(f"Tag: {result['tag']}")
+    if result.get("reconciled"):
+        print(
+            f"Reconciliado: {result['integration']} contiene {result['main']} "
+            f"({result['reconcile_command']})"
+        )
+    elif result.get("reconcile_error"):
+        print(
+            f"Aviso: no se pudo reconciliar {result['integration']} con "
+            f"{result['main']}: {result['reconcile_error']}",
+            file=sys.stderr,
+        )
     print(f"CHANGELOG: {result['changelog']}")
     print(f"Rollback: git revert {result['commit'][:12]}")
+    if result.get("allow_ahead"):
+        print(
+            f"Aviso: release local; {result['integration']} sigue por delante "
+            f"de su upstream. Súbela con git push origin {result['integration']}.",
+            file=sys.stderr,
+        )
     return 0

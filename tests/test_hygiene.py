@@ -247,6 +247,32 @@ def run(h: Harness) -> None:
         h.eq(strict_code, 1, "--strict-budget falla con un módulo lento")
         h.eq(loose_code, 0, "sin --strict-budget el tiempo solo avisa")
 
+        ceiling = {
+            "suite": {"max_seconds": 99.0, "baseline_checks": 1, "checks_tolerance": 0},
+            "module": {"max_seconds": 99.0},
+        }
+        hygiene.load_budget = lambda path=None, environ=None: ceiling
+        runner._run_module = lambda name: {
+            "name": name,
+            "checks": 2,
+            "error": None,
+            "elapsed": 0.01,
+        }
+        with contextlib.redirect_stdout(io.StringIO()):
+            over_ceiling = runner.main(["--strict-budget"])
+        h.eq(
+            over_ceiling,
+            1,
+            "--strict-budget falla si la suite supera el techo de comprobaciones",
+        )
+        hygiene.load_budget = lambda path=None, environ=None: tight
+        runner._run_module = lambda name: {
+            "name": name,
+            "checks": 1,
+            "error": None,
+            "elapsed": 99.0,
+        }
+
         runner._run_module = lambda name: {
             "name": name,
             "checks": 1,

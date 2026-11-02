@@ -396,6 +396,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="No ejecuta los gates (solo si ya se verificaron)",
     )
     p.add_argument(
+        "--allow-ahead",
+        action="store_true",
+        help="Permite liberar con la integración por delante de su upstream "
+        "(sin push): el release queda solo en local y hay que subir la rama "
+        "después. Nunca permite ir por detrás ni una divergencia",
+    )
+    p.add_argument(
         "--verify-cmd",
         help="Comando de gates (por defecto tests/run.py --verify; "
         "también TAIKI_RELEASE_VERIFY)",

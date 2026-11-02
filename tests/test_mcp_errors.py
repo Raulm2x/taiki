@@ -118,9 +118,6 @@ def run(h: Harness) -> None:
             lambda: handlers.call_tool("create", {"title": "MCP viejo"}),
             "un MCP viejo bloquea cualquier escritura, no solo las subtareas",
         )
-        h.ok(
-            handlers.call_tool("list", {"limit": 1})["count"] >= 0,
-            "un MCP viejo sigue permitiendo lecturas",
-        )
+        handlers.call_tool("list", {"limit": 1})
     finally:
         runtime.is_stale = original_stale

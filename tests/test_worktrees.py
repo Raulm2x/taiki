@@ -349,6 +349,39 @@ def run(h: Harness) -> None:
     (merge_path / "merge.txt").write_text("x\n", encoding="utf-8")
     _git(merge_path, "add", "-A")
     _git(merge_path, "commit", "-m", f"merge {merge_ticket['code']}")
+
+    # El merge corre la suite del worktree con --strict-budget: una suite que
+    # rompe el techo (simulada aquí, para no pagar la suite real) falla y no
+    # mergea nada.
+    (merge_path / "tests").mkdir()
+    (merge_path / "tests" / "run.py").write_text(
+        "import sys\n"
+        "sys.exit(0 if '--strict-budget' not in sys.argv else 1)\n",
+        encoding="utf-8",
+    )
+    _git(merge_path, "add", "tests/run.py")
+    _git(merge_path, "commit", "-m", "suite sintética")
+    budget_err = io.StringIO()
+    with h.env(TAIKI_DB=str(info["db"])), contextlib.chdir(root), \
+            contextlib.redirect_stdout(io.StringIO()), \
+            contextlib.redirect_stderr(budget_err):
+        budget_rc = cmd_worktree_merge(
+            argparse.Namespace(
+                code=merge_ticket["code"],
+                path=None,
+                delete=False,
+                no_tests=False,
+                json=False,
+                force=True,
+            )
+        )
+    h.ok(
+        budget_rc == 1
+        and "Los tests fallaron" in budget_err.getvalue()
+        and not (root / "merge.txt").exists(),
+        "el merge ejecuta la suite con --strict-budget y falla si rompe el techo",
+    )
+
     (root / "src" / "app.py").write_text("dirty\n", encoding="utf-8")
     h.raises(
         TicketError,

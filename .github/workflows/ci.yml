@@ -39,3 +39,24 @@ jobs:
       # CI=true también relaja los benchmarks (25 ms / 1.500 ms).
       - name: Benchmarks
         run: python -m tests.benchmarks
+
+  # E2E del flujo de ramas en repos temporales, sin red. El job `test` ya aplica
+  # el presupuesto completo de la suite (checks y tiempo total); este job activa
+  # TAIKI_E2E (el smoke es opt-in porque no cabe en el techo de 5 s de la suite
+  # local) y lo ejecuta con el gate estricto de tiempo por módulo.
+  e2e:
+    runs-on: ubuntu-latest
+    env:
+      TAIKI_E2E: "1"
+      GIT_TERMINAL_PROMPT: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: E2E agent → develop → release → main
+        run: python tests/run.py --only release --strict-budget
