@@ -132,14 +132,41 @@ estabiliza allí y se integra de vuelta en `develop` antes de publicar.
 
 ### Release
 
-Desde una `develop` limpia, al día y con la CI en verde:
+Desde una `develop` limpia y con la CI en verde, publicar es un solo comando:
 
 ```bash
-git switch develop
-git pull --ff-only
-git push origin develop      # develop debe estar publicada antes de liberar
-python3 tests/run.py --verify
+taiki release --push
+```
+
+El orden es fijo y cada paso aparece en texto y en `--json` (`pushed`):
+
+1. **Integración**: si `develop` solo va por delante de su upstream, la sube
+   (`git push origin develop`). Si va por detrás o ha divergido, aborta antes
+   de escribir y da el comando exacto (`git pull --ff-only` o
+   `git pull --rebase`); nunca hace `pull` automático.
+2. **Gates**: los mismos de siempre (`tests/run.py --verify`, inyectables con
+   `--verify-cmd`/`TAIKI_RELEASE_VERIFY`).
+3. **Squash y tag**: aplana `develop` en un único commit sobre `main` y crea el
+   tag anotado `vX.Y.Z`.
+4. **Publicación**: `git push --atomic origin main vX.Y.Z` publica el commit de
+   release y su tag juntos. Si el remoto rechaza `main` (protección), para sin
+   reconciliar: el release queda en local y el error indica el paso y el
+   comando de reintento.
+5. **Reconciliación**: integra `main` de vuelta en `develop` con el marcador
+   (ver más abajo).
+6. **Integración publicada**: `git push origin develop` sube la reconciliación.
+
+`--push` y `--dry-run` son incompatibles. Sin remoto configurado el comando
+aborta y sugiere el modo local.
+
+El **modo local** (sin `--push`) es el de siempre: no toca la red, es
+determinista y sirve para ensayar (`--dry-run`), para repos sin remoto y para
+publicar a mano cuando se quiere revisar el commit de `main` antes de subirlo:
+
+```bash
 taiki release
+git push origin main --follow-tags
+git push origin develop
 ```
 
 `taiki release` exige que `develop` coincida exactamente con `origin/develop` y
@@ -157,8 +184,12 @@ Por defecto la release sigue bloqueando.
 
 `taiki release` aplana los commits de `develop` en **un solo commit** sobre
 `main`, actualiza `CHANGELOG.md` a partir de los tickets y commits desde el tag
-anterior y crea el tag anotado `vX.Y.Z`. `main` no recibe pushes ni commits
-directos: la única vía es ese comando con los gates en verde.
+anterior y crea el tag anotado `vX.Y.Z`. `main` no recibe commits directos: con
+`--push` el comando publica `main` y el tag juntos; en modo local se suben
+después con `git push origin main --follow-tags`, y el hook `pre-push` solo
+acepta el push cuando el tip es ese commit de release (con su tag `vX.Y.Z`).
+`--no-verify` no es la vía: si el hook rechaza el push, es porque `main` tiene
+commits que no vienen de `taiki release`.
 
 Después del tag, el comando **reconcilia** la rama de integración con `main`:
 el squash deja en `main` un commit que `develop` no tiene, así que lo integra
@@ -170,15 +201,30 @@ develop»*. Si el merge diera conflicto, la release ya está publicada: el
 comando aborta el merge, avisa con `reconcile_error` y deja `develop` intacta
 para resolver a mano.
 
+Además, la release registra el commit de integración publicado en
+`.taiki/releases.json`, un fichero **versionado** con una entrada
+`{tag, version, released_sha, date}` por release. El registro viaja en el mismo
+merge de reconciliación (o en un commit `chore(release): registrar vX.Y.Z` de
+`develop` si no hizo falta merge); `main` no recibe ningún commit propio por
+esto. La siguiente release usa el `released_sha` de la última entrada como
+inicio del rango, así que el squash de `main` no repite en el CHANGELOG commits
+ya publicados ni fuerza un bump por un `feat` antiguo. En repos sin marcador
+(primera release o proyectos anteriores a este fichero) se cae al rango
+`<tag>..develop`; si existe el merge de reconciliación de ese tag, se usa su
+primer padre. Si el rango no deja commits publicables, la release aborta con
+*«No hay commits nuevos desde vX.Y.Z»*.
+
 ```bash
-taiki release
+taiki release --push
 # Release v0.2.0 publicada en main: 1a2b3c4d5e6f
+# Publicado en origin: develop, main, v0.2.0, develop-reconcile
 # Reconciliado: develop contiene main (git switch develop && git merge --no-ff ...)
 ```
 
 ### Reglas
 
-- `main` protegida: sin push directo, sin commits sueltos y sin reescribir
+- `main` protegida: solo admite el push del commit de release y su tag
+  (`git push origin main --follow-tags`), sin commits sueltos ni reescritura de
   historia publicada. `develop` también se protege contra force-push.
 - Commits convencionales (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`,
   `chore:`) con el código `T-XXXX` en el asunto; el hook `commit-msg` lo exige.
@@ -213,9 +259,26 @@ desde `main`, se etiqueta una versión de parche y se integra también en
 ### Versionado y CHANGELOG
 
 Versionado semántico: un cambio incompatible sube **major**, un `feat:` sube
-**minor** y el resto (`fix:`, `docs:`, `refactor:`…) sube **patch**. El
-`CHANGELOG.md` se genera durante la release agrupando los tickets y commits
-desde el tag anterior; solo se edita a mano para corregir el resumen.
+**minor** y el resto (`fix:`, `docs:`, `refactor:`…) sube **patch**. Un `feat:`
+pequeño (un flag, un ajuste de salida) puede declarar su nivel en el cuerpo del
+commit con el trailer `Release-Bump`:
+
+```text
+feat: añade --push a release (T-0040)
+
+Release-Bump: patch
+```
+
+La release usa el **mayor** de los trailers declarados en el rango; si no hay
+ninguno, mantiene la convención anterior, y un `BREAKING CHANGE` (o `!`) siempre
+sube **major** aunque un commit pida `patch`. `--bump` prevalece sobre el
+trailer. El resumen (también con `--json`) lista esos commits en
+`explicit_bumps`, y el texto avisa de qué commits declararon el nivel.
+
+El `CHANGELOG.md` se genera durante la release agrupando los tickets y commits
+desde el `released_sha` de `.taiki/releases.json` (o desde el tag anterior si
+aún no hay marcador); solo se edita a mano para corregir el resumen. Tanto
+`CHANGELOG.md` como `.taiki/releases.json` se versionan en `develop`.
 
 ### Roles
 

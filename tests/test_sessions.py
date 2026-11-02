@@ -361,7 +361,7 @@ def run(h: Harness) -> None:
                 "una terminal que muere al arrancar debe fallar"
             )
         argv_alive = sessions.launch_session(
-            "ses_viva1", directory=tmp, terminal=str(slow_term), probe=0.2
+            "ses_viva1", directory=tmp, terminal=str(slow_term), probe=0.05
         )
         h.ok(
             argv_alive[-1] == "ses_viva1",

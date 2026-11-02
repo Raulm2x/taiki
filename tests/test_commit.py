@@ -82,14 +82,13 @@ def run(h: Harness) -> None:
             repo.claim_ticket(
                 conn, other["code"], agent="opencode", session_id="ses_b"
             )
-            h.eq(ticket["paths"], ["src/"], "create guarda las rutas del ticket")
-            updated = repo.update_ticket(
-                conn, ticket["code"], paths=["src/", "tests/"]
-            )
-            h.eq(
-                updated["paths"],
-                ["src/", "tests/"],
-                "update reemplaza las rutas del ticket",
+            h.ok(
+                ticket["paths"] == ["src/"]
+                and repo.update_ticket(
+                    conn, ticket["code"], paths=["src/", "tests/"]
+                )["paths"]
+                == ["src/", "tests/"],
+                "create guarda las rutas y update las reemplaza",
             )
             repo.update_ticket(conn, ticket["code"], paths=["src/"])
 
@@ -127,11 +126,35 @@ def run(h: Harness) -> None:
             ), contextlib.redirect_stderr(io.StringIO()):
                 code = cmd_commit(args)
             h.eq(code, 0, "taiki commit exporta TAIKI_TICKET y el hook lo acepta")
-            subject = _git(root, "log", "-1", "--format=%s").strip()
-            h.ok(
-                ticket["code"] in subject,
-                "el mensaje incluye el código del ticket",
+            h.eq(
+                _git(root, "log", "-1", "--format=%B").strip(),
+                f"cambio en src ({ticket['code']})",
+                "un solo -m: asunto con código y sin cuerpo extra",
             )
+
+            # ── Varios -m se concatenan como párrafos (git) ────────────
+            (root / "src" / "a.py").write_text("a3\n", encoding="utf-8")
+            _git(root, "add", "src/a.py")
+            with contextlib.chdir(root), contextlib.redirect_stdout(
+                io.StringIO()
+            ), contextlib.redirect_stderr(io.StringIO()):
+                code = cmd_commit(
+                    argparse.Namespace(
+                        message=["feat: cambio visible", "Release-Bump: patch"],
+                        ticket=ticket["code"],
+                        agent="worker",
+                        session="ses_commit",
+                        dry_run=False,
+                        json=False,
+                    )
+                )
+            h.ok(
+                code == 0
+                and _git(root, "log", "-1", "--format=%B").strip()
+                == f"feat: cambio visible ({ticket['code']})\n\nRelease-Bump: patch",
+                "varios -m: código en el asunto y párrafos separados por línea en blanco",
+            )
+
             linked = repo.get_ticket(conn, ticket["code"])
             link_event = next(
                 event

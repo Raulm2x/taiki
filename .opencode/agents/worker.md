@@ -154,6 +154,9 @@ permissions:
     resource: "git commit *"
     effect: allow
   - action: shell
+    resource: "git rebase*"
+    effect: allow
+  - action: shell
     resource: "git push*"
     effect: deny
   - action: shell
@@ -307,3 +310,6 @@ ruta fuera del worktree siguen denegados: si hace falta, bloquea el ticket.
 - Si necesitas una decisión humana, bloquea el ticket
   (herramienta MCP `transition` a `bloqueado`) y explica por qué.
 - **Shell**: no uses `cd` (la sesión ya está en el worktree), ni bucles `for` ni heredocs (`python3 - <<EOF`); usa `read`/`grep`/`edit` y rutas relativas al borrar.
+- **Rebase**: `git rebase` está permitido (`git rebase <rama>`, `--continue`,
+  `--abort`, `--skip`), pero no uses `git rebase -i` ni `--exec`: sin TTY se
+  cuelga. Resuelve conflictos con `edit`, `git add` y `git rebase --continue`.

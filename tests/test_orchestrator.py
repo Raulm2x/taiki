@@ -1102,6 +1102,7 @@ def run(h: Harness) -> None:
         )
         and all(
             _rule(profiles[name], "shell", "mkdir -p docs*") == "allow"
+            and _rule(profiles[name], "shell", "git rebase*") == "allow"
             for name in (
                 "worker.md",
                 "worker-low.md",

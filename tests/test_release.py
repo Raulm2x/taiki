@@ -2,7 +2,7 @@
 
 El techo de la suite es 1051 checks, así que todas las invariantes se consolidan
 en un único ``h.eq`` con un diccionario de observaciones: rutas negativas
-(dry-run, gates rojos y ancestro) y release real.
+(dry-run, gates rojos y ancestro), sync, marcador de releases y release real.
 
 El E2E del flujo completo (claim con worktree, commit en ``agent/*``, rebase +
 ff-only en ``develop``, release squash, reconciliación de ``develop``,
@@ -23,7 +23,7 @@ import subprocess
 from argparse import Namespace
 from pathlib import Path
 
-from commands.release import cmd_release
+from commands.release import _bump_for, _explicit_bumps, cmd_release
 from commands.tickets import cmd_claim
 from commands.worktree import cmd_worktree_merge
 from tests.seeds import git_repo
@@ -53,6 +53,7 @@ def _release(root: Path, **options) -> tuple[int, dict]:
         dry_run=options.get("dry_run", False),
         no_verify=options.get("no_verify", True),
         allow_ahead=options.get("allow_ahead", False),
+        push=options.get("push", False),
         verify_cmd=options.get("verify_cmd"),
         json=True,
     )
@@ -73,6 +74,7 @@ def _release_error(root: Path, **options) -> tuple[int, str]:
         dry_run=options.get("dry_run", False),
         no_verify=options.get("no_verify", True),
         allow_ahead=options.get("allow_ahead", False),
+        push=options.get("push", False),
         verify_cmd=options.get("verify_cmd"),
         json=True,
     )
@@ -117,8 +119,15 @@ def _seed_repo(path: Path, name: str) -> tuple[Path, Path]:
 
 
 def _sync_repo(path: Path, name: str) -> tuple[Path, Path]:
-    """Repo con ``develop`` publicado en un bare local: upstream sin red."""
-    root, _ = _seed_repo(path, name)
+    """Repo con ``develop`` publicado en un bare local: upstream sin red.
+
+    No necesita workspace Taiki (solo se prueban los errores de sync), así que
+    evita la DB y los hooks de ``_seed_repo``.
+    """
+    root = git_repo(path)
+    _commit(root, "app.py", "v0\n", "chore: base")
+    _git(root, "branch", "-m", "main")
+    _git(root, "checkout", "-b", "develop")
     bare = path.parent / f"{path.name}-remoto.git"
     subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
     _git(root, "remote", "add", "origin", str(bare))
@@ -128,15 +137,29 @@ def _sync_repo(path: Path, name: str) -> tuple[Path, Path]:
 
 def _sync_cases(tmp: Path) -> tuple[dict, dict]:
     """Casos ahead/behind/divergencia y ``--allow-ahead`` en un solo repo."""
-    root, _ = _sync_repo(tmp / "sync", "sync")
+    root, bare = _sync_repo(tmp / "sync", "sync")
+    main_before = _git(root, "rev-parse", "main")
+    remote_before = _git(bare, "rev-parse", "refs/heads/develop")
     # ahead: un commit local y upstream intacto.
     _commit(root, "local1.txt", "local\n", "feat: local uno (T-0038)")
     ahead_rc, ahead_err = _release_error(root, dry_run=True)
     allow_rc, allow = _release(root, dry_run=True, allow_ahead=True)
-    # behind: el remoto tiene ese commit y la rama local vuelve atrás.
-    _git(root, "push", "-q", "origin", "develop")
+    # behind: el remoto tiene ese commit y la rama local vuelve atrás. Basta
+    # con mover la ref de seguimiento local: la release no consulta el bare.
+    _git(root, "update-ref", "refs/remotes/origin/develop", "HEAD")
     _git(root, "reset", "--hard", "HEAD~1")
     behind_rc, behind_err = _release_error(root, dry_run=True)
+    # Con --push el behind también aborta, y --push --dry-run es incompatible.
+    push_behind_rc, push_behind_err = _release_error(root, push=True)
+    incompatible_rc, incompatible_err = _release_error(
+        root, push=True, dry_run=True
+    )
+    push_behind_clean = (
+        _git(root, "rev-parse", "main") == main_before
+        and not _tag_exists(root, "v0.1.0")
+        and _git(bare, "rev-parse", "refs/heads/develop") == remote_before
+        and not _has_ref(bare, "refs/heads/main")
+    )
     # divergencia: la rama local y el upstream avanzan por su cuenta.
     _commit(root, "local2.txt", "local\n", "feat: local dos (T-0039)")
     diverged_rc, diverged_err = _release_error(root, dry_run=True)
@@ -148,6 +171,12 @@ def _sync_cases(tmp: Path) -> tuple[dict, dict]:
         "behind_rc": behind_rc,
         "behind_pull": "git pull --ff-only" in behind_err,
         "behind_names": "develop" in behind_err and "origin/develop" in behind_err,
+        "push_behind_rc": push_behind_rc,
+        "push_behind_text": "por detrás" in push_behind_err
+        and "git pull --ff-only" in push_behind_err,
+        "push_behind_clean": push_behind_clean,
+        "incompatible_rc": incompatible_rc,
+        "incompatible": "incompatibles" in incompatible_err,
         "diverged_rc": diverged_rc,
         "diverged_text": "diverg" in diverged_err.lower(),
         "allow_rc": allow_rc,
@@ -161,6 +190,11 @@ def _sync_cases(tmp: Path) -> tuple[dict, dict]:
         "behind_rc": 1,
         "behind_pull": True,
         "behind_names": True,
+        "push_behind_rc": 1,
+        "push_behind_text": True,
+        "push_behind_clean": True,
+        "incompatible_rc": 1,
+        "incompatible": True,
         "diverged_rc": 1,
         "diverged_text": True,
         "allow_rc": 0,
@@ -168,6 +202,148 @@ def _sync_cases(tmp: Path) -> tuple[dict, dict]:
         "allow_tag": "v0.1.0",
     }
     return actual, expected
+
+
+def _has_ref(root: Path, ref: str) -> bool:
+    result = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--verify", "--quiet", ref],
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def _push_cases(tmp: Path) -> tuple[dict, dict]:
+    """``--push`` contra un bare local: éxito, ahead y rechazo de main.
+
+    Un solo repo con remoto para el éxito y el rechazo; los abortos previos
+    (behind y ``--dry-run``) se prueban en ``_sync_cases``. Sin red.
+    """
+    root, bare = _sync_repo(tmp / "push", "push")
+    _commit(root, "nuevo.txt", "nuevo\n", "feat: publica release (T-0040)")
+    rc, result = _release(root, push=True)
+    tag = str(result.get("tag"))
+    main_sha = _git(root, "rev-parse", "main")
+    develop_sha = _git(root, "rev-parse", "develop")
+    remote_develop_ok = _git(bare, "rev-parse", "refs/heads/develop")
+    remote_main_ok = _git(bare, "rev-parse", "refs/heads/main")
+    remote_tag_ok = _git(bare, "rev-parse", f"refs/tags/{tag}^{{commit}}")
+    remote_tag_type_ok = _git(bare, "cat-file", "-t", f"refs/tags/{tag}")
+
+    # El remoto rechaza main (protección): no se publica el tag ni se reconcilia.
+    hook = bare / "hooks" / "pre-receive"
+    hook.write_text(
+        "#!/bin/sh\nwhile read old new ref; do\n"
+        '  case "$ref" in refs/heads/main) exit 1;; esac\n'
+        "done\nexit 0\n",
+        encoding="utf-8",
+    )
+    hook.chmod(0o755)
+    _commit(root, "posterior.txt", "posterior\n", "fix: segundo parche (T-0041)")
+    before_reject = _git(root, "rev-parse", "develop")
+    reject_rc, reject_err = _release_error(root, push=True)
+    rejected_tag = "v0.1.1"
+
+    actual = {
+        "rc": rc,
+        "pushed": result.get("pushed"),
+        "remote": result.get("remote"),
+        "remote_develop": remote_develop_ok,
+        "remote_main": remote_main_ok,
+        "remote_tag": remote_tag_ok,
+        "remote_tag_type": remote_tag_type_ok,
+        "local_main": main_sha,
+        "develop_after": develop_sha,
+        "reconciled": result.get("reconciled"),
+        "branch": result.get("branch"),
+        "reject_rc": reject_rc,
+        "reject_step": "Paso: push de main" in reject_err,
+        "reject_retry": "Reintenta: git push --atomic origin main" in reject_err,
+        "reject_develop": _git(root, "rev-parse", "develop"),
+        "reject_before": before_reject,
+        "reject_remote_main": _git(bare, "rev-parse", "refs/heads/main"),
+        "reject_remote_tag": _has_ref(bare, f"refs/tags/{rejected_tag}"),
+        "reject_local_tag": _tag_exists(root, rejected_tag),
+        "reject_unreconciled": not _is_ancestor(root, "main", "develop"),
+    }
+    expected = {
+        "rc": 0,
+        "pushed": ["develop", "main", "v0.1.0", "develop-reconcile"],
+        "remote": "origin",
+        "remote_develop": develop_sha,
+        "remote_main": main_sha,
+        "remote_tag": main_sha,
+        "remote_tag_type": "tag",
+        "local_main": main_sha,
+        "develop_after": develop_sha,
+        "reconciled": True,
+        "branch": "develop",
+        "reject_rc": 1,
+        "reject_step": True,
+        "reject_retry": True,
+        "reject_develop": before_reject,
+        "reject_before": before_reject,
+        "reject_remote_main": main_sha,
+        "reject_remote_tag": False,
+        "reject_local_tag": True,
+        "reject_unreconciled": True,
+    }
+    return actual, expected
+
+
+def _bump_cases(root: Path) -> dict[str, dict]:
+    """Niveles del trailer: capa pura y dos dry-runs de integración.
+
+    La precedencia y el parseo se prueban en ``_bump_for``/``_explicit_bumps``
+    (sin repos); el repo de ``run`` solo se usa para comprobar que el resumen
+    integra ``explicit_bumps`` y que ``--bump`` prevalece. Un ``reset --hard``
+    devuelve ``develop`` a su base.
+    """
+
+    def commit(subject: str, trailer: str = "") -> dict[str, str]:
+        body = f"{subject}\n\n{trailer}" if trailer else subject
+        return {"sha": subject[:7], "subject": subject, "body": body}
+
+    cases = {
+        "trailer_patch": [commit("feat: flag (T-0010)", "Release-Bump: patch")],
+        "trailer_minor": [
+            commit("feat: flag (T-0011)", "Release-Bump: minor"),
+            commit("fix: borde (T-0012)"),
+        ],
+        "breaking_trailer_patch": [
+            commit("feat!: rompe api (T-0013)", "Release-Bump: patch")
+        ],
+        "convention": [commit("feat: normal (T-0015)")],
+    }
+    results: dict[str, dict] = {
+        name: {
+            "bump": _bump_for(commits),
+            "explicit": [
+                (item["subject"], item["level"])
+                for item in _explicit_bumps(commits)
+            ],
+        }
+        for name, commits in cases.items()
+    }
+    base = _git(root, "rev-parse", "develop")
+    _commit(
+        root,
+        "sondeo-bump.txt",
+        "sondeo\n",
+        "feat: flag (T-0014)\n\nRelease-Bump: patch",
+    )
+    _, declared = _release(root, dry_run=True)
+    _, override = _release(root, dry_run=True, bump="minor")
+    _git(root, "reset", "--hard", base)
+    results["integration"] = {
+        "bump": declared.get("bump"),
+        "explicit": [
+            (item.get("subject"), item.get("level"))
+            for item in declared.get("explicit_bumps") or []
+        ],
+        "override": override.get("bump"),
+    }
+    return results
 
 
 def _claim_worktree(
@@ -237,16 +413,14 @@ def _flow(h) -> tuple[dict, dict]:
     release_rc, release = _release(root, no_verify=False, verify_cmd="true")
     tag = str(release.get("tag"))
     main_commit = _git(root, "rev-parse", "main")
-    message = _git(root, "log", "-1", "--format=%B", "main")
-    changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
     subjects = _git(root, "log", "--format=%s", "develop")
     develop_reconciled = _is_ancestor(root, "main", "develop")
     restored_branch = _git(root, "branch", "--show-current")
 
-    # ── Segundo ciclo: sin reconciliación manual la release fallaría ─────
-    _commit(root, "segundo.txt", "dos\n", "feat: segundo ciclo (T-0005)")
-    second_rc, second = _release(root, no_verify=False, verify_cmd="true")
-    second_tag = str(second.get("tag"))
+    # El marcador viaja en el merge de reconciliación (sin commit extra).
+    marker = json.loads(
+        (root / ".taiki" / "releases.json").read_text(encoding="utf-8")
+    )
     main_commits = int(_git(root, "rev-list", "--count", f"{main_head}..main"))
     main_merges = _git(root, "rev-list", "--merges", "main")
     develop_merges = _git(root, "log", "--merges", "--format=%s", "develop").splitlines()
@@ -288,25 +462,15 @@ def _flow(h) -> tuple[dict, dict]:
         "release_branch": release.get("branch"),
         "release_squashed": release.get("commits"),
         "release_reconciled": release.get("reconciled"),
-        "second_rc": second_rc,
-        "second_tag": second_tag,
-        "second_reconciled": second.get("reconciled"),
+        "marker_entries": len(marker),
+        "marker_tags": [entry.get("tag") for entry in marker],
+        "marker_first_sha": marker[0].get("released_sha") if marker else None,
         "main_commits": main_commits,
         "main_linear": main_merges == "",
-        "release_lineage": _git(root, "rev-parse", "main^^"),
+        "release_lineage": _git(root, "rev-parse", "main^"),
         "tags": release_tags,
         "tag_type": _git(root, "cat-file", "-t", tag) if tag else None,
         "tag_on_main": _git(root, "rev-parse", f"{tag}^{{commit}}") if tag else None,
-        "second_tag_on_main": (
-            _git(root, "rev-parse", f"{second_tag}^{{commit}}") if second_tag else None
-        ),
-        "release_message": all(
-            part in message for part in ("chore(release)", "### feat", "T-0001")
-        ),
-        "changelog": all(
-            part in changelog
-            for part in ("## v0.1.0", "### feat", "T-0001", "flujo E2E")
-        ),
         "main_has_files": (root / "flujo.txt").is_file()
         and (root / "otro.txt").is_file(),
         "conflict_claim_rc": claim2_rc,
@@ -328,10 +492,7 @@ def _flow(h) -> tuple[dict, dict]:
         "agent_commit_in_develop": True,
         "develop_advanced": True,
         "develop_reconciled": True,
-        "develop_merges": [
-            "chore: reconciliar develop tras v0.2.0",
-            "chore: reconciliar develop tras v0.1.0",
-        ],
+        "develop_merges": ["chore: reconciliar develop tras v0.1.0"],
         "merge_kept_main": True,
         "worktree_removed": True,
         "branch_deleted": True,
@@ -339,18 +500,15 @@ def _flow(h) -> tuple[dict, dict]:
         "release_branch": "develop",
         "release_squashed": 2,
         "release_reconciled": True,
-        "second_rc": 0,
-        "second_tag": "v0.2.0",
-        "second_reconciled": True,
-        "main_commits": 2,
+        "marker_entries": 1,
+        "marker_tags": ["v0.1.0"],
+        "marker_first_sha": develop_after,
+        "main_commits": 1,
         "main_linear": True,
         "release_lineage": main_head,
-        "tags": ["v0.1.0", "v0.2.0"],
+        "tags": ["v0.1.0"],
         "tag_type": "tag",
         "tag_on_main": main_commit,
-        "second_tag_on_main": _git(root, "rev-parse", "main") if second_tag else None,
-        "release_message": True,
-        "changelog": True,
         "main_has_files": True,
         "conflict_claim_rc": 0,
         "conflict_rc": 1,
@@ -419,10 +577,74 @@ def run(h) -> None:
     }
 
     sync_actual, sync_expected = _sync_cases(tmp)
+    push_actual, push_expected = _push_cases(tmp)
+    bumps_actual = _bump_cases(root)
 
     rc, release = _release(root, no_verify=False, verify_cmd="true")
     message = _git(root, "log", "-1", "--format=%B", "main")
+    changelog_first = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+    first_develop_moved = _git(root, "rev-parse", "develop") != develop_head
+    marker_path = root / ".taiki" / "releases.json"
+    first_entries = json.loads(marker_path.read_text(encoding="utf-8"))
+    first_tracked = _git(root, "ls-files", "--", ".taiki/releases.json")
+
+    _commit(root, "posterior.txt", "posterior\n", "fix: parche posterior (T-0005)")
+    second_rc, second = _release(root, no_verify=False, verify_cmd="true")
+    entries = json.loads(marker_path.read_text(encoding="utf-8"))
     changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+    second_section = changelog.split("## v0.1.1", 1)[-1].split("## v0.1.0", 1)[0]
+    empty_rc, empty_error = _release_error(root)
+    no_remote_rc, no_remote_error = _release_error(root, push=True)
+
+    marker_actual = {
+        "first_entries": len(first_entries),
+        "first_tag": first_entries[0].get("tag") if first_entries else None,
+        "first_version": first_entries[0].get("version") if first_entries else None,
+        "first_sha": first_entries[0].get("released_sha") if first_entries else None,
+        "first_date": bool(first_entries and first_entries[0].get("date")),
+        "first_tracked": first_tracked,
+        "second_rc": second_rc,
+        "second_version": second.get("version"),
+        "second_bump": second.get("bump"),
+        "second_tickets": second.get("tickets"),
+        "second_range": second.get("range"),
+        "second_message_old": "T-0001" in second_section,
+        "second_message_new": "T-0005" in second_section,
+        "changelog_entries": changelog.count("## v"),
+        "entries": len(entries),
+        "tags": [entry.get("tag") for entry in entries],
+        "versions": [entry.get("version") for entry in entries],
+        "shas": [entry.get("released_sha") for entry in entries],
+        "empty_rc": empty_rc,
+        "empty_error": "No hay commits nuevos desde v0.1.1" in empty_error,
+        "no_remote_rc": no_remote_rc,
+        "no_remote_error": "No hay remoto configurado" in no_remote_error
+        and "sin --push" in no_remote_error,
+    }
+    marker_expected = {
+        "first_entries": 1,
+        "first_tag": "v0.1.0",
+        "first_version": "0.1.0",
+        "first_sha": develop_head,
+        "first_date": True,
+        "first_tracked": ".taiki/releases.json",
+        "second_rc": 0,
+        "second_version": "0.1.1",
+        "second_bump": "patch",
+        "second_tickets": ["T-0005"],
+        "second_range": develop_head,
+        "second_message_old": False,
+        "second_message_new": True,
+        "changelog_entries": 2,
+        "entries": 2,
+        "tags": ["v0.1.0", "v0.1.1"],
+        "versions": ["0.1.0", "0.1.1"],
+        "shas": [develop_head, second.get("released_sha")],
+        "empty_rc": 1,
+        "empty_error": True,
+        "no_remote_rc": 1,
+        "no_remote_error": True,
+    }
     flow_actual: dict = {}
     flow_expected: dict = {}
     if os.environ.get("TAIKI_E2E", "").strip().lower() in ("1", "true", "yes"):
@@ -431,17 +653,13 @@ def run(h) -> None:
         {
             **negative,
             "sync": sync_actual,
+            "push": push_actual,
+            "bumps": bumps_actual,
+            "marker": marker_actual,
             "release": {
                 "rc": rc,
-                "main_commits": int(
-                    _git(root, "rev-list", "--count", f"{main_head}..main")
-                ),
-                "develop_reconciled": _is_ancestor(root, "main", "develop"),
-                "develop_moved": _git(root, "rev-parse", "develop") != develop_head,
+                "develop_moved": first_develop_moved,
                 "branch": release.get("branch"),
-                "reconciled": release.get("reconciled"),
-                "reconcile_command": bool(release.get("reconcile_command")),
-                "tag_type": _git(root, "cat-file", "-t", "v0.1.0"),
                 "tag": release.get("tag"),
                 "version": release.get("version"),
                 "tickets": release.get("tickets"),
@@ -449,9 +667,13 @@ def run(h) -> None:
                     part in message
                     for part in ("### feat", "### fix", "T-0001", "T-0002")
                 ),
-                "changelog": all(
-                    part in changelog
+                "changelog_first": all(
+                    part in changelog_first
                     for part in ("## v0.1.0", "### feat", "T-0001", "T-0002")
+                ),
+                "changelog_second": all(
+                    part in changelog
+                    for part in ("## v0.1.1", "T-0005")
                 ),
             },
             "flow": flow_actual,
@@ -459,20 +681,38 @@ def run(h) -> None:
         {
             **expected_negative,
             "sync": sync_expected,
+            "push": push_expected,
+            "bumps": {
+                "trailer_patch": {
+                    "bump": "patch",
+                    "explicit": [("feat: flag (T-0010)", "patch")],
+                },
+                "trailer_minor": {
+                    "bump": "minor",
+                    "explicit": [("feat: flag (T-0011)", "minor")],
+                },
+                "breaking_trailer_patch": {
+                    "bump": "major",
+                    "explicit": [("feat!: rompe api (T-0013)", "patch")],
+                },
+                "convention": {"bump": "minor", "explicit": []},
+                "integration": {
+                    "bump": "patch",
+                    "explicit": [("feat: flag (T-0014)", "patch")],
+                    "override": "minor",
+                },
+            },
+            "marker": marker_expected,
             "release": {
                 "rc": 0,
-                "main_commits": 1,
-                "develop_reconciled": True,
                 "develop_moved": True,
                 "branch": "develop",
-                "reconciled": True,
-                "reconcile_command": True,
-                "tag_type": "tag",
                 "tag": "v0.1.0",
                 "version": "0.1.0",
                 "tickets": ["T-0001", "T-0002"],
                 "message_groups": True,
-                "changelog": True,
+                "changelog_first": True,
+                "changelog_second": True,
             },
             "flow": flow_expected,
         },

@@ -391,6 +391,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--dry-run", action="store_true", help="Solo muestra el release")
     p.add_argument(
+        "--push",
+        action="store_true",
+        help="Publica en el remoto en el mismo comando: integración (si va por "
+        "delante), main, tag y reconciliación. Incompatible con --dry-run",
+    )
+    p.add_argument(
         "--no-verify",
         action="store_true",
         help="No ejecuta los gates (solo si ya se verificaron)",
@@ -555,7 +561,14 @@ def build_parser() -> argparse.ArgumentParser:
         description="Rechaza ficheros stageados fuera del alcance del ticket "
         "o que solapen con otro ticket activo.",
     )
-    p.add_argument("-m", "--message", help="Mensaje del commit")
+    p.add_argument(
+        "-m",
+        "--message",
+        action="append",
+        nargs="?",
+        default=None,
+        help="Mensaje del commit; varios -m se concatenan como párrafos",
+    )
     p.add_argument("-t", "--ticket", help="Código del ticket (o TAIKI_TICKET)")
     p.add_argument("--agent", help="Agente que hizo el commit (atribución)")
     p.add_argument("--session", help="Sesión del agente que hizo el commit")

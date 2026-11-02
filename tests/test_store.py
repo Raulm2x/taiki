@@ -129,12 +129,15 @@ def run(h: Harness) -> None:
     slow = repo.create_ticket(conn, title="Cierre con git lento")
     repo.claim_ticket(conn, slow["code"], agent="opencode")
     resolving = threading.Event()
+    release = threading.Event()
     original_workflow = workflow.resolve_commit
     original_relations = relations.resolve_commit
 
     def slow_resolve(ref, cwd=None):
         resolving.set()
-        time.sleep(0.25)
+        # El hilo principal libera tras intentar el lock: así el test no
+        # depende de un sleep fijo para mantener viva la resolución de git.
+        release.wait(timeout=5)
         return "f" * 40
 
     workflow.resolve_commit = slow_resolve
@@ -160,6 +163,7 @@ def run(h: Harness) -> None:
         waited = time.perf_counter() - started
         other.execute("ROLLBACK")
         other.close()
+        release.set()
         thread.join(timeout=5)
     finally:
         workflow.resolve_commit = original_workflow

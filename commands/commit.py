@@ -65,6 +65,16 @@ def _with_code(message: str, code: str) -> str:
     return "\n".join(lines)
 
 
+def _message_body(message: str | list[str] | None) -> str:
+    """Une los `-m` como párrafos, igual que git."""
+    if isinstance(message, str):
+        parts = [message]
+    else:
+        parts = list(message or [])
+    clean = [part.strip() for part in parts if part and part.strip()]
+    return "\n\n".join(clean)
+
+
 def cmd_commit(args: argparse.Namespace) -> int:
     root = workspace.checkout_root()
     with _conn() as conn:
@@ -104,7 +114,7 @@ def cmd_commit(args: argparse.Namespace) -> int:
             for item in report["staged"]:
                 print(f"  {item}")
             return 0
-        message = args.message or ticket["title"]
+        message = _message_body(args.message) or ticket["title"]
         message = _with_code(message, ticket["code"])
         # El hook pre-commit lee TAIKI_TICKET: sin exportarlo, con varios
         # tickets activos el subproceso de git no sabe a cuál pertenece el

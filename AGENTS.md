@@ -27,6 +27,8 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    orden de dependencias, con `taiki worktree merge T-XXXX --delete`; el guard
    rechaza los no confirmados.
 5. El asunto del commit debe incluir `T-XXXX`; el hook `commit-msg` lo exige.
+   Un `feat:` pequeño puede declarar `Release-Bump: patch|minor|major` como
+   trailer del cuerpo; sin trailer, `feat` sube minor.
 6. El conductor y los subagentes viven en `.opencode/agents/`; consulta el
    routing de variantes y el presupuesto de concurrencia con la herramienta
    MCP `agents` y `schedule` (paralelismo seguro por paths). Los perfiles
@@ -44,7 +46,10 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    necesitan algo más, publican `checkpoint`/`comment` con el comando exacto y
    el conductor lo ejecuta o autoriza. Nunca piden permiso al usuario. Siguen
    denegados push, merge directo, confirm, `rm -rf`, `sudo`, `bash`/`sh` y los
-   writes de estado por CLI. No es un sandbox: la garantía
+   writes de estado por CLI. Los workers sí pueden `git rebase` (incluidos
+   `--continue`, `--abort` y `--skip`), pero no `-i` ni `--exec`: sin TTY se
+   cuelgan; los conflictos se resuelven con `edit`, `git add` y `--continue`.
+   No es un sandbox: la garantía
    es el guard, la revisión y los gates. `uvx` solo ruff/mypy. El smoke opt-in
    es `python3 tests/live_orchestrator.py`.
    Merge de la épica: .03 → .04 → … → .13. `taiki status`

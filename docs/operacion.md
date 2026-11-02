@@ -109,9 +109,12 @@ Dentro de la lista blanca de los workers:
   `diff`, `file`, `stat`, `mkdir -p docs`, `git show`, `git rev-parse` y las
   lecturas con `git -C <worktree>` (`show`, `diff`, `log`, `rev-parse`);
   además de `python3 tests/*`, `timeout * python3 tests/*`,
-  `python3 -m tests.*`, `git status/diff/log/add/commit`,
-  `git add .opencode/*`, `TAIKI_TICKET=* taiki commit *`, las lecturas de
-  `taiki` y `taiki commit`. `echo`/`printf`/`sed`/`md5sum` son para inspección
+  `python3 -m tests.*`, `git status/diff/log/add/commit`, `git rebase <rama>`
+  (`--continue`, `--abort`, `--skip`), `git add .opencode/*`,
+  `TAIKI_TICKET=* taiki commit *`, las lecturas de `taiki` y `taiki commit`.
+  El rebase forma parte del ciclo del worker antes de integrar; nunca uses
+  `git rebase -i` ni `--exec` (sin TTY se cuelgan): resuelve conflictos con
+  `edit`, `git add` y `git rebase --continue`. `echo`/`printf`/`sed`/`md5sum` son para inspección
   puntual: la edición va por `edit`/`read`, no por shell. No uses `cd` (la
   sesión ya está en el worktree), ni `for`, ni heredocs `python3 - <<EOF`; la
   inspección va por `read`/`grep`/`edit`.
@@ -278,7 +281,8 @@ Varias sesiones pueden trabajar a la vez sin pisarse:
   avisa y usa la rama actual sin romper. Exige que el ticket esté
   `confirmado`: el commit vive en el worktree, pero la rama de integración solo
   recibe lo que el usuario ya revisó. `main` no se toca aquí: solo la release
-  (`taiki release`) escribe en ella. `--force` es el bypass consciente.
+  (`taiki release`) escribe en ella y después se publica con
+  `git push origin main --follow-tags`. `--force` es el bypass consciente.
 - **Estado**: `taiki status` (o la tecla `S` en la TUI) muestra sesiones,
   leases, ramas, worktrees y solapamientos. El plugin de recarga del MCP se
   aplaza si hay otra sesión con actividad reciente.
@@ -296,7 +300,27 @@ taiki confirm T-0001
 # solo ahora se fusiona la rama en develop (o en la rama de integración)
 taiki worktree merge T-0001 --delete
 # main no se toca aquí: solo cambia con una release
+taiki release --push
+```
+
+`taiki release --push` publica en un solo comando, en este orden: sube
+`develop` si solo iba por delante, ejecuta los gates, aplana `develop` en un
+commit de `main`, crea el tag, empuja `main` y el tag **juntos** (`git push
+--atomic`), reconcilia `develop` con `main` y vuelve a subir `develop`. Cada
+paso aparece en `pushed` (también en `--json`). Si `develop` va por detrás o
+divergida aborta antes de escribir con el comando exacto; si el remoto rechaza
+`main` (protección), para sin reconciliar y deja el release en local con el
+paso y el comando de reintento. `--push` es incompatible con `--dry-run` y
+exige un remoto configurado.
+
+El **modo local** (sin `--push`) no toca la red: úsalo para ensayar con
+`--dry-run`, en repos sin remoto o para revisar el commit de `main` antes de
+subirlo a mano:
+
+```bash
 taiki release
+git push origin main --follow-tags
+git push origin develop
 ```
 
 `taiki release` aplana `develop` en un commit de `main`, crea el tag y después
@@ -309,6 +333,26 @@ informa `reconcile_error` para resolverlo a mano. Para deshacer una release,
 `git revert <commit-de-release>` en `main`; el merge de reconciliación de
 `develop` no estorba y solo se revierte con
 `git revert -m 1 <commit-de-reconciliación>` si hace falta.
+
+La release también registra el commit aplanado en `.taiki/releases.json`
+(**versionado**), con `{tag, version, released_sha, date}` por entrega. El
+registro va dentro del merge de reconciliación de `develop` o, si no hizo falta
+merge, en un commit `chore(release): registrar vX.Y.Z`; `main` no recibe ningún
+commit extra por esto. La siguiente release calcula los tickets desde el
+`released_sha` de la última entrada, no desde el tag squash, así que no repite
+commits ya publicados ni fuerza un bump por un `feat` antiguo. En repos sin
+marcador se usa el rango `<tag>..develop` y, si existe, el primer padre del
+merge `chore: reconciliar … tras <tag>`. Si el rango no tiene commits
+publicables, la release aborta con *«No hay commits nuevos desde vX.Y.Z»*.
+
+`git push origin main --follow-tags` publica la release en modo local (con
+`--push` ya se publica dentro del comando). El hook `pre-push`
+solo deja empujar `main` cuando el tip es una release de `taiki release`
+(asunto `chore(release): vX.Y.Z` y/o tag `v*` que lo apunte) y, en ese caso,
+se limita a comprobar que los tickets del rango existan; un commit suelto en
+`main` sigue bloqueado. No uses `--no-verify` para saltarte el hook: si el
+push se rechaza, publica con `taiki release` o deshaz la release con
+`git revert` en `main`.
 
 
 ## Tickets temporales (scratch)

@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import argparse
+import contextlib
+import io
 import os
+import sys
 from pathlib import Path
+from commands.git import cmd_hook_check_push
 from ticketlib import audit as audit_lib, githook, repo
 from tests.seeds import git_repo, repo_with_hooks
 from tests.support import Harness
@@ -146,8 +151,7 @@ def run(h: Harness) -> None:
         conn,
         repo=str(hook_repo),
         refs_text=(
-            f"refs/heads/agent/{pending_commit['code']}-x abc1234 "
-            f"refs/heads/agent/{pending_commit['code']}-x 0000"
+            "refs/heads/develop abc1234 refs/heads/develop 0000"
         ),
         git_func=fake_push_git,
     )
@@ -155,7 +159,7 @@ def run(h: Harness) -> None:
         not push["ok"]
         and push["blocked"][0]["unconfirmed"]
         == [pending_commit["code"]],
-        "pre-push bloquea tickets sin confirmar",
+        "pre-push valida en develop los tickets sin confirmar",
     )
 
     def fake_push_ok(*args, cwd=None):
@@ -165,6 +169,59 @@ def run(h: Harness) -> None:
             return f"arreglo {approved['code']}"
         return ""
 
+    def fake_push_release(*args, cwd=None):
+        if args[0] == "rev-list":
+            return "rel1234"
+        if args[0] == "show":
+            return "chore(release): v0.1.0"
+        if args[0] == "tag":
+            return "v0.1.0"
+        return ""
+
+    blocked_main = githook.check_push(
+        conn,
+        repo=str(hook_repo),
+        refs_text="refs/heads/main abc1234 refs/heads/main 0000",
+        git_func=fake_push_ok,
+    )
+    release_push = githook.check_push(
+        conn,
+        repo=str(hook_repo),
+        refs_text="refs/heads/main rel1234 refs/heads/main 0000",
+        git_func=fake_push_release,
+    )
+
+    push_repo = git_repo(Path(tmp) / "push_repo")
+    githook.git("symbolic-ref", "HEAD", "refs/heads/main", cwd=push_repo)
+    githook.git(
+        "commit", "--allow-empty", "-m", "chore(release): v0.1.0", cwd=push_repo
+    )
+    githook.git("tag", "v0.1.0", cwd=push_repo)
+    release_sha = githook.git("rev-parse", "HEAD", cwd=push_repo)
+    githook.git(
+        "commit",
+        "--allow-empty",
+        "-m",
+        f"arreglo {approved['code']}",
+        cwd=push_repo,
+    )
+    stray_sha = githook.git("rev-parse", "HEAD", cwd=push_repo)
+
+    def run_push(sha):
+        saved = sys.stdin
+        sys.stdin = io.StringIO(f"refs/heads/main {sha} refs/heads/main 0000")
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                code = cmd_hook_check_push(
+                    argparse.Namespace(repo=str(push_repo))
+                )
+        finally:
+            sys.stdin = saved
+        return code, err.getvalue()
+
+    release_code, release_out = run_push(release_sha)
+    stray_code, stray_out = run_push(stray_sha)
     h.ok(
         githook.check_push(
             conn,
@@ -175,13 +232,17 @@ def run(h: Harness) -> None:
             ),
             git_func=fake_push_ok,
         )["ok"]
-        and not githook.check_push(
-            conn,
-            repo=str(hook_repo),
-            refs_text="refs/heads/main abc1234 refs/heads/main 0000",
-            git_func=fake_push_ok,
-        )["ok"],
-        "pre-push deja pasar tickets confirmados y bloquea main",
+        and not blocked_main["ok"]
+        and blocked_main["blocked"][0]["reason"] == "protected-branch"
+        and "taiki release" in blocked_main["message"]
+        and "confirma" not in blocked_main["message"].lower()
+        and release_push["ok"]
+        and release_code == 0
+        and release_out == ""
+        and stray_code == 1
+        and "taiki release" in stray_out
+        and "confirma" not in stray_out.lower(),
+        "pre-push deja pasar la release etiquetada y bloquea commits sueltos en main",
     )
 
     integ = git_repo(Path(tmp) / "integ_repo")

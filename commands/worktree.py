@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -227,16 +228,24 @@ def cmd_worktree_merge(args: argparse.Namespace) -> int:
             raise SystemExit(f"No se encontró worktree para {code}")
         target = found["path"]
     test_cmd = None
+    test_env = None
     if not args.no_tests and (Path(target) / "tests" / "run.py").is_file():
         # El presupuesto de la suite es global: el merge lo comprueba con el
         # mismo gate que la CI para que la acumulación de checks falle aquí.
+        # Es un gate de integración: se ejecuta con el perfil de CI (CI=true),
+        # que da margen de reloj a los runners y al propio merge.
         test_cmd = [sys.executable, "tests/run.py", "--strict-budget"]
+        test_env = {**os.environ, "CI": "true"}
     ref = worktree.integration_ref(root)
     if ref["warning"]:
         print(f"aviso: {ref['warning']}", file=sys.stderr)
     try:
         result = worktree.merge(
-            root, target, test_cmd=test_cmd, delete=args.delete
+            root,
+            target,
+            test_cmd=test_cmd,
+            test_env=test_env,
+            delete=args.delete,
         )
     except TicketError as exc:
         print(f"Error: {exc}", file=sys.stderr)
