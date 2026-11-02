@@ -10,6 +10,10 @@ from typing import Any
 from .. import db
 from ..domain import ValidationError
 from ..util import now
+from . import budget as budget_lib
+from . import security
+from .config import load_memory_config, validate_memory_config
+from .models import BUDGET_STATUSES
 
 ACTOR_TYPE = "agente"
 
@@ -74,6 +78,24 @@ def record(
     meta: dict[str, Any] | None = None,
 ) -> int:
     """Añade un asiento y devuelve su id."""
+    safe_actor = (
+        security.scan_content(actor, max_chars=200, field="actor")
+        if actor is not None
+        else None
+    )
+    safe_session = (
+        security.scan_content(session_id, max_chars=200, field="session_id")
+        if session_id is not None
+        else None
+    )
+    safe_reason = (
+        security.scan_content(reason, max_chars=2000, field="motivo")
+        if reason is not None
+        else None
+    )
+    serialized_meta = canonical(meta) if meta is not None else None
+    if serialized_meta is not None:
+        security.scan_content(serialized_meta, max_chars=2000, field="meta del ledger")
     before_hash = store_blob(conn, canonical(before)) if before is not None else None
     after_hash = store_blob(conn, canonical(after)) if after is not None else None
     cursor = conn.execute(
@@ -83,15 +105,15 @@ def record(
         ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             now(),
-            actor,
+            safe_actor,
             actor_type,
-            session_id,
+            safe_session,
             action,
             memory_id,
             before_hash,
             after_hash,
-            reason,
-            canonical(meta) if meta is not None else None,
+            safe_reason,
+            serialized_meta,
         ),
     )
     return int(cursor.lastrowid or 0)
@@ -101,8 +123,8 @@ def _quote(column: str) -> str:
     return '"' + column.replace('"', '""') + '"'
 
 
-def _restore(conn: sqlite3.Connection, target: dict[str, Any]) -> None:
-    """Restaura la fila y sus relaciones sin borrar el resto de memorias."""
+def _restore_one(conn: sqlite3.Connection, target: dict[str, Any]) -> None:
+    """Restaura una fila y sus relaciones sin borrar el resto de memorias."""
     data = target.get("memory")
     if not isinstance(data, dict) or not data:
         return
@@ -147,6 +169,50 @@ def _restore(conn: sqlite3.Connection, target: dict[str, Any]) -> None:
         )
 
 
+def _restore(conn: sqlite3.Connection, target: dict[str, Any]) -> None:
+    """Restaura el snapshot principal y, si existe, su contraparte."""
+    _restore_one(conn, target)
+    counterpart = target.get("counterpart")
+    if isinstance(counterpart, dict):
+        _restore_one(conn, counterpart)
+
+
+def _budget_config(value: dict[str, Any] | None) -> dict[str, Any]:
+    if value is None:
+        return load_memory_config()
+    if "memory" in value:
+        return validate_memory_config(value.get("memory"))
+    return validate_memory_config(value)
+
+
+def _check_budget(
+    conn: sqlite3.Connection,
+    scope: str,
+    cfg: dict[str, Any],
+) -> None:
+    rows = conn.execute(
+        "SELECT * FROM memories WHERE scope = ? AND status IN (?, ?, ?)",
+        (scope, *BUDGET_STATUSES),
+    ).fetchall()
+    limit = int(
+        cfg["user_budget_chars"] if scope == "user" else cfg["project_budget_chars"]
+    )
+    budget_lib.enforce([dict(row) for row in rows], limit, scope)
+
+
+def _snapshot_scopes(snapshot: dict[str, Any] | None) -> set[str]:
+    if not snapshot:
+        return set()
+    scopes: set[str] = set()
+    for key in ("memory", "counterpart"):
+        data = snapshot.get(key)
+        if isinstance(data, dict) and isinstance(data.get("memory"), dict):
+            data = data["memory"]
+        if isinstance(data, dict) and data.get("scope"):
+            scopes.add(str(data["scope"]))
+    return scopes
+
+
 def rollback(
     conn: sqlite3.Connection,
     ledger_id: int,
@@ -154,6 +220,7 @@ def rollback(
     actor: str | None = None,
     session_id: str | None = None,
     reason: str | None = None,
+    config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Restaura el estado anterior al asiento y registra uno nuevo."""
     row = conn.execute(
@@ -181,11 +248,15 @@ def rollback(
         loaded = json.loads(blob["content"])
         target = loaded if isinstance(loaded, dict) else None
 
+    cfg = _budget_config(config)
+    scopes = _snapshot_scopes(current) | _snapshot_scopes(target)
     with db.tx(conn):
         if target is None:
             conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
         else:
             _restore(conn, target)
+        for scope in sorted(scopes):
+            _check_budget(conn, scope, cfg)
         new_id = record(
             conn,
             action="rollback",

@@ -20,6 +20,7 @@ from ticketlib.memory import (
     supersede_memory,
 )
 from ticketlib.memory import ledger as memory_ledger
+from ticketlib.memory.budget import select_for_budget
 from tests.support import Harness
 
 
@@ -226,6 +227,20 @@ def _policy(h: Harness) -> None:
     )
     h.eq(negative["status"], "proposed", "una regla negativa siempre queda propuesta")
 
+    negative_user = add_memory(
+        conn,
+        title="Preferencia negativa",
+        content="Nunca uses force push en esta rama.",
+        kind="preference",
+        key="force-push-usuario",
+        source="user",
+    )
+    h.eq(
+        negative_user["status"],
+        "proposed",
+        "una regla negativa de usuario también queda propuesta",
+    )
+
     derived = add_memory(
         conn,
         title="Derivada automática",
@@ -264,6 +279,94 @@ def _policy(h: Harness) -> None:
     h.eq(feedback["helpful_count"], 1, "feedback actualiza helpful_count")
     feedback = feedback_memory(conn, solid["code"], helpful=False)
     h.eq(feedback["unhelpful_count"], 1, "feedback actualiza unhelpful_count")
+
+
+def _status_explicit(h: Harness) -> None:
+    conn = h.conn
+    h.raises(
+        ValidationError,
+        lambda: add_memory(
+            conn,
+            title="Estado forzado",
+            content="No debería saltarse la política.",
+            source="agent",
+            status="active",
+            evidence=[{"kind": "ticket", "ref": "T-0045"}],
+        ),
+        "agent no puede forzar un estado explícito",
+    )
+    h.raises(
+        ValidationError,
+        lambda: add_memory(
+            conn,
+            title="Superseded directa",
+            content="No se crea una superseded a mano.",
+            source="import",
+            status="superseded",
+        ),
+        "no se puede crear directamente superseded",
+    )
+    archived = add_memory(
+        conn,
+        title="Importada archivada",
+        content="Memoria antigua importada.",
+        source="import",
+        status="archived",
+    )
+    h.eq(archived["status"], "archived", "import puede crear una archivada")
+    h.ok(archived["archived_at"], "la archivada explícita fija archived_at")
+    h.ok(
+        not any(
+            item["code"] == archived["code"]
+            for item in list_memories(conn, include_inactive=False)
+        ),
+        "la archivada explícita no aparece por defecto",
+    )
+
+
+def _fingerprint(h: Harness) -> None:
+    conn = h.conn
+    cjk_one = add_memory(
+        conn,
+        title="记忆",
+        content="第一段内容",
+        key="cjk-uno",
+        source="user",
+    )
+    cjk_two = add_memory(
+        conn,
+        title="记忆",
+        content="第二段内容",
+        key="cjk-dos",
+        source="user",
+    )
+    h.ok(
+        cjk_one["fingerprint"] != cjk_two["fingerprint"],
+        "dos textos CJK distintos no colapsan a la misma huella",
+    )
+    h.ok(cjk_one["code"] != cjk_two["code"], "los dos CJK se guardan")
+    emoji_one = add_memory(
+        conn,
+        title="🚀",
+        content="🚀",
+        key="emoji-uno",
+        source="user",
+    )
+    emoji_two = add_memory(
+        conn,
+        title="🔥",
+        content="🔥",
+        key="emoji-dos",
+        source="user",
+    )
+    h.ok(
+        emoji_one["fingerprint"].startswith("sha256:"),
+        "un texto solo de símbolos usa hash estable",
+    )
+    h.ok(
+        emoji_one["fingerprint"] != emoji_two["fingerprint"],
+        "dos emojis distintos no colisionan",
+    )
 
 
 def _dedupe(h: Harness) -> None:
@@ -375,8 +478,167 @@ def _budget(h: Harness) -> None:
             "superseded",
             "la entrada liberada queda superseded",
         )
+
+        memories = [
+            {
+                "code": "M-0001",
+                "scope": "project",
+                "status": "active",
+                "content": "x" * 10,
+                "confidence": 0.9,
+                "updated_at": "2026-01-01T00:00:00-05:00",
+                "use_count": 9,
+                "pinned": False,
+            },
+            {
+                "code": "M-0002",
+                "scope": "user",
+                "status": "active",
+                "content": "x" * 10,
+                "confidence": 0.1,
+                "updated_at": "2026-01-01T00:00:00-05:00",
+                "use_count": 0,
+                "pinned": False,
+            },
+            {
+                "code": "M-0003",
+                "scope": "project",
+                "status": "active",
+                "content": "x" * 10,
+                "confidence": 0.1,
+                "updated_at": "2025-01-01T00:00:00-05:00",
+                "use_count": 0,
+                "pinned": True,
+            },
+            {
+                "code": "M-0004",
+                "scope": "project",
+                "status": "active",
+                "content": "x" * 10,
+                "confidence": 0.2,
+                "updated_at": "2025-01-01T00:00:00-05:00",
+                "use_count": 0,
+                "pinned": False,
+            },
+        ]
+        selected, dropped, used = select_for_budget(memories, 25)
+        h.eq(
+            [item["code"] for item in selected],
+            ["M-0003", "M-0002"],
+            "la prioridad es pinned > user > confianza",
+        )
+        h.eq(used, 20, "la selección respeta el presupuesto")
+        h.eq(
+            [item["code"] for item in dropped],
+            ["M-0001", "M-0004"],
+            "las entradas que no caben quedan descartadas",
+        )
     finally:
         conn.close()
+
+
+def _rollback_budget(h: Harness) -> None:
+    conn = db.connect(h.tmp / "rollback-budget.db")
+    try:
+        cfg = {"project_budget_chars": 100}
+        first = add_memory(
+            conn,
+            title="A",
+            content="A" * 20,
+            key="rb-a",
+            source="user",
+            config=cfg,
+        )
+        add_memory(
+            conn,
+            title="B",
+            content="B" * 60,
+            key="rb-b",
+            source="user",
+            config=cfg,
+        )
+        patch_memory(
+            conn,
+            first["code"],
+            content="A" * 10,
+            config=cfg,
+        )
+        add_memory(
+            conn,
+            title="C",
+            content="C" * 30,
+            key="rb-c",
+            source="user",
+            config=cfg,
+        )
+        row = conn.execute(
+            "SELECT id FROM memory_ledger WHERE memory_id = ? AND action = 'update' "
+            "ORDER BY id DESC LIMIT 1",
+            (first["id"],),
+        ).fetchone()
+        h.ok(row is not None, "el patch deja asiento para el rollback con presupuesto")
+        h.raises(
+            BudgetError,
+            lambda: memory_ledger.rollback(conn, int(row["id"]), config=cfg),
+            "el rollback que excede el presupuesto se rechaza",
+        )
+        h.eq(
+            get_memory(conn, first["code"])["content"],
+            "A" * 10,
+            "el rollback rechazado no cambia la memoria",
+        )
+        h.eq(
+            conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0],
+            3,
+            "el rollback rechazado no duplica ni borra memorias",
+        )
+    finally:
+        conn.close()
+
+
+def _supersede_rollback(h: Harness) -> None:
+    conn = h.conn
+    old = add_memory(
+        conn,
+        title="Memoria antigua",
+        content="Contenido antiguo que será sustituido.",
+        key="sr-old",
+        source="user",
+    )
+    new = add_memory(
+        conn,
+        title="Memoria nueva",
+        content="Contenido nuevo que sustituye.",
+        key="sr-new",
+        source="user",
+    )
+    supersede_memory(conn, old["code"], new["code"])
+    h.eq(
+        get_memory(conn, new["code"])["supersedes_id"],
+        old["id"],
+        "supersede enlaza la nueva con la antigua",
+    )
+    row = conn.execute(
+        "SELECT id FROM memory_ledger WHERE memory_id = ? AND action = 'supersede' "
+        "ORDER BY id DESC LIMIT 1",
+        (old["id"],),
+    ).fetchone()
+    h.ok(row is not None, "supersede deja asiento de la memoria antigua")
+    result = memory_ledger.rollback(conn, int(row["id"]))
+    h.ok(result["restored"], "el rollback de supersede restaura")
+    h.eq(
+        get_memory(conn, old["code"])["status"],
+        "active",
+        "el rollback devuelve la antigua a active",
+    )
+    h.ok(
+        not get_memory(conn, old["code"])["superseded_by"],
+        "el rollback limpia superseded_by de la antigua",
+    )
+    h.ok(
+        not get_memory(conn, new["code"])["supersedes_id"],
+        "el rollback limpia supersedes_id de la nueva",
+    )
 
 
 def _ledger(h: Harness) -> None:
@@ -388,8 +650,28 @@ def _ledger(h: Harness) -> None:
         key="ledger-memory",
         source="user",
     )
-    patch_memory(conn, memory["code"], title="Estado cambiado", actor="tester")
+    patch_memory(
+        conn,
+        memory["code"],
+        title="Estado cambiado",
+        content="Contenido cambiado para el ledger.",
+        actor="tester",
+    )
     h.eq(get_memory(conn, memory["code"])["title"], "Estado cambiado", "el patch se aplica")
+    h.ok(
+        any(
+            item["code"] == memory["code"]
+            for item in search_memories(conn, "cambiado", record_usage=False)
+        ),
+        "el patch reindexa el FTS con el título nuevo",
+    )
+    h.ok(
+        not any(
+            item["code"] == memory["code"]
+            for item in search_memories(conn, "original", record_usage=False)
+        ),
+        "el patch elimina el título viejo del FTS",
+    )
     row = conn.execute(
         "SELECT id FROM memory_ledger WHERE memory_id = ? AND action = 'update' "
         "ORDER BY id DESC LIMIT 1",
@@ -402,6 +684,20 @@ def _ledger(h: Harness) -> None:
         get_memory(conn, memory["code"])["title"],
         "Estado original",
         "el rollback recupera el título original",
+    )
+    h.ok(
+        any(
+            item["code"] == memory["code"]
+            for item in search_memories(conn, "original", record_usage=False)
+        ),
+        "el rollback reindexa el título restaurado en FTS",
+    )
+    h.ok(
+        not any(
+            item["code"] == memory["code"]
+            for item in search_memories(conn, "cambiado", record_usage=False)
+        ),
+        "el rollback quita el título revertido del FTS",
     )
     h.ok(
         conn.execute(
@@ -425,6 +721,13 @@ def _ledger(h: Harness) -> None:
         (created["id"],),
     ).fetchone()
     h.ok(create_row is not None, "la creación deja asiento")
+    h.ok(
+        any(
+            item["code"] == created["code"]
+            for item in search_memories(conn, "deshara", record_usage=False)
+        ),
+        "la memoria creada aparece en FTS antes del rollback",
+    )
     undone = memory_ledger.rollback(conn, int(create_row["id"]))
     h.ok(not undone["restored"], "el rollback de una creación no restaura fila")
     h.raises(
@@ -432,12 +735,23 @@ def _ledger(h: Harness) -> None:
         lambda: get_memory(conn, created["code"]),
         "el rollback de una creación elimina la memoria",
     )
+    h.ok(
+        not any(
+            item["code"] == created["code"]
+            for item in search_memories(conn, "deshara", record_usage=False)
+        ),
+        "el rollback de una creación limpia el FTS",
+    )
 
 
 def run(h: Harness) -> None:
     _migration(h)
     _crud(h)
     _policy(h)
+    _status_explicit(h)
+    _fingerprint(h)
     _dedupe(h)
     _budget(h)
+    _rollback_budget(h)
+    _supersede_rollback(h)
     _ledger(h)

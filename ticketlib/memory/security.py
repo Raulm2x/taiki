@@ -41,7 +41,8 @@ INJECTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 INVISIBLE_RE = re.compile(
-    "[\u200b\u200c\u200d\u200e\u200f\u2060\ufeff\u202a-\u202e\u2066-\u2069]"
+    "[\u00ad\u180e\u200b\u200c\u200d\u200e\u200f\u2060\u3164\ufeff\uffa0"
+    "\u202a-\u202e\u2066-\u2069\U000E0000-\U000E007F]"
 )
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 

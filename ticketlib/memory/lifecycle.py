@@ -58,7 +58,7 @@ def patch_memory(
         key_text = str(key or "").strip()
         if not key_text:
             raise ValidationError("La clave de la memoria no puede quedar vacía")
-        updates["key"] = key_text
+        updates["key"] = core.clean_key(key_text)
     if kind is not UNSET:
         check_enum(kind, MEMORY_KINDS, "kind")
         updates["kind"] = kind
@@ -85,31 +85,31 @@ def patch_memory(
     updates["updated_at"] = now()
 
     final_key = updates.get("key", current["key"])
-    if "key" in updates:
-        clash = conn.execute(
-            'SELECT * FROM memories WHERE scope = ? AND "key" = ? AND id != ? '
-            "AND status IN ('active', 'proposed', 'stale') LIMIT 1",
-            (scope, final_key, current["id"]),
-        ).fetchone()
-        if clash is not None:
-            raise ValidationError(
-                f"Ya existe la memoria {clash['code']} con la clave {final_key!r}; "
-                "usa supersede_memory o una clave distinta."
-            )
-
-    duplicate = conn.execute(
-        "SELECT * FROM memories WHERE scope = ? AND fingerprint = ? AND id != ? "
-        "AND status IN ('active', 'proposed', 'stale') LIMIT 1",
-        (scope, fingerprint, current["id"]),
-    ).fetchone()
-    if duplicate is not None:
-        raise ValidationError(
-            f"Memoria duplicada: {duplicate['code']} ya tiene ese contenido."
-        )
-
     columns = ", ".join(f'"{name}" = ?' for name in updates)
     values = list(updates.values()) + [current["id"]]
     with db.tx(conn):
+        if "key" in updates:
+            clash = conn.execute(
+                'SELECT * FROM memories WHERE scope = ? AND "key" = ? AND id != ? '
+                "AND status IN ('active', 'proposed', 'stale') LIMIT 1",
+                (scope, final_key, current["id"]),
+            ).fetchone()
+            if clash is not None:
+                raise ValidationError(
+                    f"Ya existe la memoria {clash['code']} con la clave "
+                    f"{final_key!r}; usa supersede_memory o una clave distinta."
+                )
+
+        duplicate = conn.execute(
+            "SELECT * FROM memories WHERE scope = ? AND fingerprint = ? AND id != ? "
+            "AND status IN ('active', 'proposed', 'stale') LIMIT 1",
+            (scope, fingerprint, current["id"]),
+        ).fetchone()
+        if duplicate is not None:
+            raise ValidationError(
+                f"Memoria duplicada: {duplicate['code']} ya tiene ese contenido."
+            )
+
         before = ledger_lib.snapshot(conn, int(current["id"]))
         conn.execute(f"UPDATE memories SET {columns} WHERE id = ?", values)
         after = ledger_lib.snapshot(conn, int(current["id"]))
@@ -375,7 +375,10 @@ def supersede_memory(
         raise ValidationError(f"La memoria sustituta {new['code']} no está vigente")
     timestamp = now()
     with db.tx(conn):
-        before = ledger_lib.snapshot(conn, int(old["id"]))
+        before_old = ledger_lib.snapshot(conn, int(old["id"]))
+        before_new = ledger_lib.snapshot(conn, int(new["id"]))
+        if before_old is not None:
+            before_old["counterpart"] = before_new
         conn.execute(
             "UPDATE memories SET status = 'superseded', superseded_by = ?, "
             "updated_at = ? WHERE id = ?",
@@ -386,17 +389,31 @@ def supersede_memory(
             "WHERE id = ?",
             (int(old["id"]), int(new["id"])),
         )
-        after = ledger_lib.snapshot(conn, int(old["id"]))
+        after_old = ledger_lib.snapshot(conn, int(old["id"]))
+        after_new = ledger_lib.snapshot(conn, int(new["id"]))
+        if after_old is not None:
+            after_old["counterpart"] = after_new
         ledger_lib.record(
             conn,
             action="supersede",
             memory_id=int(old["id"]),
-            before=before,
-            after=after,
+            before=before_old,
+            after=after_old,
             actor=actor,
             session_id=session_id,
             reason=reason or f"sustituida por {new['code']}",
-            meta={"by": new["code"]},
+            meta={"by": new["code"], "counterpart_id": int(new["id"])},
+        )
+        ledger_lib.record(
+            conn,
+            action="update",
+            memory_id=int(new["id"]),
+            before=before_new,
+            after=after_new,
+            actor=actor,
+            session_id=session_id,
+            reason=f"enlazada como sustituta de {old['code']}",
+            meta={"counterpart_id": int(old["id"])},
         )
         updated = core.memory_row(conn, old["code"])
         return core.receipt(conn, updated, cfg)

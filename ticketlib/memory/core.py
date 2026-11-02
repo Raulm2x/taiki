@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import posixpath
 import re
 import sqlite3
 from typing import Any, Iterable
@@ -132,6 +131,26 @@ def clean_text(
     return text
 
 
+def clean_short(
+    value: object,
+    field: str,
+    *,
+    max_chars: int = 500,
+    required: bool = False,
+) -> str:
+    """Valida metadatos cortos (actor, sesión, clave, evidencia o nota)."""
+    text = str(value if value is not None else "").strip()
+    if required and not text:
+        raise ValidationError(f"El campo {field} es obligatorio")
+    security.scan_content(text, max_chars=max_chars, field=field)
+    return text
+
+
+def clean_key(value: object, *, max_chars: int = 200) -> str:
+    """Valida una clave de memoria."""
+    return clean_short(value, "clave", max_chars=max_chars, required=True)
+
+
 def confidence(value: object) -> float:
     """Valida una confianza entre 0 y 1."""
     if isinstance(value, bool):
@@ -167,7 +186,7 @@ def clean_project_paths(paths: Iterable[object] | None) -> list[str]:
         paths = [paths]
     out: list[str] = []
     for item in paths:
-        text = str(item or "").strip().replace("\\", "/")
+        text = clean_short(item, "ruta de memoria", max_chars=500).replace("\\", "/")
         if not text or text.startswith(("/", "~")) or re.match(r"^[A-Za-z]:", text):
             raise ValidationError(
                 f"Ruta de memoria inválida: {item!r} (debe ser relativa)"
@@ -220,9 +239,9 @@ def clean_evidence(evidence: Iterable[Any] | None) -> list[dict[str, str]]:
             ref = item
         else:
             raise ValidationError(f"Evidencia inválida: {item!r}")
-        reference = str(ref or "").strip()
-        if not reference:
-            raise ValidationError("La evidencia de memoria necesita una referencia")
+        reference = clean_short(
+            ref, f"evidencia {str(kind or 'auto')}", max_chars=500, required=True
+        )
         evidence_kind = str(kind or evidence_kind_for_ref(reference)).strip().lower()
         if evidence_kind not in EVIDENCE_KINDS:
             raise ValidationError(
@@ -285,10 +304,10 @@ def decide_status(
     """Política balanced: lo automático nace propuesto salvo evidencia sólida."""
     if policy == "manual":
         return "proposed"
-    if source in ("user", "derived", "import"):
-        return "active"
     if is_negative_rule(text):
         return "proposed"
+    if source in ("user", "derived", "import"):
+        return "active"
     if (
         source == "agent"
         and kind in ("fact", "pitfall")
@@ -392,16 +411,26 @@ def record_usage(
 ) -> None:
     """Registra uso y, si procede, incrementa el contador de la memoria."""
     timestamp = now()
+    safe_session = (
+        clean_short(session_id, "session_id", max_chars=200)
+        if session_id is not None
+        else None
+    )
+    safe_note = (
+        clean_short(note, "nota de uso", max_chars=1000)
+        if note is not None
+        else None
+    )
     conn.execute(
         "INSERT INTO memory_usage(ts, memory_id, session_id, action, helpful, note) "
         "VALUES (?, ?, ?, ?, ?, ?)",
         (
             timestamp,
             memory_id,
-            session_id,
+            safe_session,
             action,
             None if helpful is None else int(helpful),
-            note,
+            safe_note,
         ),
     )
     if touch and action in ("brief", "search", "get"):
@@ -417,8 +446,10 @@ __all__ = [
     "check_budget",
     "clean_evidence",
     "clean_files",
+    "clean_key",
     "clean_kinds",
     "clean_project_paths",
+    "clean_short",
     "clean_text",
     "config",
     "confidence",

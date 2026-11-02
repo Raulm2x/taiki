@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import unicodedata
-from typing import Iterable
-
-from ..domain import ValidationError
 
 MEMORY_SCOPES = ("project", "user")
 MEMORY_KINDS = (
@@ -41,20 +39,28 @@ NEGATIVE_RULE_RE = re.compile(
 
 
 def normalize_fingerprint(*parts: object) -> str:
-    """Huella normalizada: sin acentos, minúsculas, sin puntuación.
+    """Huella normalizada y consciente de Unicode.
 
-    Los espacios se colapsan para que dos textos equivalentes con distinto
-    formato produzcan la misma huella y el dedupe no dependa de la superficie.
+    Conserva letras y números de cualquier alfabeto (CJK, cirílico, etc.),
+    elimina acentos descompuestos, puntuación y símbolos, y colapsa espacios.
+    Si el texto solo contiene símbolos (por ejemplo emojis), usa un hash
+    estable para no colapsar todos los casos a la cadena vacía.
     """
     text = " ".join(str(part or "") for part in parts)
-    ascii_text = (
-        unicodedata.normalize("NFKD", text)
-        .encode("ascii", "ignore")
-        .decode("ascii")
-        .lower()
+    decomposed = unicodedata.normalize("NFKD", text).casefold()
+    without_marks = "".join(
+        char
+        for char in decomposed
+        if unicodedata.category(char) not in ("Mn", "Mc", "Me")
     )
-    without_punctuation = re.sub(r"[^a-z0-9\s]+", " ", ascii_text)
-    return re.sub(r"\s+", " ", without_punctuation).strip()
+    kept = "".join(
+        char if (char.isalnum() or char.isspace()) else " "
+        for char in without_marks
+    )
+    collapsed = re.sub(r"\s+", " ", kept).strip()
+    if collapsed:
+        return collapsed
+    return "sha256:" + hashlib.sha256(decomposed.encode("utf-8")).hexdigest()
 
 
 def default_key(title: str) -> str:
@@ -66,17 +72,6 @@ def is_negative_rule(*parts: object) -> bool:
     """¿El texto expresa una prohibición amplia que requiere aprobación?"""
     text = " ".join(str(part or "") for part in parts)
     return bool(NEGATIVE_RULE_RE.search(text))
-
-
-def clean_evidence_kind(value: object) -> str:
-    """Valida el tipo de evidencia."""
-    kind = str(value or "").strip().lower()
-    if kind not in EVIDENCE_KINDS:
-        raise ValidationError(
-            f"Tipo de evidencia inválido: {kind!r}. "
-            f"Valores permitidos: {', '.join(EVIDENCE_KINDS)}"
-        )
-    return kind
 
 
 def evidence_kind_for_ref(ref: str) -> str:
@@ -92,16 +87,3 @@ def evidence_kind_for_ref(ref: str) -> str:
         return "commit"
     return "file"
 
-
-def iter_statuses(values: Iterable[str] | None) -> tuple[str, ...]:
-    """Normaliza una selección de estados."""
-    if not values:
-        return MEMORY_STATUSES
-    selected = tuple(dict.fromkeys(str(value) for value in values))
-    for value in selected:
-        if value not in MEMORY_STATUSES:
-            raise ValidationError(
-                f"Estado de memoria inválido: {value!r}. "
-                f"Valores permitidos: {', '.join(MEMORY_STATUSES)}"
-            )
-    return selected

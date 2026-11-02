@@ -79,6 +79,16 @@ def add_memory(
     check_enum(source, MEMORY_SOURCES, "source")
     if status is not None:
         check_enum(status, MEMORY_STATUSES, "status")
+        if source not in ("derived", "import"):
+            raise ValidationError(
+                "El estado explícito solo se admite para source=derived o import; "
+                "usa la política balanced o las transiciones del store."
+            )
+        if status == "superseded":
+            raise ValidationError(
+                "No se puede crear una memoria directamente superseded; "
+                "usa supersede_memory o una clave vigente."
+            )
 
     title_text = core.clean_text(title, "título", int(cfg["max_entry_chars"]))
     description_text = core.clean_text(
@@ -91,7 +101,17 @@ def add_memory(
         content, "contenido", int(cfg["max_entry_chars"])
     )
     level = core.confidence(confidence)
-    key_text = str(key or "").strip() or default_key(title_text)
+    key_text = core.clean_key(str(key or "").strip() or default_key(title_text))
+    actor = (
+        core.clean_short(actor, "actor", max_chars=200)
+        if actor is not None
+        else None
+    )
+    session_id = (
+        core.clean_short(session_id, "session_id", max_chars=200)
+        if session_id is not None
+        else None
+    )
     project_paths = core.clean_project_paths(paths)
     kind_list = core.clean_kinds(kinds)
     evidence_rows = core.clean_evidence(evidence)
@@ -141,8 +161,9 @@ def add_memory(
             "INSERT INTO memories("
             "code, scope, kind, \"key\", title, description, content, paths, kinds, "
             "status, confidence, source, actor, session_id, ticket_id, "
-            "supersedes_id, pinned, locked, created_at, updated_at, fingerprint"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "supersedes_id, pinned, locked, created_at, updated_at, archived_at, "
+            "fingerprint"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 code,
                 scope,
@@ -166,6 +187,7 @@ def add_memory(
                 1 if locked else 0,
                 timestamp,
                 timestamp,
+                timestamp if final_status == "archived" else None,
                 fingerprint,
             ),
         )
