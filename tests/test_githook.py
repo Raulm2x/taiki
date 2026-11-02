@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import argparse
+import contextlib
+import io
 import os
+import sys
 from pathlib import Path
+from commands.git import cmd_hook_check_push
 from ticketlib import audit as audit_lib, githook, repo
 from tests.seeds import git_repo, repo_with_hooks
 from tests.support import Harness
@@ -185,6 +190,38 @@ def run(h: Harness) -> None:
         refs_text="refs/heads/main rel1234 refs/heads/main 0000",
         git_func=fake_push_release,
     )
+
+    push_repo = git_repo(Path(tmp) / "push_repo")
+    githook.git("symbolic-ref", "HEAD", "refs/heads/main", cwd=push_repo)
+    githook.git(
+        "commit", "--allow-empty", "-m", "chore(release): v0.1.0", cwd=push_repo
+    )
+    githook.git("tag", "v0.1.0", cwd=push_repo)
+    release_sha = githook.git("rev-parse", "HEAD", cwd=push_repo)
+    githook.git(
+        "commit",
+        "--allow-empty",
+        "-m",
+        f"arreglo {approved['code']}",
+        cwd=push_repo,
+    )
+    stray_sha = githook.git("rev-parse", "HEAD", cwd=push_repo)
+
+    def run_push(sha):
+        saved = sys.stdin
+        sys.stdin = io.StringIO(f"refs/heads/main {sha} refs/heads/main 0000")
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                code = cmd_hook_check_push(
+                    argparse.Namespace(repo=str(push_repo))
+                )
+        finally:
+            sys.stdin = saved
+        return code, err.getvalue()
+
+    release_code, release_out = run_push(release_sha)
+    stray_code, stray_out = run_push(stray_sha)
     h.ok(
         githook.check_push(
             conn,
@@ -199,7 +236,12 @@ def run(h: Harness) -> None:
         and blocked_main["blocked"][0]["reason"] == "protected-branch"
         and "taiki release" in blocked_main["message"]
         and "confirma" not in blocked_main["message"].lower()
-        and release_push["ok"],
+        and release_push["ok"]
+        and release_code == 0
+        and release_out == ""
+        and stray_code == 1
+        and "taiki release" in stray_out
+        and "confirma" not in stray_out.lower(),
         "pre-push deja pasar la release etiquetada y bloquea commits sueltos en main",
     )
 

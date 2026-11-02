@@ -115,19 +115,23 @@ def cmd_hook_check_push(args: argparse.Namespace) -> int:
         result = check_push(conn, args.repo or ".", refs)
     if result["ok"]:
         return 0
+    ticket_blocked = False
     for item in result["blocked"]:
         if item["unconfirmed"]:
+            ticket_blocked = True
             detail = "sin confirmar: " + ", ".join(item["unconfirmed"])
         elif item["missing"]:
+            ticket_blocked = True
             detail = "inexistentes: " + ", ".join(item["missing"])
         else:
-            detail = item["reason"] or "sin ticket"
+            detail = item.get("message") or item["reason"] or "sin ticket"
         print(f"  {item['commit'][:12]}  {detail}", file=sys.stderr)
-    print(
-        "Push bloqueado: confirma los tickets con `taiki confirm …` "
-        "antes de publicar.",
-        file=sys.stderr,
-    )
+    if ticket_blocked:
+        print(
+            "Push bloqueado: confirma los tickets con `taiki confirm …` "
+            "antes de publicar.",
+            file=sys.stderr,
+        )
     return 1
 
 
