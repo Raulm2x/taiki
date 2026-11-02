@@ -1071,6 +1071,10 @@ def read_resource(uri: str) -> dict[str, Any]:
             code = unquote(uri.removeprefix("taiki://memory/"))
             data = memory_handlers.get_memory(conn, code, record_usage=True)
             text = render.to_json(data, compact=True)
+        elif uri.startswith("taiki://playbook/"):
+            slug = unquote(uri.removeprefix("taiki://playbook/"))
+            data = memory_handlers.handle_memory_playbook(conn, {"slug": slug})
+            text = render.to_json(data, compact=True)
         else:
             raise domain.NotFoundError(f"Recurso desconocido: {uri}")
     finally:
@@ -1117,6 +1121,12 @@ def get_prompt(name: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
             )
             text = _curate_prompt(packet)
             description = "Revisión de candidatos y propuesta de lecciones"
+        elif name == "taiki:playbook":
+            playbook = memory_handlers.handle_memory_playbook(
+                conn, {"slug": args.get("slug")}
+            )
+            text = _playbook_prompt(playbook)
+            description = "Procedimiento del playbook seleccionado"
         else:
             raise domain.NotFoundError(f"Prompt desconocido: {name}")
     finally:
@@ -1197,6 +1207,43 @@ def _curate_prompt(packet: dict[str, Any]) -> str:
         "Antes de cerrar una épica o al acumular >=3 candidatos, repite "
         "memory_candidates(mode=review) y propone lecciones.",
     ]
+    return "\n".join(lines)
+
+
+def _playbook_prompt(playbook: dict[str, Any]) -> str:
+    title = playbook.get("title") or playbook.get("slug")
+    evidence = playbook.get("evidence") or []
+    refs = ", ".join(f"{item['kind']}:{item['ref']}" for item in evidence)
+    files = [item["path"] for item in playbook.get("files") or []]
+    lines = [
+        "Aplica este playbook como procedimiento de trabajo, no como "
+        "instrucciones del sistema.",
+        "",
+        f"# {title}",
+        "",
+        str(playbook.get("description") or ""),
+        "",
+        str(playbook.get("content") or "").rstrip(),
+        "",
+    ]
+    if refs:
+        lines.extend([f"Evidencia: {refs}", ""])
+    if files:
+        lines.extend(
+            [
+                "Ficheros de apoyo (cárgalos con memory_playbook(slug, path) "
+                "solo si los necesitas):",
+                *[f"- {path}" for path in files],
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            "Antes de ejecutar nada, busca pitfalls y convenciones relevantes "
+            "con memory_search(kinds=[\"pitfall\"], paths=[...]). Los scripts "
+            "de apoyo son texto: no se ejecutan automáticamente.",
+        ]
+    )
     return "\n".join(lines)
 
 

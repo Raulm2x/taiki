@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ticketlib.memory import add_memory
+from ticketlib.domain import TicketError
+from ticketlib.memory import add_memory, create_playbook
 from ticketlib.memory.sync import (
     BRIEF_INSTRUCTION,
+    SKILLS_INSTRUCTION,
     install_opencode_memory,
     sync_generated,
     uninstall_opencode_memory,
@@ -44,6 +46,17 @@ def run(h: Harness) -> None:
         scope="project",
         source="user",
     )
+    create_playbook(
+        h.conn,
+        slug="revisar-pr",
+        title="Revisar PR",
+        description="Checklist para revisar un pull request.",
+        content="1. Lee el diff.\n2. Ejecuta los gates.",
+        evidence=[{"kind": "ticket", "ref": "T-0047"}],
+        files=[{"path": "references/check.md", "content": "- tests\n"}],
+        source="user",
+        actor="usuario",
+    )
     config = {"memory": {"enabled": True}}
 
     synced = sync_generated(root, h.conn, config)
@@ -58,6 +71,14 @@ def run(h: Harness) -> None:
     h.ok(
         synced["chars"] > 0 and synced["version"] == 1,
         "sync_generated devuelve chars y versión",
+    )
+    skill = root / SKILLS_INSTRUCTION / "revisar-pr" / "SKILL.md"
+    h.ok(
+        synced["skills_synced"] is True
+        and synced["playbooks"] == ["revisar-pr"]
+        and skill.is_file()
+        and "name: \"revisar-pr\"" in skill.read_text(encoding="utf-8"),
+        "sync_generated exporta los playbooks activos como skills",
     )
     gitignore = root / ".taiki" / ".gitignore"
     h.ok(
@@ -78,19 +99,27 @@ def run(h: Harness) -> None:
     after = _load(path)
     h.ok(
         first["added"] is True
+        and first["skills_added"] is True
         and after["instructions"] == ["./AGENTS.md", BRIEF_INSTRUCTION]
-        and list(after) == list(before),
-        "install añade instructions al final y preserva claves y orden",
+        and after["skills"] == [SKILLS_INSTRUCTION]
+        and list(after)[: len(before)] == list(before),
+        "install añade instructions y skills al final y preserva el resto",
     )
     h.ok(
         BRIEF_INSTRUCTION in after["instructions"]
-        and not any(item.startswith("/") for item in after["instructions"]),
-        "instructions usa una ruta relativa al proyecto",
+        and SKILLS_INSTRUCTION in after["skills"]
+        and not any(
+            item.startswith("/")
+            for item in [*after["instructions"], *after["skills"]]
+        ),
+        "instructions y skills usan rutas relativas al proyecto",
     )
     second = install_opencode_memory(root)
     h.ok(
         second["added"] is False
-        and _load(path)["instructions"] == after["instructions"],
+        and second["skills_added"] is False
+        and _load(path)["instructions"] == after["instructions"]
+        and _load(path)["skills"] == after["skills"],
         "install es idempotente",
     )
 
@@ -99,9 +128,10 @@ def run(h: Harness) -> None:
     h.ok(
         removed == path
         and cleaned["instructions"] == ["./AGENTS.md"]
+        and "skills" not in cleaned
         and cleaned["theme"] == "noctalia"
         and "mcp" in cleaned,
-        "uninstall retira solo la entrada y conserva el resto",
+        "uninstall retira brief y skills y conserva el resto",
     )
     h.eq(
         uninstall_opencode_memory(root),
@@ -113,10 +143,34 @@ def run(h: Harness) -> None:
     (nested / ".opencode").mkdir(parents=True)
     (nested / ".opencode" / "opencode.json").write_text("{}", encoding="utf-8")
     install_opencode_memory(nested)
-    h.eq(
-        _load(nested / ".opencode" / "opencode.json")["instructions"],
-        [BRIEF_INSTRUCTION],
+    nested_data = _load(nested / ".opencode" / "opencode.json")
+    h.ok(
+        nested_data["instructions"] == [BRIEF_INSTRUCTION]
+        and nested_data["skills"] == [SKILLS_INSTRUCTION],
         "install usa .opencode/opencode.json cuando existe",
+    )
+
+    invalid = Path(h.tmp) / "invalido"
+    invalid.mkdir()
+    (invalid / "opencode.json").write_text(
+        json.dumps({"skills": "no-es-lista"}) + "\n", encoding="utf-8"
+    )
+    h.raises(
+        TicketError,
+        lambda: install_opencode_memory(invalid),
+        "install rechaza skills que no son una lista de rutas",
+    )
+
+    disabled = Path(h.tmp) / "sin-skills"
+    disabled.mkdir()
+    skipped = sync_generated(
+        disabled, h.conn, {"memory": {"skills_sync": False}}
+    )
+    h.ok(
+        skipped["skills_synced"] is False
+        and skipped["playbooks"] == []
+        and not (disabled / SKILLS_INSTRUCTION).exists(),
+        "skills_sync=false no exporta playbooks",
     )
 
     repo_config = _load(Path(__file__).resolve().parent.parent / ".taiki" / "config.json")

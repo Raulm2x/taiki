@@ -32,6 +32,7 @@ Memoria:
 - Las memorias propuestas no son instrucciones hasta que el usuario las apruebe.
 - Si una memoria resulta incorrecta, usa patch, supersede o feedback en memory_write.
 - Antes de cerrar una épica o al acumular >=3 candidatos, usa memory_candidates(mode=review) y propone lecciones; la aprobación es del usuario.
+- Los playbooks se cargan bajo demanda con memory_playbook(slug) o el recurso taiki://playbook/{slug}; el brief solo muestra su índice.
 
 Estados: nuevo → pendiente → en_progreso → completado → verificado → confirmado.
 "verificado" lo marca el conductor con evidencia (tests/CI/revisión) y sigue
@@ -806,12 +807,33 @@ TOOL_SPECS = [
         read_only=True,
     ),
     ToolSpec(
+        "memory_playbook",
+        "Carga un playbook (procedimiento) aprobado por su slug. Devuelve el "
+        "cuerpo, los metadatos y la lista de ficheros de apoyo; usa path para "
+        "leer un apoyo concreto sin volcar todo el skill. Solo lectura.",
+        {
+            "slug": {
+                "type": "string",
+                "maxLength": 64,
+                "description": "Slug del playbook, por ejemplo revisar-pr",
+            },
+            "path": {
+                "type": "string",
+                "maxLength": 500,
+                "description": "Fichero de apoyo a cargar (references/, scripts/, assets/ o templates/)",
+            },
+        },
+        ("slug",),
+        read_only=True,
+    ),
+    ToolSpec(
         "memory_write",
-        "Escribe o mantiene memorias. Cada operación se aplica con la política "
-        "de escritura del workspace: las propuestas quedan pendientes de "
-        "aprobación humana. Usa evidence (ticket, commit, file, url o session) "
-        "cuando propongas una lección; no guardes fallos transitorios, secretos "
-        "ni prohibiciones amplias.",
+        "Escribe o mantiene memorias y playbooks. Cada operación se aplica con "
+        "la política de escritura del workspace: las propuestas quedan "
+        "pendientes de aprobación humana. Usa evidence (ticket, commit, file, "
+        "url o session) cuando propongas una lección; no guardes fallos "
+        "transitorios, secretos ni prohibiciones amplias. Con kind=playbook "
+        "indica key=playbook:<slug>, description y, si aplica, files.",
         {
             "target": {
                 "type": "string",
@@ -860,8 +882,35 @@ TOOL_SPECS = [
                         },
                         "content": {
                             "type": "string",
+                            "maxLength": 12_000,
+                            "description": "Contenido destilado; en un playbook es el procedimiento",
+                        },
+                        "description": {
+                            "type": "string",
                             "maxLength": 600,
-                            "description": "Contenido destilado de la lección",
+                            "description": "Resumen; en un playbook se limita a 240 caracteres",
+                        },
+                        "files": {
+                            "type": "array",
+                            "maxItems": 50,
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "required": ["path", "content"],
+                                "properties": {
+                                    "path": {
+                                        "type": "string",
+                                        "maxLength": 500,
+                                        "description": "Ruta interna: references/, scripts/, assets/ o templates/",
+                                    },
+                                    "content": {
+                                        "type": "string",
+                                        "maxLength": 12_000,
+                                        "description": "Contenido de texto del fichero de apoyo",
+                                    },
+                                },
+                            },
+                            "description": "Ficheros de apoyo de un playbook",
                         },
                         "evidence": {
                             "type": "array",
@@ -973,6 +1022,12 @@ RESOURCE_TEMPLATES = [
         "description": "Detalle de una memoria por código (M-0001)",
         "mimeType": "application/json",
     },
+    {
+        "uriTemplate": "taiki://playbook/{slug}",
+        "name": "Playbook",
+        "description": "Procedimiento y ficheros de apoyo por slug",
+        "mimeType": "application/json",
+    },
 ]
 
 PROMPTS = [
@@ -1007,5 +1062,16 @@ PROMPTS = [
         "name": "taiki:curate",
         "description": "Revisa candidatos y propone lecciones sin tocar código ni aprobar",
         "arguments": [],
+    },
+    {
+        "name": "taiki:playbook",
+        "description": "Carga un playbook como procedimiento y recuerda revisar sus pitfalls",
+        "arguments": [
+            {
+                "name": "slug",
+                "description": "Slug del playbook, por ejemplo revisar-pr",
+                "required": True,
+            }
+        ],
     },
 ]

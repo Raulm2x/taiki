@@ -16,8 +16,9 @@
 # Revisión única del techo por el módulo nuevo; a partir de aquí, podar.
 # P3 CLI (T-0047.02): +32 comprobaciones de contrato del CLI de playbooks y
 # +0.07s de suite por el nuevo módulo (medido 7.57s; CI conserva 8.0s).
+# P3 MCP/sync (T-0047.03): +16 comprobaciones de contrato MCP y sync de skills.
 max_seconds = 7.8
-baseline_checks = 1511
+baseline_checks = 1527
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
 

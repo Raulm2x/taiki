@@ -170,8 +170,15 @@ def cmd_mcp_install(args: argparse.Namespace) -> int:
         f"OpenCode: brief generado en {synced['brief_path']} "
         f"({synced['chars']} chars, v{synced['version']})"
     )
+    if synced["playbooks"]:
+        print(
+            f"OpenCode: {len(synced['playbooks'])} playbook(s) exportados en "
+            f"{synced['skills_path']}"
+        )
     if memory["added"]:
         print(f"OpenCode: brief añadido a instructions en {memory['path']}")
+    if memory["skills_added"]:
+        print(f"OpenCode: skills añadidos en {memory['path']}")
 
     if getattr(args, "antigravity", False):
         install_antigravity()

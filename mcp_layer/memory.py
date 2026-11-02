@@ -19,7 +19,9 @@ from ticketlib.memory.lifecycle import (
     pin_memory,
     supersede_memory,
 )
+from ticketlib.memory.playbooks import get_playbook, slug_of
 from ticketlib.memory.review import review_packet
+from ticketlib.memory.security import validate_memory_path
 from ticketlib.memory.store import (
     add_memory,
     get_memory,
@@ -248,6 +250,49 @@ def handle_memory_search(
     return {"memories": memories, "count": len(memories), "total": total}
 
 
+def handle_memory_playbook(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    _session: str | None = None,
+    _actor: str = "agente",
+) -> dict[str, Any]:
+    """Carga un playbook por slug y, si se pide, uno de sus apoyos.
+
+    El listado de ficheros no incluye el contenido: se usa ``path`` para
+    cargar un apoyo concreto y evitar volcar todo el skill en el contexto.
+    """
+    slug = args.get("slug")
+    memory = get_playbook(conn, slug)
+    files = [
+        {"path": item["path"], "sha256": item.get("sha256")}
+        for item in memory.get("files") or []
+    ]
+    data = {
+        "slug": slug_of(memory),
+        "code": memory.get("code"),
+        "title": memory.get("title"),
+        "description": memory.get("description"),
+        "content": memory.get("content"),
+        "status": memory.get("status"),
+        "confidence": memory.get("confidence"),
+        "files": files,
+        "evidence": memory.get("evidence") or [],
+    }
+    requested = args.get("path")
+    if requested:
+        wanted = validate_memory_path(requested)
+        item = next(
+            (entry for entry in memory.get("files") or [] if entry["path"] == wanted),
+            None,
+        )
+        if item is None:
+            raise domain.ValidationError(
+                f"El playbook {data['slug']} no tiene el apoyo {wanted}"
+            )
+        data["support"] = {"path": wanted, "content": item.get("content")}
+    return data
+
+
 def _operation_receipt(
     conn: sqlite3.Connection,
     op: dict[str, Any],
@@ -268,9 +313,11 @@ def _operation_receipt(
             kind=op.get("kind") or "fact",
             key=op.get("key"),
             scope=target,
+            description=op.get("description") or "",
             confidence=op.get("confidence", 0.5),
             source="agent",
             evidence=op.get("evidence"),
+            files=op.get("files"),
             pinned=bool(op.get("pin")),
             **common,
         )
@@ -281,7 +328,15 @@ def _operation_receipt(
     if action == "patch":
         fields = {
             key: op[key]
-            for key in ("title", "content", "kind", "key", "confidence")
+            for key in (
+                "title",
+                "content",
+                "description",
+                "files",
+                "kind",
+                "key",
+                "confidence",
+            )
             if key in op
         }
         receipt = patch_memory(conn, code, **fields, **common)
@@ -424,6 +479,7 @@ def handle_memory_candidates(
 HANDLERS = {
     "brief": handle_brief,
     "memory_candidates": handle_memory_candidates,
+    "memory_playbook": handle_memory_playbook,
     "memory_search": handle_memory_search,
     "memory_write": handle_memory_write,
 }

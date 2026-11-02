@@ -3,7 +3,8 @@
 Los ficheros de ``.taiki/generated/`` son **derivados**: se regeneran desde la
 base de datos y nunca se versionan (el ``.gitignore`` del workspace los
 excluye). Este módulo no decide el contenido de la memoria; solo escribe el
-brief y mantiene sincronizada la lista ``instructions`` del proyecto.
+brief, exporta los playbooks como skills y mantiene sincronizadas las listas
+``instructions`` y ``skills`` del proyecto.
 """
 
 from __future__ import annotations
@@ -15,8 +16,11 @@ from typing import Any
 from .. import workspace
 from ..domain import TicketError
 from .brief import write_brief
+from .config import load_memory_config
+from .playbooks import export_all
 
 BRIEF_INSTRUCTION = ".taiki/generated/brief.md"
+SKILLS_INSTRUCTION = ".taiki/generated/skills"
 GENERATED_IGNORE = "generated/"
 
 
@@ -45,14 +49,25 @@ def sync_generated(
     conn: Any,
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Regenera el brief y asegura que sus derivados quedan ignorados."""
+    """Regenera el brief, exporta playbooks y asegura los derivados ignorados."""
     root_path = _root(root)
     ensure_gitignore(root_path)
     result = write_brief(root_path, conn, config)
+    cfg = load_memory_config(config=config)
+    exported: list[str] = []
+    removed: list[str] = []
+    if cfg["skills_sync"]:
+        skills = export_all(conn, root_path, config=cfg)
+        exported = list(skills["exported"])
+        removed = list(skills["removed"])
     return {
         "brief_path": str(result["path"]),
         "chars": len(result["text"]),
         "version": result["version"],
+        "skills_path": str(root_path / SKILLS_INSTRUCTION),
+        "skills_synced": bool(cfg["skills_sync"]),
+        "playbooks": exported,
+        "removed_skills": removed,
     }
 
 
@@ -97,33 +112,59 @@ def _write_json(path: Path, data: dict[str, Any]) -> None:
 
 
 def install_opencode_memory(root: str | Path) -> dict[str, Any]:
-    """Añade el brief generado a ``instructions`` sin tocar el resto.
+    """Añade el brief y los skills generados sin tocar el resto.
 
-    La entrada es relativa al proyecto y se inserta al final, conservando el
-    orden de las claves existentes. Llamarla de nuevo no cambia el fichero.
+    Ambas entradas son relativas al proyecto y se insertan al final,
+    conservando el orden de las claves existentes. Llamarla de nuevo no cambia
+    el fichero.
     """
     root_path = _root(root)
     path = _opencode_config(root_path)
     data = _read_json(path)
-    raw = data.get("instructions")
+    instructions, added = _append_entry(data, "instructions", BRIEF_INSTRUCTION)
+    skills, skills_added = _append_entry(data, "skills", SKILLS_INSTRUCTION)
+    if not added and not skills_added:
+        return {
+            "path": str(path),
+            "added": False,
+            "skills_added": False,
+        }
+    if added:
+        data["instructions"] = instructions
+    if skills_added:
+        data["skills"] = skills
+    _write_json(path, data)
+    return {
+        "path": str(path),
+        "added": added,
+        "skills_added": skills_added,
+    }
+
+
+def _append_entry(
+    data: dict[str, Any],
+    key: str,
+    entry: str,
+) -> tuple[list[str], bool]:
+    """Devuelve la lista existente y si hay que añadir ``entry``."""
+    raw = data.get(key)
     if raw is None:
-        instructions: list[str] = []
+        values: list[str] = []
     elif isinstance(raw, list) and all(isinstance(item, str) for item in raw):
-        instructions = raw
+        values = raw
     else:
         raise TicketError(
-            f"`instructions` en {path} debe ser una lista de rutas de texto"
+            f"`{key}` en la configuración de OpenCode debe ser una lista de rutas"
         )
-    if BRIEF_INSTRUCTION in instructions:
-        return {"path": str(path), "added": False}
-    data["instructions"] = [*instructions, BRIEF_INSTRUCTION]
-    _write_json(path, data)
-    return {"path": str(path), "added": True}
+    if entry in values:
+        return values, False
+    return [*values, entry], True
 
 
 def uninstall_opencode_memory(root: str | Path) -> Path | None:
-    """Retira solo la entrada del brief; ``None`` si no estaba."""
+    """Retira solo las entradas del brief y de skills; ``None`` si no estaban."""
     root_path = _root(root)
+    touched: Path | None = None
     for path in (
         root_path / ".opencode" / "opencode.json",
         root_path / "opencode.json",
@@ -131,22 +172,30 @@ def uninstall_opencode_memory(root: str | Path) -> Path | None:
         if not path.is_file():
             continue
         data = _read_json(path)
-        raw = data.get("instructions")
-        if not isinstance(raw, list) or BRIEF_INSTRUCTION not in raw:
-            continue
-        remaining = [item for item in raw if item != BRIEF_INSTRUCTION]
-        if remaining:
-            data["instructions"] = remaining
-        else:
-            data.pop("instructions", None)
-        _write_json(path, data)
-        return path
-    return None
+        changed = False
+        for key, entry in (
+            ("instructions", BRIEF_INSTRUCTION),
+            ("skills", SKILLS_INSTRUCTION),
+        ):
+            raw = data.get(key)
+            if not isinstance(raw, list) or entry not in raw:
+                continue
+            remaining = [item for item in raw if item != entry]
+            if remaining:
+                data[key] = remaining
+            else:
+                data.pop(key, None)
+            changed = True
+        if changed:
+            _write_json(path, data)
+            touched = path
+    return touched
 
 
 __all__ = [
     "BRIEF_INSTRUCTION",
     "GENERATED_IGNORE",
+    "SKILLS_INSTRUCTION",
     "ensure_gitignore",
     "install_opencode_memory",
     "sync_generated",
