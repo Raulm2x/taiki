@@ -135,10 +135,25 @@ estabiliza allí y se integra de vuelta en `develop` antes de publicar.
 Desde una `develop` limpia, al día y con la CI en verde:
 
 ```bash
-git switch develop && git pull --ff-only
+git switch develop
+git pull --ff-only
+git push origin develop      # develop debe estar publicada antes de liberar
 python3 tests/run.py --verify
 taiki release
 ```
+
+`taiki release` exige que `develop` coincida exactamente con `origin/develop` y
+el error dice qué hacer según el caso: si va por detrás, `git switch develop &&
+git pull --ff-only`; si va por delante, `git push origin develop`; y si ha
+divergido, resolver el `pull --rebase` antes de liberar. Subir `develop` primero
+evita que el commit de release y su tag apunten a una historia que el remoto no
+tiene.
+
+Con `--allow-ahead` se puede liberar con `develop` por delante de su upstream
+(y **nunca** por detrás ni divergida). Es un escape consciente para releases
+locales: el tag `vX.Y.Z` queda apuntando a commits que aún no están en
+`origin`, así que hay que subir la rama después (`git push origin develop`).
+Por defecto la release sigue bloqueando.
 
 `taiki release` aplana los commits de `develop` en **un solo commit** sobre
 `main`, actualiza `CHANGELOG.md` a partir de los tickets y commits desde el tag

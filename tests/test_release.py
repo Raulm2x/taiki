@@ -52,6 +52,7 @@ def _release(root: Path, **options) -> tuple[int, dict]:
         bump=options.get("bump"),
         dry_run=options.get("dry_run", False),
         no_verify=options.get("no_verify", True),
+        allow_ahead=options.get("allow_ahead", False),
         verify_cmd=options.get("verify_cmd"),
         json=True,
     )
@@ -61,6 +62,25 @@ def _release(root: Path, **options) -> tuple[int, dict]:
         code = cmd_release(args)
     raw = output.getvalue().strip()
     return code, (json.loads(raw) if raw else {})
+
+
+def _release_error(root: Path, **options) -> tuple[int, str]:
+    """Ejecuta ``taiki release`` y devuelve el código y el stderr."""
+    args = Namespace(
+        repo=str(root),
+        integration=None,
+        bump=options.get("bump"),
+        dry_run=options.get("dry_run", False),
+        no_verify=options.get("no_verify", True),
+        allow_ahead=options.get("allow_ahead", False),
+        verify_cmd=options.get("verify_cmd"),
+        json=True,
+    )
+    error = io.StringIO()
+    with contextlib.redirect_stdout(io.StringIO()), \
+            contextlib.redirect_stderr(error):
+        code = cmd_release(args)
+    return code, error.getvalue().strip()
 
 
 def _tag_exists(root: Path, tag: str) -> bool:
@@ -94,6 +114,60 @@ def _seed_repo(path: Path, name: str) -> tuple[Path, Path]:
     _git(root, "checkout", "-b", "develop")
     info = workspace.init_workspace(root, name=name)
     return root, Path(info["db"])
+
+
+def _sync_repo(path: Path, name: str) -> tuple[Path, Path]:
+    """Repo con ``develop`` publicado en un bare local: upstream sin red."""
+    root, _ = _seed_repo(path, name)
+    bare = path.parent / f"{path.name}-remoto.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    _git(root, "remote", "add", "origin", str(bare))
+    _git(root, "push", "-q", "-u", "origin", "develop")
+    return root, bare
+
+
+def _sync_cases(tmp: Path) -> tuple[dict, dict]:
+    """Casos ahead/behind/divergencia y ``--allow-ahead`` en un solo repo."""
+    root, _ = _sync_repo(tmp / "sync", "sync")
+    # ahead: un commit local y upstream intacto.
+    _commit(root, "local1.txt", "local\n", "feat: local uno (T-0038)")
+    ahead_rc, ahead_err = _release_error(root, dry_run=True)
+    allow_rc, allow = _release(root, dry_run=True, allow_ahead=True)
+    # behind: el remoto tiene ese commit y la rama local vuelve atrás.
+    _git(root, "push", "-q", "origin", "develop")
+    _git(root, "reset", "--hard", "HEAD~1")
+    behind_rc, behind_err = _release_error(root, dry_run=True)
+    # divergencia: la rama local y el upstream avanzan por su cuenta.
+    _commit(root, "local2.txt", "local\n", "feat: local dos (T-0039)")
+    diverged_rc, diverged_err = _release_error(root, dry_run=True)
+
+    actual = {
+        "ahead_rc": ahead_rc,
+        "ahead_push": "git push origin develop" in ahead_err,
+        "ahead_names": "develop" in ahead_err and "origin/develop" in ahead_err,
+        "behind_rc": behind_rc,
+        "behind_pull": "git pull --ff-only" in behind_err,
+        "behind_names": "develop" in behind_err and "origin/develop" in behind_err,
+        "diverged_rc": diverged_rc,
+        "diverged_text": "diverg" in diverged_err.lower(),
+        "allow_rc": allow_rc,
+        "allow_flag": allow.get("allow_ahead"),
+        "allow_tag": allow.get("tag"),
+    }
+    expected = {
+        "ahead_rc": 1,
+        "ahead_push": True,
+        "ahead_names": True,
+        "behind_rc": 1,
+        "behind_pull": True,
+        "behind_names": True,
+        "diverged_rc": 1,
+        "diverged_text": True,
+        "allow_rc": 0,
+        "allow_flag": True,
+        "allow_tag": "v0.1.0",
+    }
+    return actual, expected
 
 
 def _claim_worktree(
@@ -344,6 +418,8 @@ def run(h) -> None:
         "conflict_wrote": False,
     }
 
+    sync_actual, sync_expected = _sync_cases(tmp)
+
     rc, release = _release(root, no_verify=False, verify_cmd="true")
     message = _git(root, "log", "-1", "--format=%B", "main")
     changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
@@ -354,6 +430,7 @@ def run(h) -> None:
     h.eq(
         {
             **negative,
+            "sync": sync_actual,
             "release": {
                 "rc": rc,
                 "main_commits": int(
@@ -381,6 +458,7 @@ def run(h) -> None:
         },
         {
             **expected_negative,
+            "sync": sync_expected,
             "release": {
                 "rc": 0,
                 "main_commits": 1,
