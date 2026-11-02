@@ -53,6 +53,7 @@ def _release(root: Path, **options) -> tuple[int, dict]:
         dry_run=options.get("dry_run", False),
         no_verify=options.get("no_verify", True),
         allow_ahead=options.get("allow_ahead", False),
+        push=options.get("push", False),
         verify_cmd=options.get("verify_cmd"),
         json=True,
     )
@@ -73,6 +74,7 @@ def _release_error(root: Path, **options) -> tuple[int, str]:
         dry_run=options.get("dry_run", False),
         no_verify=options.get("no_verify", True),
         allow_ahead=options.get("allow_ahead", False),
+        push=options.get("push", False),
         verify_cmd=options.get("verify_cmd"),
         json=True,
     )
@@ -135,7 +137,9 @@ def _sync_repo(path: Path, name: str) -> tuple[Path, Path]:
 
 def _sync_cases(tmp: Path) -> tuple[dict, dict]:
     """Casos ahead/behind/divergencia y ``--allow-ahead`` en un solo repo."""
-    root, _ = _sync_repo(tmp / "sync", "sync")
+    root, bare = _sync_repo(tmp / "sync", "sync")
+    main_before = _git(root, "rev-parse", "main")
+    remote_before = _git(bare, "rev-parse", "refs/heads/develop")
     # ahead: un commit local y upstream intacto.
     _commit(root, "local1.txt", "local\n", "feat: local uno (T-0038)")
     ahead_rc, ahead_err = _release_error(root, dry_run=True)
@@ -145,6 +149,17 @@ def _sync_cases(tmp: Path) -> tuple[dict, dict]:
     _git(root, "update-ref", "refs/remotes/origin/develop", "HEAD")
     _git(root, "reset", "--hard", "HEAD~1")
     behind_rc, behind_err = _release_error(root, dry_run=True)
+    # Con --push el behind también aborta, y --push --dry-run es incompatible.
+    push_behind_rc, push_behind_err = _release_error(root, push=True)
+    incompatible_rc, incompatible_err = _release_error(
+        root, push=True, dry_run=True
+    )
+    push_behind_clean = (
+        _git(root, "rev-parse", "main") == main_before
+        and not _tag_exists(root, "v0.1.0")
+        and _git(bare, "rev-parse", "refs/heads/develop") == remote_before
+        and not _has_ref(bare, "refs/heads/main")
+    )
     # divergencia: la rama local y el upstream avanzan por su cuenta.
     _commit(root, "local2.txt", "local\n", "feat: local dos (T-0039)")
     diverged_rc, diverged_err = _release_error(root, dry_run=True)
@@ -156,6 +171,12 @@ def _sync_cases(tmp: Path) -> tuple[dict, dict]:
         "behind_rc": behind_rc,
         "behind_pull": "git pull --ff-only" in behind_err,
         "behind_names": "develop" in behind_err and "origin/develop" in behind_err,
+        "push_behind_rc": push_behind_rc,
+        "push_behind_text": "por detrás" in push_behind_err
+        and "git pull --ff-only" in push_behind_err,
+        "push_behind_clean": push_behind_clean,
+        "incompatible_rc": incompatible_rc,
+        "incompatible": "incompatibles" in incompatible_err,
         "diverged_rc": diverged_rc,
         "diverged_text": "diverg" in diverged_err.lower(),
         "allow_rc": allow_rc,
@@ -169,11 +190,103 @@ def _sync_cases(tmp: Path) -> tuple[dict, dict]:
         "behind_rc": 1,
         "behind_pull": True,
         "behind_names": True,
+        "push_behind_rc": 1,
+        "push_behind_text": True,
+        "push_behind_clean": True,
+        "incompatible_rc": 1,
+        "incompatible": True,
         "diverged_rc": 1,
         "diverged_text": True,
         "allow_rc": 0,
         "allow_flag": True,
         "allow_tag": "v0.1.0",
+    }
+    return actual, expected
+
+
+def _has_ref(root: Path, ref: str) -> bool:
+    result = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--verify", "--quiet", ref],
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def _push_cases(tmp: Path) -> tuple[dict, dict]:
+    """``--push`` contra un bare local: éxito, ahead y rechazo de main.
+
+    Un solo repo con remoto para el éxito y el rechazo; los abortos previos
+    (behind y ``--dry-run``) se prueban en ``_sync_cases``. Sin red.
+    """
+    root, bare = _sync_repo(tmp / "push", "push")
+    _commit(root, "nuevo.txt", "nuevo\n", "feat: publica release (T-0040)")
+    rc, result = _release(root, push=True)
+    tag = str(result.get("tag"))
+    main_sha = _git(root, "rev-parse", "main")
+    develop_sha = _git(root, "rev-parse", "develop")
+    remote_develop_ok = _git(bare, "rev-parse", "refs/heads/develop")
+    remote_main_ok = _git(bare, "rev-parse", "refs/heads/main")
+    remote_tag_ok = _git(bare, "rev-parse", f"refs/tags/{tag}^{{commit}}")
+    remote_tag_type_ok = _git(bare, "cat-file", "-t", f"refs/tags/{tag}")
+
+    # El remoto rechaza main (protección): no se publica el tag ni se reconcilia.
+    hook = bare / "hooks" / "pre-receive"
+    hook.write_text(
+        "#!/bin/sh\nwhile read old new ref; do\n"
+        '  case "$ref" in refs/heads/main) exit 1;; esac\n'
+        "done\nexit 0\n",
+        encoding="utf-8",
+    )
+    hook.chmod(0o755)
+    _commit(root, "posterior.txt", "posterior\n", "fix: segundo parche (T-0041)")
+    before_reject = _git(root, "rev-parse", "develop")
+    reject_rc, reject_err = _release_error(root, push=True)
+    rejected_tag = "v0.1.1"
+
+    actual = {
+        "rc": rc,
+        "pushed": result.get("pushed"),
+        "remote": result.get("remote"),
+        "remote_develop": remote_develop_ok,
+        "remote_main": remote_main_ok,
+        "remote_tag": remote_tag_ok,
+        "remote_tag_type": remote_tag_type_ok,
+        "local_main": main_sha,
+        "develop_after": develop_sha,
+        "reconciled": result.get("reconciled"),
+        "branch": result.get("branch"),
+        "reject_rc": reject_rc,
+        "reject_step": "Paso: push de main" in reject_err,
+        "reject_retry": "Reintenta: git push --atomic origin main" in reject_err,
+        "reject_develop": _git(root, "rev-parse", "develop"),
+        "reject_before": before_reject,
+        "reject_remote_main": _git(bare, "rev-parse", "refs/heads/main"),
+        "reject_remote_tag": _has_ref(bare, f"refs/tags/{rejected_tag}"),
+        "reject_local_tag": _tag_exists(root, rejected_tag),
+        "reject_unreconciled": not _is_ancestor(root, "main", "develop"),
+    }
+    expected = {
+        "rc": 0,
+        "pushed": ["develop", "main", "v0.1.0", "develop-reconcile"],
+        "remote": "origin",
+        "remote_develop": develop_sha,
+        "remote_main": main_sha,
+        "remote_tag": main_sha,
+        "remote_tag_type": "tag",
+        "local_main": main_sha,
+        "develop_after": develop_sha,
+        "reconciled": True,
+        "branch": "develop",
+        "reject_rc": 1,
+        "reject_step": True,
+        "reject_retry": True,
+        "reject_develop": before_reject,
+        "reject_before": before_reject,
+        "reject_remote_main": main_sha,
+        "reject_remote_tag": False,
+        "reject_local_tag": True,
+        "reject_unreconciled": True,
     }
     return actual, expected
 
@@ -409,6 +522,7 @@ def run(h) -> None:
     }
 
     sync_actual, sync_expected = _sync_cases(tmp)
+    push_actual, push_expected = _push_cases(tmp)
 
     rc, release = _release(root, no_verify=False, verify_cmd="true")
     message = _git(root, "log", "-1", "--format=%B", "main")
@@ -424,6 +538,7 @@ def run(h) -> None:
     changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
     second_section = changelog.split("## v0.1.1", 1)[-1].split("## v0.1.0", 1)[0]
     empty_rc, empty_error = _release_error(root)
+    no_remote_rc, no_remote_error = _release_error(root, push=True)
 
     marker_actual = {
         "first_entries": len(first_entries),
@@ -446,6 +561,9 @@ def run(h) -> None:
         "shas": [entry.get("released_sha") for entry in entries],
         "empty_rc": empty_rc,
         "empty_error": "No hay commits nuevos desde v0.1.1" in empty_error,
+        "no_remote_rc": no_remote_rc,
+        "no_remote_error": "No hay remoto configurado" in no_remote_error
+        and "sin --push" in no_remote_error,
     }
     marker_expected = {
         "first_entries": 1,
@@ -468,6 +586,8 @@ def run(h) -> None:
         "shas": [develop_head, second.get("released_sha")],
         "empty_rc": 1,
         "empty_error": True,
+        "no_remote_rc": 1,
+        "no_remote_error": True,
     }
     flow_actual: dict = {}
     flow_expected: dict = {}
@@ -477,6 +597,7 @@ def run(h) -> None:
         {
             **negative,
             "sync": sync_actual,
+            "push": push_actual,
             "marker": marker_actual,
             "release": {
                 "rc": rc,
@@ -503,6 +624,7 @@ def run(h) -> None:
         {
             **expected_negative,
             "sync": sync_expected,
+            "push": push_expected,
             "marker": marker_expected,
             "release": {
                 "rc": 0,

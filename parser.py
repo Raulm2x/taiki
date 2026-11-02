@@ -391,6 +391,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--dry-run", action="store_true", help="Solo muestra el release")
     p.add_argument(
+        "--push",
+        action="store_true",
+        help="Publica en el remoto en el mismo comando: integración (si va por "
+        "delante), main, tag y reconciliación. Incompatible con --dry-run",
+    )
+    p.add_argument(
         "--no-verify",
         action="store_true",
         help="No ejecuta los gates (solo si ya se verificaron)",

@@ -297,7 +297,27 @@ taiki confirm T-0001
 # solo ahora se fusiona la rama en develop (o en la rama de integración)
 taiki worktree merge T-0001 --delete
 # main no se toca aquí: solo cambia con una release
+taiki release --push
+```
+
+`taiki release --push` publica en un solo comando, en este orden: sube
+`develop` si solo iba por delante, ejecuta los gates, aplana `develop` en un
+commit de `main`, crea el tag, empuja `main` y el tag **juntos** (`git push
+--atomic`), reconcilia `develop` con `main` y vuelve a subir `develop`. Cada
+paso aparece en `pushed` (también en `--json`). Si `develop` va por detrás o
+divergida aborta antes de escribir con el comando exacto; si el remoto rechaza
+`main` (protección), para sin reconciliar y deja el release en local con el
+paso y el comando de reintento. `--push` es incompatible con `--dry-run` y
+exige un remoto configurado.
+
+El **modo local** (sin `--push`) no toca la red: úsalo para ensayar con
+`--dry-run`, en repos sin remoto o para revisar el commit de `main` antes de
+subirlo a mano:
+
+```bash
 taiki release
+git push origin main --follow-tags
+git push origin develop
 ```
 
 `taiki release` aplana `develop` en un commit de `main`, crea el tag y después
@@ -322,7 +342,8 @@ marcador se usa el rango `<tag>..develop` y, si existe, el primer padre del
 merge `chore: reconciliar … tras <tag>`. Si el rango no tiene commits
 publicables, la release aborta con *«No hay commits nuevos desde vX.Y.Z»*.
 
-`git push origin main --follow-tags` publica la release. El hook `pre-push`
+`git push origin main --follow-tags` publica la release en modo local (con
+`--push` ya se publica dentro del comando). El hook `pre-push`
 solo deja empujar `main` cuando el tip es una release de `taiki release`
 (asunto `chore(release): vX.Y.Z` y/o tag `v*` que lo apunte) y, en ese caso,
 se limita a comprobar que los tickets del rango existan; un commit suelto en

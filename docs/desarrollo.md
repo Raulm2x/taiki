@@ -132,14 +132,41 @@ estabiliza allí y se integra de vuelta en `develop` antes de publicar.
 
 ### Release
 
-Desde una `develop` limpia, al día y con la CI en verde:
+Desde una `develop` limpia y con la CI en verde, publicar es un solo comando:
 
 ```bash
-git switch develop
-git pull --ff-only
-git push origin develop      # develop debe estar publicada antes de liberar
-python3 tests/run.py --verify
+taiki release --push
+```
+
+El orden es fijo y cada paso aparece en texto y en `--json` (`pushed`):
+
+1. **Integración**: si `develop` solo va por delante de su upstream, la sube
+   (`git push origin develop`). Si va por detrás o ha divergido, aborta antes
+   de escribir y da el comando exacto (`git pull --ff-only` o
+   `git pull --rebase`); nunca hace `pull` automático.
+2. **Gates**: los mismos de siempre (`tests/run.py --verify`, inyectables con
+   `--verify-cmd`/`TAIKI_RELEASE_VERIFY`).
+3. **Squash y tag**: aplana `develop` en un único commit sobre `main` y crea el
+   tag anotado `vX.Y.Z`.
+4. **Publicación**: `git push --atomic origin main vX.Y.Z` publica el commit de
+   release y su tag juntos. Si el remoto rechaza `main` (protección), para sin
+   reconciliar: el release queda en local y el error indica el paso y el
+   comando de reintento.
+5. **Reconciliación**: integra `main` de vuelta en `develop` con el marcador
+   (ver más abajo).
+6. **Integración publicada**: `git push origin develop` sube la reconciliación.
+
+`--push` y `--dry-run` son incompatibles. Sin remoto configurado el comando
+aborta y sugiere el modo local.
+
+El **modo local** (sin `--push`) es el de siempre: no toca la red, es
+determinista y sirve para ensayar (`--dry-run`), para repos sin remoto y para
+publicar a mano cuando se quiere revisar el commit de `main` antes de subirlo:
+
+```bash
 taiki release
+git push origin main --follow-tags
+git push origin develop
 ```
 
 `taiki release` exige que `develop` coincida exactamente con `origin/develop` y
@@ -157,11 +184,12 @@ Por defecto la release sigue bloqueando.
 
 `taiki release` aplana los commits de `develop` en **un solo commit** sobre
 `main`, actualiza `CHANGELOG.md` a partir de los tickets y commits desde el tag
-anterior y crea el tag anotado `vX.Y.Z`. `main` no recibe commits directos: se
-publica con `git push origin main --follow-tags` después de `taiki release`, y
-el hook `pre-push` solo acepta el push cuando el tip es ese commit de release
-(con su tag `vX.Y.Z`). `--no-verify` no es la vía: si el hook rechaza el push,
-es porque `main` tiene commits que no vienen de `taiki release`.
+anterior y crea el tag anotado `vX.Y.Z`. `main` no recibe commits directos: con
+`--push` el comando publica `main` y el tag juntos; en modo local se suben
+después con `git push origin main --follow-tags`, y el hook `pre-push` solo
+acepta el push cuando el tip es ese commit de release (con su tag `vX.Y.Z`).
+`--no-verify` no es la vía: si el hook rechaza el push, es porque `main` tiene
+commits que no vienen de `taiki release`.
 
 Después del tag, el comando **reconcilia** la rama de integración con `main`:
 el squash deja en `main` un commit que `develop` no tiene, así que lo integra
@@ -187,8 +215,9 @@ primer padre. Si el rango no deja commits publicables, la release aborta con
 *«No hay commits nuevos desde vX.Y.Z»*.
 
 ```bash
-taiki release
+taiki release --push
 # Release v0.2.0 publicada en main: 1a2b3c4d5e6f
+# Publicado en origin: develop, main, v0.2.0, develop-reconcile
 # Reconciliado: develop contiene main (git switch develop && git merge --no-ff ...)
 ```
 

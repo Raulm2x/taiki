@@ -32,6 +32,13 @@ Flujo:
    ``released_sha`` como inicio del rango, así que el squash no repite commits
    ya publicados.
 
+Con ``--push`` el comando publica en el remoto además de escribir en local, en
+este orden: sube la integración si solo iba por delante, ejecuta los gates,
+aplana ``main`` con su tag, publica ``main`` y el tag juntos (si el remoto
+rechaza ``main`` no se reconcilia), reconcilia la integración y vuelve a subirla.
+Sin ``--push`` no se toca la red: es el modo local determinista. ``--push`` y
+``--dry-run`` son incompatibles.
+
 La versión sube según los commits: ``!`` o ``BREAKING CHANGE`` → major,
 ``feat`` → minor y el resto → patch; ``--bump`` fuerza el incremento. Si el
 rango no tiene commits publicables, la release aborta con un error claro.
@@ -122,6 +129,19 @@ def _capture(root: Path, *args: str) -> str:
         text=True,
     )
     return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _push(root: Path, remote: str, *refs: str, atomic: bool = False) -> None:
+    """Empuja refs al remoto; el fallo se informa con stderr de Git."""
+    args = ["git", "-C", str(root), "push"]
+    if atomic:
+        args.append("--atomic")
+    args.extend((remote, *refs))
+    result = subprocess.run(args, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise TicketError(detail or f"git push {remote} {' '.join(refs)} falló")
+
 
 
 def configured_integration_branch(config: dict[str, Any] | None = None) -> str:
@@ -463,6 +483,7 @@ def run(
     dry_run: bool = False,
     no_verify: bool = False,
     allow_ahead: bool = False,
+    push: bool = False,
     verify_cmd: str | list[str] | None = None,
 ) -> dict[str, Any]:
     """Publica la integración en ``main`` y devuelve el resumen del release.
@@ -472,7 +493,16 @@ def run(
     publicar un tag cuyo commit de integración no está en el remoto, así que
     hay que subir la rama a mano después. Nunca permite una rama por detrás ni
     una divergencia.
+
+    ``push`` publica en el remoto en el mismo comando: sube la integración si
+    solo iba por delante, publica ``main`` y el tag tras los gates y reconcilia
+    la integración. Sin remoto o con ``--dry-run`` aborta con un error claro.
     """
+    if push and dry_run:
+        raise TicketError(
+            "--push y --dry-run son incompatibles: el dry-run no publica nada. "
+            "Quita --push para simular o --dry-run para publicar de verdad"
+        )
     if bump and bump not in BUMPS:
         raise TicketError(f"--bump debe ser uno de: {', '.join(BUMPS)}")
     base = Path(root).expanduser().resolve() if root else workspace.project_root()
@@ -495,17 +525,35 @@ def run(
     upstream = _capture(
         base, "rev-parse", "--abbrev-ref", "--symbolic-full-name", f"{branch}@{{upstream}}"
     )
+    ahead = behind = 0
+    remote = None
+    if push:
+        remotes = _capture(base, "remote").split()
+        if not remotes:
+            raise TicketError(
+                "No hay remoto configurado; usa taiki release sin --push para "
+                "publicar solo en local, o añade un remoto con "
+                "git remote add origin <url>"
+            )
+        if upstream and "/" in upstream:
+            remote = upstream.split("/", 1)[0]
+        else:
+            remote = "origin" if "origin" in remotes else remotes[0]
+        if remote not in remotes:
+            raise TicketError(
+                f"El upstream de {branch} apunta al remoto {remote}, que no "
+                f"existe; remotos configurados: {', '.join(remotes)}"
+            )
     if upstream:
         ahead, behind = (
             int(value)
             for value in _git(base, "rev-list", "--left-right", "--count", f"{branch}...{upstream}").split()
         )
-        remote = upstream.split("/", 1)[0] if "/" in upstream else "origin"
         counts = f"ahead {ahead}, behind {behind}"
         if ahead and behind:
             raise TicketError(
                 f"{branch} y {upstream} han divergido ({counts}); resuelve la "
-                f"divergencia antes de liberar (git pull --rebase {remote} "
+                f"divergencia antes de liberar (git pull --rebase {remote or 'origin'} "
                 f"{branch} y resuelve los conflictos)"
             )
         if behind:
@@ -514,11 +562,11 @@ def run(
                 f"({counts}); trae los cambios antes de liberar: "
                 f"git switch {branch} && git pull --ff-only"
             )
-        if ahead and not allow_ahead:
+        if ahead and not push and not allow_ahead:
             raise TicketError(
                 f"{branch} va {ahead} commit(s) por delante de {upstream} "
                 f"({counts}); sube la rama antes de liberar: "
-                f"git push {remote} {branch}"
+                f"git push {remote or 'origin'} {branch}"
             )
     if not _git_ok(base, "merge-base", "--is-ancestor", main, branch):
         raise TicketError(
@@ -563,11 +611,25 @@ def run(
         "message": message,
         "dry_run": dry_run,
         "allow_ahead": allow_ahead,
+        "push": push,
+        "remote": remote,
+        "pushed": [],
         "reconciled": False,
         "reconcile_command": None,
     }
     if dry_run:
         return summary
+
+    if push:
+        if ahead:
+            try:
+                _push(base, remote, branch)
+            except TicketError as exc:
+                raise TicketError(
+                    f"{exc}\nPaso: push de {branch}. Reintenta: "
+                    f"git push {remote} {branch}"
+                ) from exc
+            summary["pushed"].append(branch)
 
     if not no_verify:
         command = _verify_command(verify_cmd)
@@ -623,7 +685,37 @@ def run(
         "released_sha": released_sha,
         "date": date.today().isoformat(),
     }
+    if push:
+        retry = f"git push --atomic {remote} {main} {tag}"
+        try:
+            _push(base, remote, main, tag, atomic=True)
+        except TicketError as exc:
+            if original != main:
+                subprocess.run(
+                    ["git", "-C", str(base), "checkout", original],
+                    capture_output=True,
+                    text=True,
+                )
+            raise TicketError(
+                f"{exc}\nEl release {tag} queda solo en local ({commit[:12]}); "
+                f"{main} y el tag no se publicaron y no se reconcilia "
+                f"{branch}. Paso: push de {main}. Reintenta: {retry}"
+            ) from exc
+        summary["pushed"].extend((main, tag))
     summary.update(_reconcile(base, branch, main, version, original, marker))
+    if push:
+        if summary.get("reconcile_error"):
+            summary["push_retry"] = f"git push {remote} {branch}"
+        else:
+            try:
+                _push(base, remote, branch)
+            except TicketError as exc:
+                raise TicketError(
+                    f"{exc}\n{main} y {tag} ya están publicados; falta la "
+                    f"reconciliación de {branch}. Paso: push de {branch}. "
+                    f"Reintenta: git push {remote} {branch}"
+                ) from exc
+            summary["pushed"].append(f"{branch}-reconcile")
     summary.update(
         {
             "commit": commit,
@@ -649,6 +741,7 @@ def cmd_release(args: argparse.Namespace) -> int:
             dry_run=bool(getattr(args, "dry_run", False)),
             no_verify=bool(getattr(args, "no_verify", False)),
             allow_ahead=bool(getattr(args, "allow_ahead", False)),
+            push=bool(getattr(args, "push", False)),
             verify_cmd=getattr(args, "verify_cmd", None),
         )
     except TicketError as exc:
@@ -669,6 +762,9 @@ def cmd_release(args: argparse.Namespace) -> int:
         return 0
     print(f"Release {result['tag']} publicada en {result['main']}: {result['commit'][:12]}")
     print(f"Tag: {result['tag']}")
+    if result.get("push"):
+        steps = ", ".join(result["pushed"]) or "(sin pasos)"
+        print(f"Publicado en {result['remote']}: {steps}")
     if result.get("reconciled"):
         print(
             f"Reconciliado: {result['integration']} contiene {result['main']} "
@@ -680,9 +776,15 @@ def cmd_release(args: argparse.Namespace) -> int:
             f"{result['main']}: {result['reconcile_error']}",
             file=sys.stderr,
         )
+        if result.get("push_retry"):
+            print(
+                f"Aviso: {result['integration']} no se ha publicado; cuando "
+                f"termines la reconciliación: {result['push_retry']}",
+                file=sys.stderr,
+            )
     print(f"CHANGELOG: {result['changelog']}")
     print(f"Rollback: git revert {result['commit'][:12]}")
-    if result.get("allow_ahead"):
+    if result.get("allow_ahead") and not result.get("push"):
         print(
             f"Aviso: release local; {result['integration']} sigue por delante "
             f"de su upstream. Súbela con git push origin {result['integration']}.",
