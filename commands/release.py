@@ -16,12 +16,20 @@ Flujo:
    de commit. No se reescribe ``main``.
 4. Actualiza ``CHANGELOG.md`` (lo crea si falta) y etiqueta el commit con un
    tag anotado ``vX.Y.Z``.
+5. Reconcilia la integración con ``main``: el squash deja en ``main`` un commit
+   que la rama de integración no tiene, así que se integra de vuelta con
+   ``git merge --no-ff`` (idempotente: no hace nada si ``main`` ya es
+   ancestro). Sin este paso la segunda release fallaría por la comprobación de
+   ancestro. Al terminar se restaura el checkout original.
 
 La versión sube según los commits: ``!`` o ``BREAKING CHANGE`` → major,
 ``feat`` → minor y el resto → patch; ``--bump`` fuerza el incremento.
 
 Rollback: ``git revert <commit>`` del commit de release (y retira el tag si aún
-no se publicó). Nunca se reescribe ``main`` publicado.
+no se publicó). Nunca se reescribe ``main`` publicado. La reconciliación es un
+merge normal: se deshace con ``git revert -m 1 <commit-de-reconciliación>`` en
+la rama de integración o, mejor, revirtiendo el commit de release y volviendo a
+reconciliar.
 """
 
 from __future__ import annotations
@@ -247,6 +255,70 @@ def _verify_command(explicit: str | list[str] | None) -> list[str]:
     return list(DEFAULT_VERIFY)
 
 
+def _reconcile(
+    root: Path, branch: str, main: str, version: str, original: str
+) -> dict[str, Any]:
+    """Integra ``main`` en ``branch`` tras el squash, sin tocar ``main``.
+
+    Idempotente: si ``main`` ya es ancestro de la integración no hace nada. Un
+    conflicto se aborta y se informa; la release ya está publicada y no se
+    revierte por ello. Restaura el checkout original pase lo que pase.
+    """
+    outcome: dict[str, Any] = {
+        "reconciled": False,
+        "reconcile_command": None,
+    }
+    if _git_ok(root, "merge-base", "--is-ancestor", main, branch):
+        return outcome
+    message = f"chore: reconciliar {branch} tras v{version}"
+    command = (
+        f"git switch {branch} && git merge --no-ff --no-verify {main} "
+        f"-m {shlex.quote(message)}"
+    )
+    outcome["reconcile_command"] = command
+    result = subprocess.run(
+        ["git", "-C", str(root), "checkout", branch],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "merge",
+                "--no-ff",
+                "--no-verify",
+                "-m",
+                message,
+                main,
+            ],
+            capture_output=True,
+            text=True,
+        )
+    if result.returncode == 0:
+        outcome["reconciled"] = True
+    else:
+        subprocess.run(
+            ["git", "-C", str(root), "merge", "--abort"],
+            capture_output=True,
+            text=True,
+        )
+        outcome["reconcile_error"] = (result.stderr or result.stdout).strip()
+    if original != branch:
+        restored = subprocess.run(
+            ["git", "-C", str(root), "checkout", original],
+            capture_output=True,
+            text=True,
+        )
+        if restored.returncode != 0:
+            outcome["reconcile_error"] = (
+                restored.stderr or restored.stdout
+            ).strip()
+    return outcome
+
+
 def run(
     root: str | Path | None = None,
     *,
@@ -322,6 +394,8 @@ def run(
         "commits": len(commits),
         "message": message,
         "dry_run": dry_run,
+        "reconciled": False,
+        "reconcile_command": None,
     }
     if dry_run:
         return summary
@@ -374,6 +448,7 @@ def run(
     _git(base, "commit", "--no-verify", "-m", message)
     commit = _git(base, "rev-parse", "HEAD")
     _git(base, "tag", "-a", tag, "-m", f"Release {tag}")
+    summary.update(_reconcile(base, branch, main, version, original))
     summary.update(
         {
             "commit": commit,
@@ -412,6 +487,17 @@ def cmd_release(args: argparse.Namespace) -> int:
         return 0
     print(f"Release {result['tag']} publicada en {result['main']}: {result['commit'][:12]}")
     print(f"Tag: {result['tag']}")
+    if result.get("reconciled"):
+        print(
+            f"Reconciliado: {result['integration']} contiene {result['main']} "
+            f"({result['reconcile_command']})"
+        )
+    elif result.get("reconcile_error"):
+        print(
+            f"Aviso: no se pudo reconciliar {result['integration']} con "
+            f"{result['main']}: {result['reconcile_error']}",
+            file=sys.stderr,
+        )
     print(f"CHANGELOG: {result['changelog']}")
     print(f"Rollback: git revert {result['commit'][:12]}")
     return 0

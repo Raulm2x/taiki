@@ -107,7 +107,7 @@ sin pasar por una release verificada.
 | Rama | Origen | Destino | Uso |
 |---|---|---|---|
 | `main` | — | — | Solo releases: un commit unificado y etiquetado por entrega. |
-| `develop` | `main` (una vez) | `main` vía release | Integración diaria de las ramas de ticket. |
+| `develop` | `main` (una vez) | `main` vía release | Integración diaria; recibe `main` tras cada release. |
 | `agent/T-XXXX-<slug>` | `develop` | `develop` | Rama efímera de un ticket y su worktree. |
 | `release/x.y.z` | `develop` | `main` y `develop` | Congelación opcional antes de publicar. |
 | `hotfix/T-XXXX` | `main` | `main` y `develop` | Corrección urgente de una release publicada. |
@@ -145,6 +145,22 @@ taiki release
 anterior y crea el tag anotado `vX.Y.Z`. `main` no recibe pushes ni commits
 directos: la única vía es ese comando con los gates en verde.
 
+Después del tag, el comando **reconcilia** la rama de integración con `main`:
+el squash deja en `main` un commit que `develop` no tiene, así que lo integra
+de vuelta con un merge normal (`git switch develop && git merge --no-ff main`,
+sin reescribir `main`). El paso es idempotente (si `main` ya es ancestro no hace
+nada), restaura la rama en la que estabas y aparece en el resultado como
+`reconciled`. Sin él, la segunda release fallaría con *«main no es ancestro de
+develop»*. Si el merge diera conflicto, la release ya está publicada: el
+comando aborta el merge, avisa con `reconcile_error` y deja `develop` intacta
+para resolver a mano.
+
+```bash
+taiki release
+# Release v0.2.0 publicada en main: 1a2b3c4d5e6f
+# Reconciliado: develop contiene main (git switch develop && git merge --no-ff ...)
+```
+
 ### Reglas
 
 - `main` protegida: sin push directo, sin commits sueltos y sin reescribir
@@ -167,9 +183,17 @@ git switch main && git pull --ff-only
 git revert <commit-de-release>   # commit inverso; la historia queda intacta
 ```
 
+La reconciliación de `develop` es un merge normal, así que no hace falta
+deshacerla para revertir la release: `git revert` del commit de release en
+`main` deja `develop` con el merge intacto (sus cambios ya no llegan a `main`
+porque el commit inverso los deshace). Si además quieres retirar el merge de
+`develop`, usa `git revert -m 1 <commit-de-reconciliación>` en `develop`; no se
+hace `reset` ni force-push sobre ramas compartidas. El tag anterior sigue siendo
+el punto de retorno para desplegar y solo se retira si aún no se publicó.
+
 Si el fallo afecta a una release ya publicada, se prepara un `hotfix/T-XXXX`
 desde `main`, se etiqueta una versión de parche y se integra también en
-`develop`. El tag anterior sigue siendo el punto de retorno para desplegar.
+`develop`; la siguiente release reconcilia sola.
 
 ### Versionado y CHANGELOG
 

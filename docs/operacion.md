@@ -299,6 +299,17 @@ taiki worktree merge T-0001 --delete
 taiki release
 ```
 
+`taiki release` aplana `develop` en un commit de `main`, crea el tag y después
+**reconcilia** `develop` con `main` (`git merge --no-ff`, idempotente y sin
+reescribir `main`), restaurando la rama en la que estabas. Sin ese paso la
+segunda release fallaría porque el commit del squash no existe en `develop`.
+El resultado incluye `reconciled` y `reconcile_command` (también en `--json`);
+si el merge conflictúa, la release ya está publicada, se aborta el merge y se
+informa `reconcile_error` para resolverlo a mano. Para deshacer una release,
+`git revert <commit-de-release>` en `main`; el merge de reconciliación de
+`develop` no estorba y solo se revierte con
+`git revert -m 1 <commit-de-reconciliación>` si hace falta.
+
 
 ## Tickets temporales (scratch)
 

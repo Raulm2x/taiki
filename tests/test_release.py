@@ -5,11 +5,12 @@ en un único ``h.eq`` con un diccionario de observaciones: rutas negativas
 (dry-run, gates rojos y ancestro) y release real.
 
 El E2E del flujo completo (claim con worktree, commit en ``agent/*``, rebase +
-ff-only en ``develop``, release squash, tag anotado y CHANGELOG) es un smoke
-opt-in con ``TAIKI_E2E=1``: monta varios repos de Git y no cabe en el
-presupuesto de tiempo de la suite completa (5 s). La CI lo activa y lo ejecuta
-con ``--strict-budget``. Los repos son temporales y locales: sin red y sin
-tocar ``main``/``develop`` del proyecto real.
+ff-only en ``develop``, release squash, reconciliación de ``develop``,
+segunda release, tags anotados y CHANGELOG) es un smoke opt-in con
+``TAIKI_E2E=1``: monta varios repos de Git y no cabe en el presupuesto de tiempo
+de la suite completa (5 s). La CI lo activa y lo ejecuta con ``--strict-budget``.
+Los repos son temporales y locales: sin red y sin tocar ``main``/``develop`` del
+proyecto real.
 """
 
 from __future__ import annotations
@@ -162,9 +163,20 @@ def _flow(h) -> tuple[dict, dict]:
     release_rc, release = _release(root, no_verify=False, verify_cmd="true")
     tag = str(release.get("tag"))
     main_commit = _git(root, "rev-parse", "main")
-    message = _git(root, "log", "-1", "--format=%B")
+    message = _git(root, "log", "-1", "--format=%B", "main")
     changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
     subjects = _git(root, "log", "--format=%s", "develop")
+    develop_reconciled = _is_ancestor(root, "main", "develop")
+    restored_branch = _git(root, "branch", "--show-current")
+
+    # ── Segundo ciclo: sin reconciliación manual la release fallaría ─────
+    _commit(root, "segundo.txt", "dos\n", "feat: segundo ciclo (T-0005)")
+    second_rc, second = _release(root, no_verify=False, verify_cmd="true")
+    second_tag = str(second.get("tag"))
+    main_commits = int(_git(root, "rev-list", "--count", f"{main_head}..main"))
+    main_merges = _git(root, "rev-list", "--merges", "main")
+    develop_merges = _git(root, "log", "--merges", "--format=%s", "develop").splitlines()
+    release_tags = _git(root, "tag", "--list", "v*").splitlines()
 
     # ── Conflicto en rebase: aborta sin tocar develop ni main ───────────
     conflict, conflict_db = _seed_repo(tmp / "conflicto-flujo", "conflicto")
@@ -193,17 +205,27 @@ def _flow(h) -> tuple[dict, dict]:
         "agent_commit_in_develop": "feat: flujo E2E (T-0001)" in subjects,
         "develop_advanced": develop_after != develop_before
         and _is_ancestor(root, develop_before, develop_after),
-        "develop_linear": _git(root, "rev-list", "--merges", "develop") == "",
+        "develop_reconciled": develop_reconciled and restored_branch == "develop",
+        "develop_merges": develop_merges,
         "merge_kept_main": main_after_merge == main_head,
         "worktree_removed": not tree.exists(),
         "branch_deleted": branch not in branches,
         "release_rc": release_rc,
         "release_branch": release.get("branch"),
         "release_squashed": release.get("commits"),
-        "main_commits": int(_git(root, "rev-list", "--count", f"{main_head}..main")),
-        "release_parent": _git(root, "rev-parse", "main^"),
+        "release_reconciled": release.get("reconciled"),
+        "second_rc": second_rc,
+        "second_tag": second_tag,
+        "second_reconciled": second.get("reconciled"),
+        "main_commits": main_commits,
+        "main_linear": main_merges == "",
+        "release_lineage": _git(root, "rev-parse", "main^^"),
+        "tags": release_tags,
         "tag_type": _git(root, "cat-file", "-t", tag) if tag else None,
         "tag_on_main": _git(root, "rev-parse", f"{tag}^{{commit}}") if tag else None,
+        "second_tag_on_main": (
+            _git(root, "rev-parse", f"{second_tag}^{{commit}}") if second_tag else None
+        ),
         "release_message": all(
             part in message for part in ("chore(release)", "### feat", "T-0001")
         ),
@@ -231,17 +253,28 @@ def _flow(h) -> tuple[dict, dict]:
         "agent_branch": True,
         "agent_commit_in_develop": True,
         "develop_advanced": True,
-        "develop_linear": True,
+        "develop_reconciled": True,
+        "develop_merges": [
+            "chore: reconciliar develop tras v0.2.0",
+            "chore: reconciliar develop tras v0.1.0",
+        ],
         "merge_kept_main": True,
         "worktree_removed": True,
         "branch_deleted": True,
         "release_rc": 0,
-        "release_branch": "main",
+        "release_branch": "develop",
         "release_squashed": 2,
-        "main_commits": 1,
-        "release_parent": main_head,
+        "release_reconciled": True,
+        "second_rc": 0,
+        "second_tag": "v0.2.0",
+        "second_reconciled": True,
+        "main_commits": 2,
+        "main_linear": True,
+        "release_lineage": main_head,
+        "tags": ["v0.1.0", "v0.2.0"],
         "tag_type": "tag",
         "tag_on_main": main_commit,
+        "second_tag_on_main": _git(root, "rev-parse", "main") if second_tag else None,
         "release_message": True,
         "changelog": True,
         "main_has_files": True,
@@ -312,7 +345,7 @@ def run(h) -> None:
     }
 
     rc, release = _release(root, no_verify=False, verify_cmd="true")
-    message = _git(root, "log", "-1", "--format=%B")
+    message = _git(root, "log", "-1", "--format=%B", "main")
     changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
     flow_actual: dict = {}
     flow_expected: dict = {}
@@ -326,7 +359,11 @@ def run(h) -> None:
                 "main_commits": int(
                     _git(root, "rev-list", "--count", f"{main_head}..main")
                 ),
-                "develop_head": _git(root, "rev-parse", "develop"),
+                "develop_reconciled": _is_ancestor(root, "main", "develop"),
+                "develop_moved": _git(root, "rev-parse", "develop") != develop_head,
+                "branch": release.get("branch"),
+                "reconciled": release.get("reconciled"),
+                "reconcile_command": bool(release.get("reconcile_command")),
                 "tag_type": _git(root, "cat-file", "-t", "v0.1.0"),
                 "tag": release.get("tag"),
                 "version": release.get("version"),
@@ -347,7 +384,11 @@ def run(h) -> None:
             "release": {
                 "rc": 0,
                 "main_commits": 1,
-                "develop_head": develop_head,
+                "develop_reconciled": True,
+                "develop_moved": True,
+                "branch": "develop",
+                "reconciled": True,
+                "reconcile_command": True,
                 "tag_type": "tag",
                 "tag": "v0.1.0",
                 "version": "0.1.0",
