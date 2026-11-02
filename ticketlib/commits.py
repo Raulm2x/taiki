@@ -14,8 +14,13 @@ import subprocess
 from pathlib import Path
 from typing import Any, Iterable
 
+from . import env
 from .domain import TicketError
 from .util import clean_path
+
+PROTECTED_BRANCHES = {"main", "master"}
+AGENT_PREFIX = "agent/"
+HOTFIX_PREFIX = "hotfix/"
 
 
 def _git(root: Path, *args: str) -> str:
@@ -89,13 +94,99 @@ def overlaps(left: Iterable[str], right: Iterable[str]) -> list[str]:
     return hits
 
 
+def current_branch(root: str | Path = ".") -> str | None:
+    """Rama actual del checkout (``None`` si hay HEAD desacoplado o no hay git)."""
+    try:
+        return _git(Path(root), "branch", "--show-current").strip() or None
+    except TicketError:
+        return None
+
+
+def branch_policy(
+    branch: str | None, code: str | None, *, agent: bool = True
+) -> dict[str, Any]:
+    """¿Puede esta rama recibir un commit del ticket ``code``?
+
+    El flujo nuevo reserva ``main`` para ``taiki release``, exige ramas
+    ``agent/T-XXXX-*`` para el trabajo diario y permite ``hotfix/T-XXXX``
+    (creadas desde ``main``) únicamente con el ticket en el nombre. Un usuario
+    que commitea fuera de esas ramas solo recibe un aviso; un agente se
+    bloquea porque su trabajo siempre vive en una rama por ticket.
+    """
+    result: dict[str, Any] = {
+        "ok": True,
+        "reason": None,
+        "message": "",
+        "warning": None,
+    }
+    if not branch or branch == "HEAD":
+        return result
+    if branch in PROTECTED_BRANCHES:
+        if agent:
+            return {
+                "ok": False,
+                "reason": "protected-branch",
+                "message": (
+                    f"{branch} solo recibe releases: trabaja en una rama "
+                    "agent/T-XXXX y publica con `taiki release`."
+                ),
+                "warning": None,
+            }
+        result["warning"] = (
+            f"{branch} solo debería recibir releases de `taiki release`"
+        )
+        return result
+    if branch.startswith(AGENT_PREFIX):
+        expected = f"{AGENT_PREFIX}{code}" if code else ""
+        if expected and (branch == expected or branch.startswith(expected + "-")):
+            return result
+        return {
+            "ok": False,
+            "reason": "branch-mismatch",
+            "message": (
+                f"la rama {branch} no corresponde a {code or 'ningún ticket'}; "
+                "usa agent/T-XXXX-*"
+            ),
+            "warning": None,
+        }
+    if branch.startswith(HOTFIX_PREFIX):
+        if code and code in branch:
+            return result
+        return {
+            "ok": False,
+            "reason": "branch-mismatch",
+            "message": (
+                f"{branch} debe incluir el ticket: hotfix/{code or 'T-XXXX'}"
+            ),
+            "warning": None,
+        }
+    if agent:
+        return {
+            "ok": False,
+            "reason": "branch",
+            "message": (
+                f"{branch} no es agent/T-XXXX-*; el trabajo diario va en una "
+                "rama por ticket"
+            ),
+            "warning": None,
+        }
+    result["warning"] = f"{branch} no es agent/T-XXXX-*; integra por develop"
+    return result
+
+
 def check(
     root: str | Path,
     ticket: dict[str, Any],
     others: Iterable[dict[str, Any]] = (),
+    *,
+    branch: str | None = None,
+    agent: bool | None = None,
 ) -> dict[str, Any]:
-    """Analiza el índice contra el alcance del ticket y de otras sesiones."""
+    """Analiza el índice contra el ticket, la rama y otras sesiones."""
     files = staged(root)
+    name = current_branch(root) if branch is None else branch
+    agent_mode = bool(env.get("AGENT")) if agent is None else agent
+    policy = branch_policy(name, ticket.get("code"), agent=agent_mode)
     scope = list(ticket.get("paths") or [])
     outside = [item for item in files if scope and not matches(item, scope)]
     conflicts: list[dict[str, Any]] = []
@@ -117,11 +208,19 @@ def check(
             )
     return {
         "ticket": ticket.get("code"),
+        "branch": name,
+        "branch_reason": policy["reason"],
+        "branch_message": policy["message"],
         "scope": scope,
         "staged": files,
         "outside": outside,
         "conflicts": conflicts,
-        "ok": bool(files) and not outside and not conflicts,
+        "ok": (
+            bool(files)
+            and not outside
+            and not conflicts
+            and policy["ok"]
+        ),
     }
 
 

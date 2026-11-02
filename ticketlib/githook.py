@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from . import env as envlib
+from . import commits, env as envlib, worktree
 from .domain import TicketError
 from .store.relations import TICKET_CODE_RE
 
@@ -152,7 +152,20 @@ def check_push(
         parts = line.split()
         if len(parts) < 4:
             continue
-        _local_ref, local_sha, _remote_ref, remote_sha = parts[:4]
+        _local_ref, local_sha, remote_ref, remote_sha = parts[:4]
+        target = _push_branch(remote_ref)
+        if target in commits.PROTECTED_BRANCHES:
+            blocked.append(
+                {
+                    "commit": local_sha,
+                    "subject": target,
+                    "reason": "protected-branch",
+                    "codes": [],
+                    "missing": [],
+                    "unconfirmed": [],
+                }
+            )
+            continue
         try:
             if set(remote_sha) == {"0"}:
                 shas = git_func(
@@ -173,7 +186,7 @@ def check_push(
                 continue
             checked += 1
             result = check_commit_message(
-                conn, subject, require_confirmed=True
+                conn, subject, require_confirmed=True, branch=""
             )
             if result["ok"] or result.get("reason") == "no-code":
                 continue
@@ -214,10 +227,55 @@ def hooks_installed(repo: str | Path = ".") -> dict[str, bool]:
     return found
 
 
+def _push_branch(remote_ref: str) -> str:
+    """Rama destino de un refspec de push (``refs/heads/x`` → ``x``)."""
+    ref = (remote_ref or "").lstrip("+")
+    if ref.startswith("refs/heads/"):
+        ref = ref[len("refs/heads/") :]
+    return ref
+
+
+def _integration_warnings(root: Path, branch: str | None) -> list[str]:
+    """Avisos del flujo nuevo sin bloquear: develop ausente o desalineada."""
+    ref = worktree.integration_ref(root)
+    if ref["fallback"]:
+        return [f"no existe {ref['configured']}; se integra en {ref['branch']}"]
+    develop = ref["branch"]
+    warnings: list[str] = []
+    if branch and branch.startswith(
+        (commits.AGENT_PREFIX, commits.HOTFIX_PREFIX)
+    ):
+        try:
+            git("merge-base", "--is-ancestor", develop, branch, cwd=root)
+        except TicketError:
+            warnings.append(
+                f"{branch} no está rebasada sobre {develop}"
+            )
+    for protected in sorted(commits.PROTECTED_BRANCHES):
+        try:
+            git("rev-parse", "--verify", "--quiet", f"refs/heads/{protected}", cwd=root)
+        except TicketError:
+            continue
+        try:
+            git("merge-base", "--is-ancestor", protected, develop, cwd=root)
+        except TicketError:
+            warnings.append(
+                f"{develop} no contiene {protected}: integra antes de publicar"
+            )
+            break
+    return warnings
+
+
 def check_commit_message(
-    conn: Any, message: str, *, require_confirmed: bool = False
+    conn: Any,
+    message: str,
+    *,
+    require_confirmed: bool = False,
+    branch: str | None = None,
+    ticket: str | None = None,
+    repo: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Exige un ticket reclamado o cerrado en el asunto.
+    """Exige un ticket reclamado o cerrado en el asunto y una rama por ticket.
 
     Solo la primera línea (asunto) bloquea: el cuerpo puede citar códigos
     antiguos o renumerados al explicar el cambio. Se aceptan tickets en
@@ -226,6 +284,11 @@ def check_commit_message(
     con ``require_confirmed=True`` y solo acepta ``confirmado``. Se puede saltar con
     ``TAIKI_HOOK=off`` (o el alias ``TICKETS_HOOK``) o con ``[sin-ticket]`` en
     el propio mensaje.
+
+    Con ``branch`` (o detectada desde ``repo``) se bloquea commitear en
+    ``main``/``master`` y se exige que ``agent/T-XXXX-*`` o ``hotfix/T-XXXX``
+    correspondan al ticket del asunto. ``repo`` añade avisos de integración
+    (develop ausente, desalineada o rama sin rebasar) sin bloquear.
     """
     disabled = str(envlib.get("HOOK", "")).strip().lower()
     if disabled in DISABLED_VALUES:
@@ -245,9 +308,44 @@ def check_commit_message(
 
     subject_codes = list(dict.fromkeys(TICKET_CODE_RE.findall(subject)))
     body_codes = list(dict.fromkeys(TICKET_CODE_RE.findall(body)))
+
+    root = Path(repo).expanduser() if repo is not None else Path.cwd()
+    name = branch if branch is not None else commits.current_branch(root)
+
+    if name in commits.PROTECTED_BRANCHES:
+        return {
+            "ok": False,
+            "reason": "protected-branch",
+            "codes": subject_codes,
+            "missing": [],
+            "unconfirmed": [],
+            "warnings": [],
+            "branch": name,
+            "message": (
+                f"{name} solo recibe releases de `taiki release`; "
+                "commitea en agent/T-XXXX-*"
+            ),
+        }
     if not subject_codes:
         return {"ok": False, "reason": "no-code", "codes": [], "missing": [],
                 "unconfirmed": [], "warnings": []}
+
+    expected = ticket or subject_codes[0]
+    strict = name is not None and name.startswith(
+        (commits.AGENT_PREFIX, commits.HOTFIX_PREFIX)
+    )
+    policy = commits.branch_policy(name, expected, agent=strict)
+    if not policy["ok"]:
+        return {
+            "ok": False,
+            "reason": policy["reason"],
+            "codes": subject_codes,
+            "missing": [],
+            "unconfirmed": [],
+            "warnings": [],
+            "branch": name,
+            "message": policy["message"],
+        }
 
     codes = list(dict.fromkeys([*subject_codes, *body_codes]))
     placeholders = ", ".join("?" for _ in codes)
@@ -292,6 +390,8 @@ def check_commit_message(
         for code in body_codes
         if code not in statuses
     ]
+    if repo is not None:
+        warnings.extend(_integration_warnings(root, name))
     return {
         "ok": True,
         "reason": None,

@@ -47,7 +47,9 @@ def run(h: Harness) -> None:
     )
     h.ok(
         githook.check_commit_message(
-            conn, f"arreglo {approved['code']}"
+            conn,
+            f"arreglo {approved['code']}",
+            branch=f"agent/{approved['code']}-test",
         )["ok"],
         "commit-msg acepta un ticket confirmado",
     )
@@ -59,13 +61,16 @@ def run(h: Harness) -> None:
     body_ok = githook.check_commit_message(
         conn,
         f"arreglo {approved['code']}\n\nrepasa {pending_commit['code']}",
+        branch=f"agent/{approved['code']}-test",
     )
     h.ok(
         body_ok["ok"] and body_ok["warnings"] == [],
         "el cuerpo no avisa de códigos que sí existen",
     )
     allowed_commit = githook.check_commit_message(
-        conn, f"arreglo {pending_commit['code']}"
+        conn,
+        f"arreglo {pending_commit['code']}",
+        branch=f"agent/{pending_commit['code']}-test",
     )
     h.ok(
         allowed_commit["ok"],
@@ -73,7 +78,9 @@ def run(h: Harness) -> None:
     )
     draft = repo.create_ticket(conn, title="Sin reclamar")
     blocked_draft = githook.check_commit_message(
-        conn, f"arreglo {draft['code']}"
+        conn,
+        f"arreglo {draft['code']}",
+        branch=f"agent/{draft['code']}-test",
     )
     h.ok(
         not blocked_draft["ok"]
@@ -81,7 +88,9 @@ def run(h: Harness) -> None:
         "commit-msg bloquea un ticket nuevo sin reclamar",
     )
     h.ok(
-        githook.check_commit_message(conn, "x T-9999")["missing"]
+        githook.check_commit_message(
+            conn, "x T-9999", branch="agent/T-9999-test"
+        )["missing"]
         == ["T-9999"],
         "commit-msg detecta códigos inexistentes",
     )
@@ -93,6 +102,7 @@ def run(h: Harness) -> None:
     mixed = githook.check_commit_message(
         conn,
         f"arreglo {approved['code']}\n\nExplica T-8888 y T-7777.",
+        branch=f"agent/{approved['code']}-test",
     )
     h.ok(
         mixed["ok"]
@@ -103,6 +113,7 @@ def run(h: Harness) -> None:
     wrong_subject = githook.check_commit_message(
         conn,
         f"arreglo T-8888\n\nfinal {approved['code']}",
+        branch="agent/T-8888-test",
     )
     h.ok(
         not wrong_subject["ok"]
@@ -134,7 +145,10 @@ def run(h: Harness) -> None:
     push = githook.check_push(
         conn,
         repo=str(hook_repo),
-        refs_text="refs/heads/main abc1234 refs/heads/main 0000",
+        refs_text=(
+            f"refs/heads/agent/{pending_commit['code']}-x abc1234 "
+            f"refs/heads/agent/{pending_commit['code']}-x 0000"
+        ),
         git_func=fake_push_git,
     )
     h.ok(
@@ -155,10 +169,52 @@ def run(h: Harness) -> None:
         githook.check_push(
             conn,
             repo=str(hook_repo),
+            refs_text=(
+                f"refs/heads/agent/{approved['code']}-x abc1234 "
+                f"refs/heads/agent/{approved['code']}-x 0000"
+            ),
+            git_func=fake_push_ok,
+        )["ok"]
+        and not githook.check_push(
+            conn,
+            repo=str(hook_repo),
             refs_text="refs/heads/main abc1234 refs/heads/main 0000",
             git_func=fake_push_ok,
         )["ok"],
-        "pre-push deja pasar tickets confirmados",
+        "pre-push deja pasar tickets confirmados y bloquea main",
+    )
+
+    integ = git_repo(Path(tmp) / "integ_repo")
+    githook.git("commit", "--allow-empty", "-m", "base", cwd=integ)
+    githook.git("branch", "develop", cwd=integ)
+    githook.git("commit", "--allow-empty", "-m", "avance", cwd=integ)
+    integ_warn = githook.check_commit_message(
+        conn,
+        f"arreglo {approved['code']}",
+        branch=f"agent/{approved['code']}-x",
+        repo=integ,
+    )
+    h.ok(
+        not githook.check_commit_message(
+            conn, f"arreglo {approved['code']}", branch="main"
+        )["ok"]
+        and githook.check_commit_message(
+            conn,
+            f"arreglo {approved['code']}",
+            branch=f"agent/{approved['code']}-x",
+        )["ok"]
+        and not githook.check_commit_message(
+            conn,
+            f"arreglo {approved['code']}",
+            branch=f"agent/{pending_commit['code']}-x",
+        )["ok"]
+        and githook.check_commit_message(
+            conn,
+            f"hotfix {approved['code']}",
+            branch=f"hotfix/{approved['code']}",
+        )["ok"]
+        and any("develop" in warning for warning in integ_warn["warnings"]),
+        "commit-msg exige rama por ticket y avisa de develop",
     )
     os.environ.pop("TICKETS_HOOK", None)
 

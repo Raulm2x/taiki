@@ -5,8 +5,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from ticketlib import guard, repo, scratch
+from ticketlib import commits, guard, repo, scratch
 from ticketlib.guard import policy as guard_policy
+from tests.seeds import git_repo
 from tests.support import Harness
 
 
@@ -48,6 +49,28 @@ def run(h: Harness) -> None:
         and not guard.path_guarded("/usr/share/noctalia/x")
         and guard.path_guarded(Path.home() / ".config/AGENTS.md"),
         "el guard ignora rutas fuera del HOME y efímeras",
+    )
+
+    main_repo = git_repo(Path(h.tmp) / "main_repo")
+    denied = guard.evaluate(
+        tool="bash",
+        session="ses_branch",
+        agent="worker",
+        command="git commit -m x",
+        cwd=str(main_repo),
+    )
+    h.ok(
+        guard_policy.protected_git("git push origin main", "agent/T-0001-x")
+        == "git push"
+        and guard_policy.protected_git("git merge develop", "main") == "git merge"
+        and guard_policy.protected_git("git commit -m x", "master") == "git commit"
+        and guard_policy.protected_git("git commit -m x", "agent/T-0001-x") is None
+        and not commits.branch_policy("agent/T-0001-x", "T-0002")["ok"]
+        and commits.branch_policy("agent/T-0001-x", "T-0001")["ok"]
+        and commits.branch_policy("hotfix/T-0001", "T-0001")["ok"]
+        and not denied["allow"]
+        and denied["action"] == "protected-branch",
+        "el guard protege main y exige la rama del ticket",
     )
 
     first = guard.evaluate(

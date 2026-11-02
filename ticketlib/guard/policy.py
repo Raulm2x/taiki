@@ -3,17 +3,26 @@
 from __future__ import annotations
 
 import os
+import shlex
 from pathlib import Path
 from typing import Any
 
 from .. import db, env, repo, scratch, workspace
+from ..commits import PROTECTED_BRANCHES, current_branch
 from ..domain import TicketError
 from ..util import lease_expired, normalize_agent, resolve_scope
-from .commands import command_touches_home, path_guarded, risky_git
+from .commands import (
+    command_touches_home,
+    path_guarded,
+    risky_git,
+    split_commands,
+)
 from .context import auto_title, find_active, find_pending, find_session_epic, session_chain
 from .hook import is_mutating
 
 DISABLED_VALUES = {"0", "off", "false", "no", "disabled"}
+# Subcomandos de git que escriben la historia o publican una rama.
+BRANCH_WRITES = {"commit", "merge", "push"}
 AUTO_ENV = "GUARD_AUTO"
 AUTO_MODES = {"off", "scratch", "ticket", "auto"}
 DEFAULT_AUTO = "scratch"
@@ -47,6 +56,65 @@ def _blocked(
         "session": session,
         "message": message,
     }
+
+
+def _git_call(segment: str) -> tuple[str, list[str]] | None:
+    """Subcomando y argumentos del primer ``git`` de un segmento."""
+    try:
+        tokens = shlex.split(segment, posix=True)
+    except ValueError:
+        tokens = segment.split()
+    if "git" not in tokens:
+        return None
+    rest = tokens[tokens.index("git") + 1 :]
+    while rest and rest[0].startswith("-"):
+        rest = rest[1:]
+    if not rest:
+        return None
+    return rest[0], rest[1:]
+
+
+def _push_refs(args: list[str]) -> list[str]:
+    """Ramas destino de un ``git push`` (sin remoto, opciones ni ``+``)."""
+    refs: list[str] = []
+    for arg in args:
+        if arg.startswith("-"):
+            continue
+        ref = arg.lstrip("+").rsplit(":", 1)[-1]
+        if ref.startswith("refs/heads/"):
+            ref = ref[len("refs/heads/") :]
+        refs.append(ref)
+    return refs
+
+
+def protected_git(command: str | None, branch: str | None = None) -> str | None:
+    """Etiqueta del comando git que escribe sobre ``main``/``master``.
+
+    Un agente nunca debe commitear, mergear ni publicar directamente en la
+    rama protegida: solo ``taiki release`` escribe ``main``. El push también se
+    bloquea cuando el refspec apunta a la rama protegida desde otra rama.
+    """
+    for segment in split_commands(command or ""):
+        call = _git_call(segment)
+        if call is None:
+            continue
+        sub, args = call
+        if sub not in BRANCH_WRITES:
+            continue
+        if branch in PROTECTED_BRANCHES:
+            return f"git {sub}"
+        if sub == "push" and any(
+            ref in PROTECTED_BRANCHES for ref in _push_refs(args)
+        ):
+            return "git push"
+    return None
+
+
+def _protected_message(action: str) -> str:
+    return (
+        f"Bloqueado: `{action}` sobre main/master. Solo `taiki release` escribe "
+        "main; trabaja en una rama agent/T-XXXX y usa `taiki worktree merge`."
+    )
 
 
 def auto_mode(
@@ -257,7 +325,12 @@ def evaluate(
         return _allowed("disabled", session)
     mutating = is_mutating(tool, path, command)
     risky = risky_git(command) if command else None
-    if not mutating and not risky:
+    branch = None
+    protected = None
+    if command and "git" in command:
+        branch = current_branch(cwd or ".")
+        protected = protected_git(command, branch)
+    if not mutating and not risky and not protected:
         return _allowed("skipped", session)
     if path and not path_guarded(path):
         return _allowed("outside", session)
@@ -278,6 +351,8 @@ def evaluate(
         return _allowed("no-db", session)
     if not target.exists():
         return _allowed("no-db", session)
+    if protected:
+        return _blocked("protected-branch", session, _protected_message(protected))
 
     base = session_base
     if path:
