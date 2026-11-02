@@ -49,6 +49,7 @@ from commands import (
     cmd_servers,
     cmd_scheme_uninstall,
     cmd_show,
+    cmd_skills,
     cmd_stats,
     cmd_status,
     cmd_transition,
@@ -557,6 +558,44 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--why", required=True)
     m.add_argument("--json", action="store_true")
     m.set_defaults(func=cmd_memory)
+
+    p = sub.add_parser(
+        "skills", help="Skills curadas de AutoSkills para el stack del proyecto"
+    )
+    skills_sub = p.add_subparsers(dest="skills_action", required=True)
+    p.set_defaults(func=cmd_skills)
+
+    s = skills_sub.add_parser(
+        "suggest", help="Sugiere skills curadas para el stack detectado"
+    )
+    s.add_argument("--limit", type=int, default=20)
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_skills)
+
+    s = skills_sub.add_parser(
+        "install", help="Instala una skill como playbook propuesto (solo usuario)"
+    )
+    s.add_argument("name", help="Nombre de la skill en el registro")
+    s.add_argument("--yes", action="store_true", help="Confirma sin preguntar")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_skills)
+
+    s = skills_sub.add_parser("list", help="Lista las skills instaladas")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_skills)
+
+    s = skills_sub.add_parser(
+        "remove", help="Archiva una skill instalada (nunca la borra)"
+    )
+    s.add_argument("name")
+    s.add_argument("--why")
+    s.set_defaults(func=cmd_skills)
+
+    s = skills_sub.add_parser(
+        "sync", help="Exporta los playbooks activos a .taiki/generated/skills"
+    )
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_skills)
 
     p = sub.add_parser(
         "remember", help="Atajo: guarda una preferencia activa del usuario"

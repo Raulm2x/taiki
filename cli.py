@@ -56,6 +56,7 @@ from commands import (  # noqa: F401
     cmd_scratch,
     cmd_servers,
     cmd_show,
+    cmd_skills,
     cmd_stats,
     cmd_status,
     cmd_transition,

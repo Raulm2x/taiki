@@ -37,7 +37,7 @@ from ticketlib.memory.store import list_memories
 from ticketlib.util import normalize_agent, now, parse_datetime, resolve_scope
 
 from . import memory as memory_handlers
-from . import schemas, validation
+from . import schemas, skills as skills_handlers, validation
 
 ToolHandler = Callable[
     [sqlite3.Connection, dict[str, Any], str | None, str],
@@ -1158,8 +1158,10 @@ TOOL_DISPATCH: dict[str, ToolHandler] = {
     spec.name: globals()[f"_handle_{spec.name}"]
     for spec in schemas.TOOL_SPECS
     if spec.name not in memory_handlers.HANDLERS
+    and spec.name not in skills_handlers.HANDLERS
 }
 TOOL_DISPATCH.update(memory_handlers.HANDLERS)
+TOOL_DISPATCH.update(skills_handlers.HANDLERS)
 MUTATING_TOOLS = frozenset(
     spec.name for spec in schemas.TOOL_SPECS if not spec.read_only
 )

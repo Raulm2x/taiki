@@ -40,6 +40,7 @@ from .brief import cmd_brief
 from .memory import cmd_memory, cmd_remember
 from .mcp import cmd_mcp_install, cmd_mcp_uninstall
 from .servers import cmd_servers
+from .skills import cmd_skills
 from .commit import cmd_commit, cmd_hook_check_index
 from .heartbeat import cmd_heartbeat
 from .release import cmd_release
@@ -93,6 +94,7 @@ __all__ = [
     "cmd_mcp_install",
     "cmd_mcp_uninstall",
     "cmd_servers",
+    "cmd_skills",
     "cmd_commit",
     "cmd_hook_check_index",
     "cmd_heartbeat",

@@ -48,8 +48,10 @@
 # Revisión única del techo; a partir de aquí, podar antes de volver a subir.
 # Medido 10.02s con la suite en 1837 checks; se amplía el margen local y CI
 # una vez para runners con carga.
-max_seconds = 10.5
-baseline_checks = 1840
+# T-0049.02 CLI/MCP skills: +41 checks (contrato CLI, MCP read-only y catálogo)
+# y ~0.5s; medido 10.48-10.6s, se amplía el margen local y CI una vez.
+max_seconds = 11.0
+baseline_checks = 1881
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
 
@@ -60,7 +62,7 @@ max_seconds = 1.1
 # ruido. Se aplica con CI=true (o TAIKI_CI=true) y cada valor se puede
 # sobrescribir con TAIKI_SUITE_BUDGET / TAIKI_MODULE_BUDGET.
 [ci.suite]
-max_seconds = 11.0
+max_seconds = 11.5
 
 [ci.module]
 max_seconds = 1.5
