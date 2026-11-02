@@ -6,11 +6,13 @@ Taiki puede destilar lo aprendido en un proyecto en **memorias pequeñas y
 revisables**. El objetivo no es guardar conversaciones: es recuperar contexto
 operativo al empezar una tarea sin arrastrar todo el historial.
 
-- **CLI**: `taiki memory`, `taiki remember`, `taiki brief`,
-  `taiki memory candidates` y `taiki memory review`.
-- **MCP**: `brief`, `memory_search`, `memory_write`, `memory_candidates`, el
-  recurso `taiki://brief`, la plantilla `taiki://memory/{code}`, el recurso
-  `taiki://memory/candidates` y los prompts `taiki:brief` y `taiki:curate`.
+- **CLI**: `taiki memory`, `taiki memory playbook`, `taiki remember`,
+  `taiki brief`, `taiki memory candidates` y `taiki memory review`.
+- **MCP**: `brief`, `memory_search`, `memory_write`, `memory_playbook`,
+  `memory_checklist`, `memory_candidates`, los recursos `taiki://brief`,
+  `taiki://playbook/{slug}` y `taiki://memory/candidates`, la plantilla
+  `taiki://memory/{code}` y los prompts `taiki:brief`, `taiki:playbook` y
+  `taiki:curate`.
 - **Datos**: viven en la misma base SQLite del proyecto. No hay memoria global.
 
 ## Qué es y qué no es
@@ -50,6 +52,7 @@ memorias de proyecto se crean con `taiki memory add` o con `memory_write`.
 | `decision` | Decisión tomada y su motivo. |
 | `workflow` | Secuencia operativa que funciona. |
 | `reference` | Enlace o ruta de consulta. |
+| `playbook` | Procedimiento completo, exportable como skill. |
 
 ### Estados
 
@@ -105,6 +108,8 @@ por prioridad y cabe en un presupuesto de caracteres:
 - `## Usuario`: preferencias del usuario;
 - `## Routing observado`: memorias de tipo `workflow` o marcadas con el kind
   secundario `routing`;
+- `## Playbooks`: índice compacto (slug, título, descripción y código) de los
+  playbooks activos; nunca incluye el cuerpo;
 - `## Pendientes`: propuestas que aún no se han aprobado;
 - `## Avisos`: entradas `stale` y cuántas se omitieron por presupuesto.
 
@@ -124,6 +129,57 @@ taiki brief --section project --budget 2000
 OpenCode, así que el agente lo recibe al empezar. `.taiki/generated/` está
 ignorado por Git; es un derivado, no una fuente de verdad. Tras aprobar
 memorias, refresca el artefacto con `taiki brief --write`.
+
+## Playbooks
+
+Un **playbook** es una memoria procedimental: el «cómo se hace» de una tarea
+repetible, con evidencia y ficheros de apoyo. Se guarda como una memoria de
+tipo `playbook` con clave `playbook:<slug>` y se exporta como skill compatible
+con agentskills/OpenCode.
+
+- **Slug**: `^[a-z0-9]+(-[a-z0-9]+)*$`, entre 1 y 64 caracteres. La clave es
+  `playbook:<slug>`.
+- **Metadatos**: nombre (`title`), descripción de hasta 240 caracteres,
+  contenido de hasta `max_playbook_chars` (12000 por defecto) y al menos una
+  evidencia. Las escrituras de agente respetan la política `balanced` y nacen
+  `proposed` hasta que el usuario las apruebe.
+- **Ficheros de apoyo**: `references/`, `scripts/`, `assets/` y `templates/`.
+  Son rutas relativas, sin `..` ni absolutos, y pasan por el mismo escaneo de
+  secretos e inyección que el resto de la memoria. Los scripts se guardan como
+  texto: Taiki **nunca los ejecuta**.
+- **Export**: `.taiki/generated/skills/<slug>/SKILL.md` con frontmatter
+  `name`, `description` y `metadata.taiki` (`code` y `evidence`), más los
+  apoyos en sus rutas. La escritura es atómica e idempotente; reexportar un
+  playbook retira los apoyos que ya no declaró.
+- **Limpieza**: `export --all` solo exporta playbooks `active` y retira del
+  directorio de skills los de playbooks archivados o sustituidos; no toca
+  directorios ajenos.
+- **Sync con OpenCode**: `taiki mcp install` llama al export y añade
+  `.taiki/generated/skills` a la lista `skills` de `opencode.json` (idempotente);
+  `taiki mcp uninstall` retira esa entrada sin tocar el resto.
+- **Carga progresiva**: el brief solo muestra el índice; el cuerpo y los apoyos
+  se cargan bajo demanda con `memory_playbook(slug)` o el recurso
+  `taiki://playbook/{slug}`. El revisor puede pedir un apoyo concreto con
+  `path` en vez de descargar el skill completo.
+
+```bash
+taiki memory playbook add --slug revisar-pr \
+  --title "Revisar PR" \
+  --description "Checklist para revisar un pull request." \
+  --content "1. Lee el diff. 2. Ejecuta los gates." \
+  --support references/checklist.md \
+  --evidence T-0047.05
+
+taiki memory playbook list                 # activos y propuestos
+taiki memory playbook list --all           # incluye archivados y sustituidos
+taiki memory playbook show revisar-pr      # metadatos, cuerpo, apoyos y evidencia
+taiki memory playbook export revisar-pr    # un skill
+taiki memory playbook export --all         # todos los activos
+taiki memory playbook archive revisar-pr --why "Ya no aplica"
+```
+
+Un playbook archivado deja de exportarse y sale del índice del brief; el
+histórico sigue en el ledger. `memory playbook archive` nunca borra.
 
 ## Candidatos y revisión
 
@@ -207,8 +263,38 @@ fallos transitorios, secretos ni prohibiciones amplias.
 El conductor lanza el curator en background **cada 5 tickets verificados o
 cerrados**, o antes si `memory_candidates(mode=list)` acumula **3 o más
 candidatos**. Después publica las propuestas pendientes; la aprobación sigue
-siendo exclusiva del usuario. P2 no incluye curado automático, playbooks ni
-métricas de impacto: el curator solo propone y el usuario decide.
+siendo exclusiva del usuario. El curator solo propone y el usuario decide; P3
+añade playbooks, routing advice y checklist, pero no curado automático ni
+métricas de impacto.
+
+## Routing y checklist
+
+### Routing advice
+
+`routing_advice(conn, kind, paths, config)` observa el histórico cerrado y
+devuelve el perfil que mejor resolvió tareas de ese `kind`/rutas:
+
+- exige al menos `candidate_routing_min_samples` (5 por defecto);
+- calcula la **tasa de primer intento** (`iterations <= 1` y no cancelado), la
+  **cota inferior de Wilson** y los **intentos medios**;
+- devuelve `profile`, `variant`, `steps`, `sample`, `first_pass`,
+  `confidence`, `avg_attempts` y `reason`, o `None` si no hay muestra;
+- con `paths` solo usa tickets que tocan esas rutas; no extrapola de rutas
+  ajenas.
+
+El MCP incluye este consejo en `agents` (cuando se pasa `kind`) y en
+`schedule` (una entrada por tarea lista) dentro de `advice`. Es una sugerencia
+con muestra y confianza: **nunca cambia la configuración ni lanza agentes**.
+El conductor decide si aplica el perfil, la variante o los steps.
+
+### Checklist del reviewer
+
+`memory_checklist(kind, paths, limit)` devuelve hasta 5 pitfalls y
+convenciones `active` que casan con el cambio. `kind` es el **tipo de memoria**
+(`pitfall` o `convention`), no el tipo de ticket; `paths` filtra por rutas y
+cada entrada es compacta, con evidencia y motivo. El reviewer pide el checklist
+antes de revisar, completa con `memory_search` y propone un `pitfall` si
+detecta un fallo recurrente, sin aprobarlo.
 
 ## Presupuesto
 
@@ -221,11 +307,16 @@ El presupuesto es un techo por scope, no un objetivo. Las entradas `active`,
 | `user_budget_chars` | 1200 | Total del scope `user`. |
 | `brief_budget_chars` | 4500 | Tamaño del brief renderizado. |
 | `max_entry_chars` | 600 | Título y contenido de una entrada. |
-| `max_playbook_chars` | 12000 | Ficheros de referencia asociados. |
+| `max_playbook_chars` | 12000 | Cuerpo de un playbook y cada fichero de apoyo. |
+| `playbook_index_chars` | 400 | Índice de playbooks dentro del brief. |
 
 Si una escritura deja el scope por encima del límite, falla con el total usado,
 el límite y las entradas que ocupan sitio; no recorta en silencio. Para liberar
 espacio, archiva (`rm`) o edita entradas.
+
+Los playbooks no consumen el presupuesto del scope: se cargan de forma
+progresiva y solo su índice consume `playbook_index_chars`. El cuerpo y los
+apoyos quedan bajo demanda.
 
 Prioridad de selección para el brief: fijadas (`pin`) primero, luego scope
 `user`, después confianza, recencia y número de usos.
@@ -290,6 +381,18 @@ taiki memory add --scope project --kind convention \
   --content "La documentación vive en docs/ y se enlaza desde docs/README.md." \
   --evidence T-0045.05 --evidence 3bea4b9 --pin
 
+# Playbooks (procedimiento exportable como skill)
+taiki memory playbook add --slug revisar-pr \
+  --title "Revisar PR" \
+  --description "Checklist para revisar un pull request." \
+  --content "1. Lee el diff. 2. Ejecuta los gates." \
+  --support references/checklist.md \
+  --evidence T-0047.05
+taiki memory playbook list
+taiki memory playbook show revisar-pr
+taiki memory playbook export --all
+taiki memory playbook archive revisar-pr --why "Ya no aplica"
+
 # Consulta
 taiki memory list
 taiki memory list --kind pitfall --status active
@@ -324,18 +427,22 @@ borrado destructivo.
 |---|---|
 | `brief` | Brief operativo; `section`, `budget` y `write`. |
 | `memory_search` | Busca por texto y filtra por `scope`, `kind`, `status`, `paths` o `kinds`; devuelve snippets salvo `include_content=true`. |
-| `memory_write` | Aplica operaciones `add`, `patch`, `remove`, `supersede` o `feedback` con evidencia y la política del workspace; devuelve un recibo con presupuesto y avisos. |
+| `memory_write` | Aplica operaciones `add`, `patch`, `remove`, `supersede` o `feedback` con evidencia y la política del workspace; `kind=playbook` acepta `description` y `files [{path, content}]`; devuelve un recibo con presupuesto y avisos. |
+| `memory_playbook` | Solo lectura: carga un playbook por `slug` (título, descripción, cuerpo, apoyos y evidencia); `path` carga un apoyo concreto. |
+| `memory_checklist` | Solo lectura: pitfalls y convenciones activos por tipo de memoria y rutas para el reviewer; `limit` de 1 a 20. |
 | `memory_candidates` | Solo lectura: `mode=list` lista candidatos; `mode=review` devuelve el paquete del curator. Acepta `since`, `kind` y `limit`. |
 
-Recursos: `taiki://brief` (Markdown), `taiki://memory/{code}` (JSON) y
-`taiki://memory/candidates` (JSON).
-Prompts: `taiki:brief`, que aplica el brief al empezar el trabajo, y
+Recursos: `taiki://brief` (Markdown), `taiki://memory/{code}` (JSON),
+`taiki://playbook/{slug}` (JSON) y `taiki://memory/candidates` (JSON).
+Prompts: `taiki:brief`, que aplica el brief al empezar el trabajo;
+`taiki:playbook`, que carga un procedimiento y recuerda revisar sus pitfalls; y
 `taiki:curate`, que guía la revisión de candidatos sin aprobar ni editar.
 
 El recibo de `claim` puede incluir `hints`: memorias activas relevantes por
-rutas, tipo o etiquetas. El recibo de `complete` puede incluir `learning`: una
-sugerencia para proponer una lección tras rework o reapertura. Son ayudas, no
-órdenes.
+rutas, tipo o etiquetas, más hasta dos playbooks relevantes con `slug`,
+`title`, `description` y `reason` para cargarlos con `memory_playbook`. El
+recibo de `complete` puede incluir `learning`: una sugerencia para proponer una
+lección tras rework o reapertura. Son ayudas, no órdenes.
 
 ## Configuración
 
@@ -352,6 +459,7 @@ al arrancar para que una errata no se ignore en silencio.
     "brief_budget_chars": 4500,
     "max_entry_chars": 600,
     "max_playbook_chars": 12000,
+    "playbook_index_chars": 400,
     "stale_after_days": 45,
     "archive_after_days": 120,
     "candidate_min_evidence": 2,
@@ -372,27 +480,34 @@ al arrancar para que una errata no se ignore en silencio.
 - `stale_after_days` y `archive_after_days`: umbrales validados de caducidad;
   deben cumplir `archive_after_days >= stale_after_days` y `0` los desactiva.
   P1 no ejecuta una caducidad automática.
-- `max_playbook_chars`: límite de los ficheros de referencia internos; P1 no
-  los expone por CLI ni MCP.
+- `max_playbook_chars`: límite del cuerpo de un playbook y de cada fichero de
+  apoyo; los playbooks no consumen el presupuesto del scope.
+- `playbook_index_chars`: tamaño máximo del índice de playbooks en el brief;
+  si no cabe, la sección se omite o se recorta por entradas completas.
 - `candidate_*`: controlan el motor de candidatos (evidencia mínima, ventana,
   muestras de routing, máximo y similitud); se validan al arrancar y se aplican
   en `memory candidates` y `memory_candidates`.
-- `instructions_sync` y `skills_sync` se validan como parte del bloque.
+- `instructions_sync` y `skills_sync` se validan como parte del bloque;
+  `skills_sync=false` evita exportar playbooks al sincronizar OpenCode.
 
 ## Flujo recomendado
 
 1. Al empezar, aplica el brief y busca solo el contexto que falte con
    `memory_search`.
-2. Trabaja con el ticket como fuente de verdad.
-3. Si hubo corrección, rework o un workaround no obvio, propón una lección con
+2. Si el ticket encaja con un playbook del índice, cárgalo con
+   `memory_playbook(slug)` y sus apoyos solo cuando los necesites.
+3. Trabaja con el ticket como fuente de verdad.
+4. Si hubo corrección, rework o un workaround no obvio, propón una lección con
    evidencia. No guardes fallos transitorios, credenciales, narrativas ni
    prohibiciones amplias.
-4. Cada 5 tickets verificados/cerrados o con 3 o más candidatos, revisa
+5. Antes de revisar, pide `memory_checklist(kind="pitfall"|"convention",
+   paths=[...])` y completa con `memory_search` de pitfalls.
+6. Cada 5 tickets verificados/cerrados o con 3 o más candidatos, revisa
    `taiki memory candidates` y lanza el curator con
    `taiki memory review --write` (o `memory_candidates(mode=review)` por MCP).
    El curator propone como máximo 5 memorias; no aprueba ni edita código.
-5. El usuario revisa con `taiki memory pending --diff` y aprueba o rechaza.
-6. Refresca el brief con `taiki brief --write` si quieres actualizar el
+7. El usuario revisa con `taiki memory pending --diff` y aprueba o rechaza.
+8. Refresca el brief con `taiki brief --write` si quieres actualizar el
    artefacto inyectado.
 
 ## FAQ

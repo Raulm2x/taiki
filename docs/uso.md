@@ -112,6 +112,18 @@ taiki memory review --write            # .taiki/generated/memory-review.json
 taiki brief                            # brief operativo
 taiki brief --write                    # .taiki/generated/brief.md
 taiki brief --section project --budget 2000
+
+taiki memory playbook add --slug revisar-pr \
+  --title "Revisar PR" \
+  --description "Checklist para revisar un pull request." \
+  --content "1. Lee el diff. 2. Ejecuta los gates." \
+  --support references/checklist.md \
+  --evidence T-0047.05
+taiki memory playbook list             # activos y propuestos
+taiki memory playbook list --all       # incluye archivados
+taiki memory playbook show revisar-pr
+taiki memory playbook export --all     # .taiki/generated/skills/<slug>/
+taiki memory playbook archive revisar-pr --why "Ya no aplica"
 ```
 
 `memory candidates` agrupa rework, rechazos, bloqueos, cierres costosos,
@@ -130,6 +142,34 @@ las propuestas pendientes. La aprobación sigue siendo del usuario.
 proyecto para que el agente lo reciba al empezar. Una memoria de origen agente
 exige evidencia y no puede aprobarse desde un agente: `approve` y `reject`
 requieren el actor `usuario`.
+
+Los **playbooks** son procedimientos completos con evidencia y ficheros de
+apoyo (`references/`, `scripts/`, `assets/` o `templates/`). `add` acepta
+`--content` o `--file` para el cuerpo y `--support <ruta>` repetible; el apoyo
+se lee del disco y se guarda con su nombre. `export` escribe
+`.taiki/generated/skills/<slug>/SKILL.md` y sus apoyos; `--all` exporta los
+activos y retira los skills de playbooks archivados. `archive` exige `--why` y
+nunca borra. Los scripts se guardan como texto y no se ejecutan.
+
+El brief muestra solo el índice (slug, título, descripción y código). El cuerpo
+se carga bajo demanda con `memory_playbook(slug)` o el recurso
+`taiki://playbook/{slug}`. `taiki mcp install` sincroniza
+`.taiki/generated/skills` con la lista `skills` de OpenCode y `uninstall` la
+retira.
+
+### Routing advice y checklist
+
+`agents(kind=...)` y `schedule` incluyen un bloque `advice`: el perfil que
+mejor resolvió tareas de ese tipo y rutas en el histórico cerrado. Solo aparece
+con al menos 5 muestras e incluye `sample`, `first_pass`, `confidence`
+(cota inferior de Wilson), `avg_attempts`, `variant`, `steps` y `reason`. Es
+una sugerencia: **no cambia la configuración ni lanza agentes**.
+
+Antes de revisar, el reviewer pide
+`memory_checklist(kind="pitfall"|"convention", paths=[...], limit=5)`. Ahí
+`kind` es el tipo de memoria, no el tipo de ticket; cada entrada es compacta y
+lleva evidencia. Completa con `memory_search` de pitfalls y, si detecta un
+fallo recurrente, propone un `pitfall` sin aprobarlo.
 
 ### Épicas y tareas
 

@@ -52,6 +52,8 @@ taiki memory review --write    # paquete para el subagente curator
 taiki memory pending           # propuestas de los agentes
 taiki memory pending --diff    # cambio frente a la memoria sustituida
 taiki memory approve M-0001    # solo el usuario
+taiki memory playbook list     # playbooks exportables como skills
+taiki memory playbook export --all   # .taiki/generated/skills
 ```
 
 Las memorias llevan evidencia (ticket, commit, archivo…), respetan un
@@ -59,7 +61,13 @@ presupuesto de caracteres y se archivan en vez de borrarse. El motor de
 candidatos es determinista: no usa LLM ni escribe memoria. El subagente
 **curator** lee el paquete de revisión y propone como máximo 5 memorias; el
 conductor lo lanza cada 5 tickets cerrados o con 3+ candidatos. Los agentes
-proponen y **solo el usuario aprueba**. Detalle: [Memoria](docs/memoria.md).
+proponen y **solo el usuario aprueba**.
+
+Los **playbooks** guardan procedimientos completos con evidencia y ficheros de
+apoyo, se exportan como skills de OpenCode (`.taiki/generated/skills`) y se
+cargan bajo demanda; el brief solo muestra su índice. `schedule` y `agents`
+incluyen un routing advice con muestra y confianza que nunca cambia la
+configuración solo. Detalle: [Memoria](docs/memoria.md).
 
 ## Estados
 

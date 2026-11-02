@@ -77,6 +77,23 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    Una dependencia solo se cierra al `verificado`/`confirmado`, no al
    `completado`.
 
+## Playbooks, routing y revisión
+
+- **Playbooks**: procedimientos con evidencia y apoyos en `references/`,
+  `scripts/`, `assets/` o `templates/`. Se gestionan con
+  `taiki memory playbook add|list|show|export|archive`, se exportan a
+  `.taiki/generated/skills/<slug>/SKILL.md` y se cargan bajo demanda con
+  `memory_playbook(slug)` o `taiki://playbook/{slug}`. El brief solo muestra
+  su índice. No ejecutes los scripts de apoyo.
+- **Routing advice**: `schedule` y `agents(kind=...)` incluyen `advice` con el
+  perfil observado, variante, steps, muestra, first-pass, Wilson e intentos
+  medios (mínimo 5 muestras). Es una sugerencia: nunca cambia la configuración
+  ni lanza agentes; decide el conductor.
+- **Reviewer**: antes de revisar usa
+  `memory_checklist(kind="pitfall"|"convention", paths=[...])`, donde `kind` es
+  el tipo de memoria y no el tipo de ticket, y completa con `memory_search` de
+  pitfalls. Si detecta un fallo recurrente, propone un pitfall sin aprobarlo.
+
 ## Agentes en paralelo
 
 Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
@@ -160,6 +177,8 @@ taiki memory pending --diff # diff frente a la memoria sustituida
 taiki memory candidates     # candidatos deterministas del histórico
 taiki memory review --write # paquete para el curator
 taiki memory approve M-0001 # solo el usuario
+taiki memory playbook list  # playbooks y su export
+taiki memory playbook export --all  # .taiki/generated/skills
 taiki tui                   # dashboard del proyecto
 taiki mcp install           # MCP de OpenCode solo para este proyecto
 taiki mcp uninstall         # lo retira y desactiva el guard

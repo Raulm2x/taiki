@@ -2,11 +2,12 @@
 
 ## Unreleased
 
-Tickets: T-0045.01–T-0045.05, T-0046.01–T-0046.05
+Tickets: T-0045.01–T-0045.05, T-0046.01–T-0046.05, T-0047.01–T-0047.06
 
 ### feat
 - feat: memoria semántica P0/P1 con brief, búsqueda, propuestas y aprobación (T-0045)
 - feat: candidatos deterministas, CLI/MCP de revisión y subagente curator P2 (T-0046)
+- feat: playbooks, skills, routing advice y checklist del reviewer P3 (T-0047)
 
 ## v0.2.0 — 2026-11-02
 
