@@ -8,6 +8,7 @@ from .candidates import (
     wilson_lower,
 )
 from .config import DEFAULT_MEMORY_CONFIG, load_memory_config, validate_memory_config
+from .curate import curate
 from .models import (
     MEMORY_KINDS,
     MEMORY_SCOPES,
@@ -57,6 +58,7 @@ __all__ = [
     "archive_playbook",
     "brief_index",
     "create_playbook",
+    "curate",
     "export_all",
     "export_playbook",
     "feedback_memory",
