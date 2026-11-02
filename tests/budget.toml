@@ -11,8 +11,11 @@
 # P2 integración (T-0046.07): 1411 checks reales; consolidación de ramas
 # paralelas; podar antes de volver a subir. La suite combinada ronda 7.2-7.5s;
 # CI conserva su presupuesto propio de 8.0s.
+# P3 núcleo (T-0047.01): +68 comprobaciones del nuevo test_memory_playbooks
+# (slug, validación, apoyos, export/idempotencia, brief_index y presupuesto).
+# Revisión única del techo por el módulo nuevo; a partir de aquí, podar.
 max_seconds = 7.5
-baseline_checks = 1411
+baseline_checks = 1479
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
 

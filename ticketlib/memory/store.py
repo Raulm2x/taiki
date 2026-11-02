@@ -26,8 +26,11 @@ from .models import (
     MEMORY_SCOPES,
     MEMORY_SOURCES,
     MEMORY_STATUSES,
+    PLAYBOOK_DESCRIPTION_CHARS,
+    PLAYBOOK_KIND,
     default_key,
     normalize_fingerprint,
+    validate_playbook_key,
 )
 
 __all__ = [
@@ -91,17 +94,27 @@ def add_memory(
             )
 
     title_text = core.clean_text(title, "título", int(cfg["max_entry_chars"]))
+    description_limit = (
+        PLAYBOOK_DESCRIPTION_CHARS
+        if kind == PLAYBOOK_KIND
+        else int(cfg["max_entry_chars"])
+    )
+    content_limit = (
+        int(cfg["max_playbook_chars"])
+        if kind == PLAYBOOK_KIND
+        else int(cfg["max_entry_chars"])
+    )
     description_text = core.clean_text(
         description,
         "descripción",
-        int(cfg["max_entry_chars"]),
+        description_limit,
         required=False,
     )
-    content_text = core.clean_text(
-        content, "contenido", int(cfg["max_entry_chars"])
-    )
+    content_text = core.clean_text(content, "contenido", content_limit)
     level = core.confidence(confidence)
     key_text = core.clean_key(str(key or "").strip() or default_key(title_text))
+    if kind == PLAYBOOK_KIND:
+        key_text = validate_playbook_key(key_text)
     actor = (
         core.clean_short(actor, "actor", max_chars=200)
         if actor is not None

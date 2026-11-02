@@ -12,7 +12,13 @@ from ..store.common import UNSET
 from ..util import check_enum, now
 from . import core
 from . import ledger as ledger_lib
-from .models import MEMORY_KINDS, normalize_fingerprint
+from .models import (
+    MEMORY_KINDS,
+    PLAYBOOK_DESCRIPTION_CHARS,
+    PLAYBOOK_KIND,
+    normalize_fingerprint,
+    validate_playbook_key,
+)
 
 
 def patch_memory(
@@ -27,6 +33,7 @@ def patch_memory(
     confidence: Any = UNSET,
     paths: Any = UNSET,
     kinds: Any = UNSET,
+    files: Any = UNSET,
     actor: str | None = None,
     session_id: str | None = None,
     reason: str | None = None,
@@ -38,21 +45,34 @@ def patch_memory(
     current = dict(row)
     scope = str(current["scope"])
     updates: dict[str, Any] = {}
+    final_kind = str(kind) if kind is not UNSET else str(current["kind"])
+    if kind is not UNSET:
+        check_enum(kind, MEMORY_KINDS, "kind")
 
     if title is not UNSET:
         updates["title"] = core.clean_text(
             title, "título", int(cfg["max_entry_chars"])
         )
     if description is not UNSET:
+        description_limit = (
+            PLAYBOOK_DESCRIPTION_CHARS
+            if final_kind == PLAYBOOK_KIND
+            else int(cfg["max_entry_chars"])
+        )
         updates["description"] = core.clean_text(
             description,
             "descripción",
-            int(cfg["max_entry_chars"]),
+            description_limit,
             required=False,
         )
     if content is not UNSET:
+        content_limit = (
+            int(cfg["max_playbook_chars"])
+            if final_kind == PLAYBOOK_KIND
+            else int(cfg["max_entry_chars"])
+        )
         updates["content"] = core.clean_text(
-            content, "contenido", int(cfg["max_entry_chars"])
+            content, "contenido", content_limit
         )
     if key is not UNSET:
         key_text = str(key or "").strip()
@@ -60,8 +80,11 @@ def patch_memory(
             raise ValidationError("La clave de la memoria no puede quedar vacía")
         updates["key"] = core.clean_key(key_text)
     if kind is not UNSET:
-        check_enum(kind, MEMORY_KINDS, "kind")
         updates["kind"] = kind
+    if final_kind == PLAYBOOK_KIND:
+        updates["key"] = validate_playbook_key(
+            updates.get("key", current["key"])
+        )
     if confidence is not UNSET:
         updates["confidence"] = core.confidence(confidence)
     if paths is not UNSET:
@@ -74,8 +97,9 @@ def patch_memory(
         updates["kinds"] = (
             json.dumps(kind_list, ensure_ascii=False) if kind_list else None
         )
+    file_rows = None if files is UNSET else core.clean_files(files, cfg)
 
-    if not updates:
+    if not updates and file_rows is None:
         return core.receipt(conn, row, cfg)
 
     final_title = updates.get("title", current["title"])
@@ -112,6 +136,12 @@ def patch_memory(
 
         before = ledger_lib.snapshot(conn, int(current["id"]))
         conn.execute(f"UPDATE memories SET {columns} WHERE id = ?", values)
+        if file_rows is not None:
+            conn.execute(
+                "DELETE FROM memory_files WHERE memory_id = ?",
+                (int(current["id"]),),
+            )
+            core.insert_files(conn, int(current["id"]), file_rows)
         after = ledger_lib.snapshot(conn, int(current["id"]))
         ledger_lib.record(
             conn,

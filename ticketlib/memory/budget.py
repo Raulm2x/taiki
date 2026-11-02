@@ -6,7 +6,7 @@ from typing import Any, Iterable
 
 from ..domain import ValidationError
 from ..util import parse_datetime
-from .models import BUDGET_STATUSES
+from .models import BUDGET_STATUSES, PLAYBOOK_KIND
 
 
 class BudgetError(ValidationError):
@@ -70,11 +70,17 @@ def priority_key(memory: dict[str, Any]) -> tuple[Any, ...]:
 
 
 def budget_entries(memories: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Entradas que consumen presupuesto, ordenadas por prioridad."""
+    """Entradas que consumen presupuesto, ordenadas por prioridad.
+
+    Los playbooks quedan fuera: se cargan de forma progresiva (índice en el
+    brief, contenido bajo demanda) y su cuerpo no debe desplazar a las
+    memorias destiladas ni romper el techo del scope.
+    """
     entries = [
         memory
         for memory in memories
         if memory.get("status") in BUDGET_STATUSES
+        and memory.get("kind") != PLAYBOOK_KIND
     ]
     return sorted(entries, key=priority_key)
 

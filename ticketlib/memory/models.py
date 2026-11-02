@@ -6,7 +6,14 @@ import hashlib
 import re
 import unicodedata
 
+from ..domain import ValidationError
+
 MEMORY_SCOPES = ("project", "user")
+PLAYBOOK_KIND = "playbook"
+PLAYBOOK_KEY_PREFIX = "playbook:"
+PLAYBOOK_DESCRIPTION_CHARS = 240
+PLAYBOOK_SLUG_MAX_CHARS = 64
+PLAYBOOK_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 MEMORY_KINDS = (
     "fact",
     "preference",
@@ -15,6 +22,7 @@ MEMORY_KINDS = (
     "decision",
     "workflow",
     "reference",
+    PLAYBOOK_KIND,
 )
 MEMORY_STATUSES = ("proposed", "active", "stale", "archived", "superseded")
 MEMORY_SOURCES = ("user", "agent", "derived", "import")
@@ -72,6 +80,51 @@ def is_negative_rule(*parts: object) -> bool:
     """¿El texto expresa una prohibición amplia que requiere aprobación?"""
     text = " ".join(str(part or "") for part in parts)
     return bool(NEGATIVE_RULE_RE.search(text))
+
+
+def validate_playbook_slug(value: object) -> str:
+    """Valida el slug de un playbook (minúsculas, números y guiones)."""
+    slug = str(value if value is not None else "").strip()
+    if not slug:
+        raise ValidationError("El slug de un playbook es obligatorio")
+    if len(slug) > PLAYBOOK_SLUG_MAX_CHARS:
+        raise ValidationError(
+            f"Slug de playbook demasiado largo: {len(slug)} caracteres "
+            f"(máximo {PLAYBOOK_SLUG_MAX_CHARS})."
+        )
+    if not PLAYBOOK_SLUG_RE.fullmatch(slug):
+        raise ValidationError(
+            f"Slug de playbook inválido: {slug!r}. Usa minúsculas, números y "
+            "guiones simples, por ejemplo 'revisar-pr'."
+        )
+    return slug
+
+
+def playbook_key(slug: object) -> str:
+    """Clave estable de un playbook a partir de su slug."""
+    return PLAYBOOK_KEY_PREFIX + validate_playbook_slug(slug)
+
+
+def parse_playbook_key(key: object) -> str | None:
+    """Devuelve el slug de una clave ``playbook:<slug>`` o ``None``."""
+    text = str(key if key is not None else "")
+    if not text.startswith(PLAYBOOK_KEY_PREFIX):
+        return None
+    try:
+        return validate_playbook_slug(text[len(PLAYBOOK_KEY_PREFIX):])
+    except ValidationError:
+        return None
+
+
+def validate_playbook_key(key: object) -> str:
+    """Valida la clave completa de un playbook."""
+    text = str(key if key is not None else "").strip()
+    if parse_playbook_key(text) is None:
+        raise ValidationError(
+            f"Clave de playbook inválida: {text!r}. "
+            "Debe ser playbook:<slug> con el mismo formato que el slug."
+        )
+    return text
 
 
 def evidence_kind_for_ref(ref: str) -> str:
