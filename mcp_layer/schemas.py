@@ -1031,6 +1031,29 @@ TOOL_SPECS = [
         },
         read_only=True,
     ),
+    ToolSpec(
+        "memory_stats",
+        "Estadísticas e impacto de la memoria. mode=stats devuelve conteos "
+        "por estado/scope/kind, presupuesto, propuestas, uso y routing; "
+        "mode=impact devuelve tendencias de cierres, intentos, lead time y "
+        "verificación en days; mode=all devuelve ambos. Solo lectura.",
+        {
+            "mode": {
+                "type": "string",
+                "enum": ["stats", "impact", "all"],
+                "default": "all",
+                "description": "stats, impact o ambos",
+            },
+            "days": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3650,
+                "default": 30,
+                "description": "Ventana de impacto en días",
+            },
+        },
+        read_only=True,
+    ),
 ]
 
 RESOURCES = [

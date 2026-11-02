@@ -29,8 +29,12 @@ from ticketlib import (
 )
 from ticketlib.guard.context import find_active, session_chain
 from ticketlib.memory.advice import routing_advice
+from ticketlib.memory.config import load_memory_config
+from ticketlib.memory.models import PLAYBOOK_KIND
+from ticketlib.memory.playbooks import SKILL_FILE, SKILLS_RELATIVE, slug_of
+from ticketlib.memory.stats import stats as memory_stats
 from ticketlib.memory.store import list_memories
-from ticketlib.util import normalize_agent, parse_datetime, resolve_scope
+from ticketlib.util import normalize_agent, now, parse_datetime, resolve_scope
 
 from . import memory as memory_handlers
 from . import schemas, validation
@@ -956,6 +960,121 @@ def _handle_scratch_drop(
     )
 
 
+def _memory_health(conn: sqlite3.Connection, root: Path) -> dict[str, Any]:
+    """Integridad, cola y artefactos de la memoria; sin bloquear por avisos."""
+    cfg = load_memory_config()
+    issues: list[str] = []
+    db_ok = True
+    required = (
+        "memories",
+        "memory_evidence",
+        "memory_files",
+        "memory_usage",
+        "memory_ledger",
+        "memory_blobs",
+        "memories_fts",
+    )
+    missing: list[str] = []
+    for table in required:
+        try:
+            conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
+        except sqlite3.DatabaseError:
+            missing.append(table)
+    if missing:
+        db_ok = False
+        issues.append(
+            "error: faltan tablas de memoria o no son legibles: "
+            + ", ".join(missing)
+        )
+
+    entries = pending = stale = 0
+    budget: dict[str, Any] = {}
+    if db_ok:
+        try:
+            data = memory_stats(conn, cfg)
+        except sqlite3.DatabaseError as exc:
+            db_ok = False
+            issues.append(f"error: no se pudieron leer las métricas de memoria: {exc}")
+        else:
+            entries = int(data["total"])
+            pending = int(data["by_status"]["proposed"])
+            stale = int(data["by_status"]["stale"])
+            budget = data["budget"]
+            try:
+                fts_entries = int(
+                    conn.execute("SELECT COUNT(*) FROM memories_fts").fetchone()[0]
+                )
+            except sqlite3.DatabaseError as exc:
+                db_ok = False
+                issues.append(f"error: FTS de memoria ilegible: {exc}")
+            else:
+                if fts_entries != entries:
+                    db_ok = False
+                    issues.append(
+                        "error: FTS de memoria desincronizado: "
+                        f"{fts_entries} indizadas frente a {entries} filas"
+                    )
+
+    if pending:
+        base = parse_datetime(now())
+        old: list[str] = []
+        if base is not None:
+            for memory in list_memories(conn, status="proposed", limit=1000):
+                created = parse_datetime(
+                    memory.get("created_at") or memory.get("updated_at")
+                )
+                if created is not None and created <= base - timedelta(days=7):
+                    old.append(str(memory.get("code") or ""))
+        if old:
+            issues.append(
+                f"warning: {len(old)} propuesta(s) de memoria llevan más de 7 "
+                f"días sin aprobar: {', '.join(old[:5])}"
+            )
+    if stale:
+        issues.append(
+            f"warning: {stale} memoria(s) en stale; ejecuta taiki memory curate"
+        )
+    for scope in ("project", "user"):
+        item = budget.get(scope) or {}
+        free = int(item.get("chars_to_free") or 0)
+        if free > 0:
+            issues.append(
+                f"warning: presupuesto de memoria {scope} excedido en "
+                f"{free} caracteres"
+            )
+
+    brief = Path(root) / ".taiki" / "generated" / "brief.md"
+    missing_skills: list[str] = []
+    if cfg["skills_sync"]:
+        for memory in list_memories(
+            conn, kind=PLAYBOOK_KIND, status="active", limit=1000
+        ):
+            slug = slug_of(memory)
+            if slug is None:
+                continue
+            target = Path(root) / SKILLS_RELATIVE / slug / SKILL_FILE
+            if not target.is_file():
+                missing_skills.append(slug)
+    generated_synced = brief.is_file() and not missing_skills
+    if not brief.is_file():
+        issues.append("warning: falta .taiki/generated/brief.md; usa taiki brief --write")
+    if missing_skills:
+        issues.append(
+            "warning: faltan skills generados: " + ", ".join(sorted(missing_skills))
+        )
+
+    return {
+        "enabled": bool(cfg["enabled"]),
+        "db_ok": db_ok,
+        "entries": entries,
+        "pending": pending,
+        "stale": stale,
+        "budget": budget,
+        "generated_synced": generated_synced,
+        "issues": issues,
+    }
+
+
 def _handle_health(
     conn: sqlite3.Connection,
     args: dict[str, Any],
@@ -989,8 +1108,15 @@ def _handle_health(
             f"{len(old)} propuestas de memoria llevan más de 7 días sin "
             f"aprobar: {', '.join(old[:5])}; revisa con taiki memory pending"
         )
+    memory = _memory_health(conn, root)
     data: dict[str, Any] = {
-        "ok": not stale and not overlaps and not unresolved and not dirty_files,
+        "ok": (
+            not stale
+            and not overlaps
+            and not unresolved
+            and not dirty_files
+            and memory["db_ok"]
+        ),
         "mcp": runtime.status(conn),
         "hooks": githook.hooks_installed(root),
         "stale_claims": stale,
@@ -1009,6 +1135,7 @@ def _handle_health(
             "old": old,
             "warnings": memory_warnings,
         },
+        "memory": memory,
     }
     if memory_warnings:
         data["warnings"] = memory_warnings

@@ -24,6 +24,8 @@ from ticketlib.memory.models import PLAYBOOK_KIND
 from ticketlib.memory.playbooks import get_playbook, slug_of
 from ticketlib.memory.review import review_packet
 from ticketlib.memory.security import validate_memory_path
+from ticketlib.memory.stats import impact as memory_impact
+from ticketlib.memory.stats import stats as memory_stats
 from ticketlib.memory.store import (
     add_memory,
     get_memory,
@@ -549,6 +551,30 @@ def _since(value: Any) -> str | None:
     return text
 
 
+def handle_memory_stats(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    _session: str | None = None,
+    _actor: str = "agente",
+) -> dict[str, Any]:
+    """Estadísticas e impacto de memoria, siempre de solo lectura."""
+    mode = str(args.get("mode") or "all")
+    days = int(args.get("days") or 30)
+    cfg = _config()
+    if mode == "stats":
+        return {"stats": memory_stats(conn, cfg)}
+    if mode == "impact":
+        return {"impact": memory_impact(conn, cfg, days=days)}
+    if mode == "all":
+        return {
+            "stats": memory_stats(conn, cfg),
+            "impact": memory_impact(conn, cfg, days=days),
+        }
+    raise domain.ValidationError(
+        f"mode inválido: {mode!r} (usa stats, impact o all)"
+    )
+
+
 def handle_memory_candidates(
     conn: sqlite3.Connection,
     args: dict[str, Any],
@@ -581,6 +607,7 @@ HANDLERS = {
     "memory_checklist": handle_memory_checklist,
     "memory_playbook": handle_memory_playbook,
     "memory_search": handle_memory_search,
+    "memory_stats": handle_memory_stats,
     "memory_write": handle_memory_write,
 }
 

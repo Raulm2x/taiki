@@ -33,10 +33,13 @@
 # T-0048.02 CLI de curado/stats/impact: +35 checks y dos módulos nuevos
 # (contrato JSON/humano, dry-run, stats e impact). Medido 8.62-8.80s; se sube
 # el margen local una vez y CI pasa a 9.5s para runners compartidos.
+# T-0048.03 MCP memory_stats/health: +22 checks y dos módulos nuevos
+# (solo lectura, modos, health OK/pendiente/stale/presupuesto/artefactos/roto).
+# Medido 9.17s en la primera pasada; se amplía el margen local una vez.
 # Medido 8.03-8.28s con la suite en 1594 checks; se sube el margen local (CI
 # conserva 8.8s) para no fallar por ruido de carga del host.
-max_seconds = 9.0
-baseline_checks = 1670
+max_seconds = 9.3
+baseline_checks = 1692
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
 
@@ -47,7 +50,7 @@ max_seconds = 0.9
 # ruido. Se aplica con CI=true (o TAIKI_CI=true) y cada valor se puede
 # sobrescribir con TAIKI_SUITE_BUDGET / TAIKI_MODULE_BUDGET.
 [ci.suite]
-max_seconds = 9.5
+max_seconds = 10.0
 
 [ci.module]
 max_seconds = 1.5
