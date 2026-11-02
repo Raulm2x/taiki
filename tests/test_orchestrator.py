@@ -74,8 +74,9 @@ def run(h: Harness) -> None:
         and _rule(conductor, "subagent", "worker-low") == "allow"
         and _rule(conductor, "subagent", "worker-medium") == "allow"
         and _rule(conductor, "subagent", "worker-high") == "allow"
-        and _rule(conductor, "subagent", "reviewer") == "allow",
-        "el conductor no edita y solo lanza perfiles worker/reviewer",
+        and _rule(conductor, "subagent", "reviewer") == "allow"
+        and _rule(conductor, "subagent", "merger") == "allow",
+        "el conductor no edita y solo lanza perfiles worker/reviewer/merger",
     )
     h.ok(
         _rule(conductor, "shell", "taiki confirm*") == "deny"
@@ -1062,6 +1063,7 @@ def run(h: Harness) -> None:
             "worker-medium.md",
             "worker-high.md",
             "reviewer.md",
+            "merger.md",
         )
     }
     h.ok(
@@ -1069,7 +1071,8 @@ def run(h: Harness) -> None:
             _rule(meta, "shell", "uvx *") == "deny"
             and _rule(meta, "shell", "uvx ruff *") == "allow"
             and _rule(meta, "shell", "uvx mypy *") == "allow"
-            for meta in profiles.values()
+            for name, meta in profiles.items()
+            if name != "merger.md"
         ),
         "uvx solo permite ruff y mypy en todos los perfiles",
     )
@@ -1097,8 +1100,9 @@ def run(h: Harness) -> None:
         all(
             _rule(meta, "shell", pattern) == "allow"
             and _rule(meta, "shell", "git show*") == "allow"
-            for meta in profiles.values()
+            for name, meta in profiles.items()
             for pattern in inspect_rules
+            if name != "merger.md" or pattern != "sed *"
         )
         and all(
             _rule(profiles[name], "shell", "mkdir -p docs*") == "allow"
@@ -1148,14 +1152,16 @@ def run(h: Harness) -> None:
             _rule(profiles[name], "shell", "rm *") == "deny"
             and _rule(profiles[name], "shell", "git rm *") == "deny"
             and _rule(profiles[name], "shell", "rm -f *") is None
-            for name in ("conductor.md", "reviewer.md")
+            for name in ("conductor.md", "reviewer.md", "merger.md")
         )
-        and _rule(profiles["conductor.md"], "shell", "taiki worktree merge*")
-        == "allow"
+        and all(
+            _rule(profiles[name], "shell", "taiki worktree merge*") == "allow"
+            for name in ("conductor.md", "merger.md")
+        )
         and all(
             _rule(meta, "shell", "taiki worktree merge*") == "deny"
             for name, meta in profiles.items()
-            if name != "conductor.md"
+            if name not in ("conductor.md", "merger.md")
         )
         and _rule(profiles["conductor.md"], "shell", "*") == "allow"
         and all(
@@ -1166,6 +1172,7 @@ def run(h: Harness) -> None:
                 "worker-medium.md",
                 "worker-high.md",
                 "reviewer.md",
+                "merger.md",
             )
         )
         and all(
@@ -1176,6 +1183,7 @@ def run(h: Harness) -> None:
                 "worker-low.md",
                 "worker-medium.md",
                 "worker-high.md",
+                "merger.md",
             )
             for pattern in (
                 "bash *",
@@ -1214,6 +1222,21 @@ def run(h: Harness) -> None:
         )
         and _rule(profiles["reviewer.md"], "shell", "*") == "deny",
         "permisos de shell: inspección sin prompt, denies críticos, borrado y fallback",
+    )
+    merger = profiles["merger.md"]
+    h.ok(
+        _rule(merger, "shell", "taiki worktree merge*") == "allow"
+        and _rule(merger, "shell", "taiki worktree list*") == "allow"
+        and _rule(merger, "shell", "timeout * python3 tests/*") == "allow"
+        and _rule(merger, "shell", "sed -n *") == "allow"
+        and _rule(merger, "shell", "sed *") is None
+        and _rule(merger, "shell", "taiki worktree merge * --force*") == "deny"
+        and _rule(merger, "shell", "taiki worktree merge * --no-tests*") == "deny"
+        and _rule(merger, "shell", "taiki worktree remove*") == "deny"
+        and _rule(merger, "shell", "taiki commit*") == "deny"
+        and _rule(merger, "shell", "git add*") == "deny"
+        and _rule(merger, "shell", "taiki confirm*") == "deny",
+        "el merger mergea confirmados y deniega commit, add, confirm y bypass",
     )
     h.ok(
         all(

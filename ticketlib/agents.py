@@ -74,7 +74,7 @@ AGENT_COMMANDS: dict[str, tuple[str, ...]] = {
 # Cada agente declara qué tipos de trabajo hace, cuántos writers admite en
 # paralelo, qué modelo/variante usa, sus steps y su coste relativo. Solo hay
 # perfiles que existen como archivo en ``.opencode/agents/``: el conductor
-# únicamente puede lanzar ``worker*`` y ``reviewer``.
+# únicamente puede lanzar ``worker*``, ``reviewer``, ``curator`` y ``merger``.
 FALLBACK_AGENT = "worker"
 DEFAULT_MAX_PARALLEL = 2
 CAPABILITY_KEYS = (
@@ -179,6 +179,15 @@ DEFAULT_AGENTS: dict[str, dict[str, Any]] = {
         "steps": 20,
     },
     "curator": {
+        "model": "opencode-go/deepseek-v4.1-flash",
+        "variant": "high",
+        "strengths": [],
+        "max_parallel": 1,
+        "paths": [],
+        "cost": 1.0,
+        "steps": 24,
+    },
+    "merger": {
         "model": "opencode-go/deepseek-v4.1-flash",
         "variant": "high",
         "strengths": [],

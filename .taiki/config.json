@@ -62,6 +62,14 @@
       "max_parallel": 1,
       "cost": 1.0,
       "steps": 24
+    },
+    "merger": {
+      "model": "opencode-go/deepseek-v4.1-flash",
+      "variant": "high",
+      "strengths": [],
+      "max_parallel": 1,
+      "cost": 1.0,
+      "steps": 24
     }
   },
   "orchestrator": {

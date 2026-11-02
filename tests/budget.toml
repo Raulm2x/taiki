@@ -53,8 +53,12 @@
 # T-0055 pantalla Memoria de la TUI: +59 comprobaciones del nuevo
 # test_tui_memory y ~0.1s; medido 10.88s con 1942 checks. Revisión única del
 # techo por el módulo nuevo; a partir de aquí, podar antes de volver a subir.
+# T-0056 subagente merger: +20 comprobaciones (nuevo test_merger_agent y la
+# aserción de permisos en test_orchestrator); el tiempo se mantiene (10.88s),
+# así que no se amplía el margen. Revisión única del techo; a partir de aquí,
+# podar antes de volver a subir.
 max_seconds = 11.6
-baseline_checks = 1942
+baseline_checks = 1962
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
 

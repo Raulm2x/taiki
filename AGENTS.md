@@ -139,6 +139,13 @@ Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
   los no confirmados y `--force` es el bypass consciente. La confirmación sigue
   siendo del usuario: `taiki confirm` retira solo los worktrees limpios y
   mergeados (`--keep-worktrees` para conservarlos).
+- **El merger integra solo tickets confirmados.** Tras la confirmación del
+  usuario, el conductor le pasa una lista ordenada por dependencias y el merger
+  ejecuta `taiki worktree merge T-XXXX --delete` uno a uno, comprobando antes el
+  estado `confirmado`, el worktree limpio y la rama `agent/T-XXXX-*`. Se detiene
+  en el primer fallo (sin `--force` ni `--no-tests`), no edita, no confirma, no
+  hace push y no borra; el conductor revisa su informe y corre la verificación
+  final.
 - **Ramas**: el trabajo diario vive en `agent/T-XXXX-*` y se integra con
   `--ff-only` en `develop`; `main` solo recibe releases unificadas y
   etiquetadas. Ciclo, release, rollback y versionado:
