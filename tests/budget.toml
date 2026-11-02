@@ -43,10 +43,13 @@
 # test_hygiene 0.96s por el catálogo creciente. Se ajusta el margen local y
 # el de módulo una vez.
 # T-0048.05 status/next: +6 checks de integración; medido 9.65s.
-# Medido 8.03-8.28s con la suite en 1594 checks; se sube el margen local (CI
-# conserva 8.8s) para no fallar por ruido de carga del host.
-max_seconds = 10.0
-baseline_checks = 1745
+# T-0049.01 núcleo autoskills: +92 checks en tres módulos nuevos
+# (registro/hashes/caché, detección+catálogo e instalación verificada).
+# Revisión única del techo; a partir de aquí, podar antes de volver a subir.
+# Medido 10.02s con la suite en 1837 checks; se amplía el margen local y CI
+# una vez para runners con carga.
+max_seconds = 10.5
+baseline_checks = 1840
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
 
@@ -57,7 +60,7 @@ max_seconds = 1.1
 # ruido. Se aplica con CI=true (o TAIKI_CI=true) y cada valor se puede
 # sobrescribir con TAIKI_SUITE_BUDGET / TAIKI_MODULE_BUDGET.
 [ci.suite]
-max_seconds = 10.5
+max_seconds = 11.0
 
 [ci.module]
 max_seconds = 1.5
