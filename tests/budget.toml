@@ -11,8 +11,11 @@
 # P2 (T-0046.01): +2 módulos de candidatos y paquete de revisión (+80
 # comprobaciones). El techo se sube solo para cubrir el contrato nuevo; podar
 # antes de volver a subir.
-max_seconds = 6.5
-baseline_checks = 1323
+# P2 (T-0046.02): +1 módulo de contrato CLI (+39 comprobaciones). La suite
+# queda en 6.65s reales; el techo local sube a 7.0s para cubrir el módulo nuevo
+# (CI conserva su presupuesto propio de 8.0s).
+max_seconds = 7.0
+baseline_checks = 1362
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
 

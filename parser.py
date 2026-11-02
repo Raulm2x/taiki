@@ -348,6 +348,36 @@ def build_parser() -> argparse.ArgumentParser:
 
     m = memory_sub.add_parser("pending", help="Propuestas pendientes")
     m.add_argument("--limit", type=int, default=50)
+    m.add_argument(
+        "--diff",
+        action="store_true",
+        help="Resume el cambio frente a la memoria sustituida",
+    )
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser(
+        "candidates", help="Candidatos de aprendizaje del histórico"
+    )
+    m.add_argument("--since", help="Ventana temporal: 90d o una fecha ISO")
+    m.add_argument(
+        "--kind", choices=MEMORY_KINDS, help="Filtra por tipo de memoria sugerida"
+    )
+    m.add_argument("--limit", type=int, default=None)
+    m.add_argument(
+        "--all", action="store_true", help="Ignora candidate_max y lista todo"
+    )
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser(
+        "review", help="Paquete de revisión para el curator"
+    )
+    m.add_argument(
+        "--write",
+        action="store_true",
+        help="Guarda el paquete en .taiki/generated/memory-review.json",
+    )
     m.add_argument("--json", action="store_true")
     m.set_defaults(func=cmd_memory)
 
