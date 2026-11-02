@@ -17,8 +17,10 @@
 # P3 CLI (T-0047.02): +32 comprobaciones de contrato del CLI de playbooks y
 # +0.07s de suite por el nuevo módulo (medido 7.57s; CI conserva 8.0s).
 # P3 MCP/sync (T-0047.03): +16 comprobaciones de contrato MCP y sync de skills.
-max_seconds = 7.8
-baseline_checks = 1527
+# P3 advice/checklist (T-0047.04): +30 comprobaciones y ~0.2s; medido 7.66-8.04s
+# según carga, así que sube el margen local y el de CI (8.3s) una vez.
+max_seconds = 8.1
+baseline_checks = 1557
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
 
@@ -29,7 +31,7 @@ max_seconds = 0.9
 # ruido. Se aplica con CI=true (o TAIKI_CI=true) y cada valor se puede
 # sobrescribir con TAIKI_SUITE_BUDGET / TAIKI_MODULE_BUDGET.
 [ci.suite]
-max_seconds = 8.0
+max_seconds = 8.3
 
 [ci.module]
 max_seconds = 1.5

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from ticketlib import domain, workspace
+from ticketlib.memory.advice import checklist
 from ticketlib.memory.brief import render_brief, write_brief
 from ticketlib.memory.candidates import generate_candidates
 from ticketlib.memory.config import load_memory_config
@@ -250,6 +251,25 @@ def handle_memory_search(
     return {"memories": memories, "count": len(memories), "total": total}
 
 
+def handle_memory_checklist(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    _session: str | None = None,
+    _actor: str = "agente",
+) -> dict[str, Any]:
+    """Checklist compacto de pitfalls y convenciones para el reviewer."""
+    kind = args.get("kind")
+    paths = [str(item) for item in args.get("paths") or []]
+    limit = args.get("limit", 5)
+    items = checklist(conn, kind, paths, _config(), int(limit))
+    return {
+        "kind": kind,
+        "paths": paths,
+        "count": len(items),
+        "checklist": items,
+    }
+
+
 def handle_memory_playbook(
     conn: sqlite3.Connection,
     args: dict[str, Any],
@@ -479,6 +499,7 @@ def handle_memory_candidates(
 HANDLERS = {
     "brief": handle_brief,
     "memory_candidates": handle_memory_candidates,
+    "memory_checklist": handle_memory_checklist,
     "memory_playbook": handle_memory_playbook,
     "memory_search": handle_memory_search,
     "memory_write": handle_memory_write,

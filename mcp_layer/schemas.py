@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ticketlib.domain import KINDS, LINK_KINDS, PRIORITIES, STATUSES
+from ticketlib.memory.advice import CHECKLIST_KINDS
 from ticketlib.memory.models import (
     MEMORY_KINDS,
     MEMORY_SCOPES,
@@ -33,6 +34,7 @@ Memoria:
 - Si una memoria resulta incorrecta, usa patch, supersede o feedback en memory_write.
 - Antes de cerrar una épica o al acumular >=3 candidatos, usa memory_candidates(mode=review) y propone lecciones; la aprobación es del usuario.
 - Los playbooks se cargan bajo demanda con memory_playbook(slug) o el recurso taiki://playbook/{slug}; el brief solo muestra su índice.
+- Antes de revisar un cambio, usa memory_checklist(kind, paths) para obtener pitfalls y convenciones acotados.
 
 Estados: nuevo → pendiente → en_progreso → completado → verificado → confirmado.
 "verificado" lo marca el conductor con evidencia (tests/CI/revisión) y sigue
@@ -802,6 +804,33 @@ TOOL_SPECS = [
                 "type": "boolean",
                 "default": False,
                 "description": "Devuelve el contenido completo en vez de snippet",
+            },
+        },
+        read_only=True,
+    ),
+    ToolSpec(
+        "memory_checklist",
+        "Checklist acotado de pitfalls y convenciones activos para revisar un "
+        "cambio. Filtra por tipo de memoria (pitfall o convention) y rutas; "
+        "cada entrada es compacta y lleva evidencia. Solo lectura.",
+        {
+            "kind": {
+                "type": "string",
+                "enum": list(CHECKLIST_KINDS),
+                "description": "Tipo de memoria: pitfall o convention",
+            },
+            "paths": {
+                "type": "array",
+                "items": {"type": "string", "maxLength": 500},
+                "maxItems": 100,
+                "description": "Rutas que toca el cambio",
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20,
+                "default": 5,
+                "description": "Máximo de entradas del checklist",
             },
         },
         read_only=True,

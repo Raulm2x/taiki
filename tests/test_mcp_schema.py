@@ -18,7 +18,7 @@ def run(h: Harness) -> None:
         "heartbeat", "checkpoint", "retry", "reassign", "schedule",
         "worktree_create", "worktree_list", "promote", "scratch_drop",
         "health", "brief", "memory_search", "memory_write",
-        "memory_playbook", "memory_candidates",
+        "memory_playbook", "memory_checklist", "memory_candidates",
     }
     catalog_names = {tool["name"] for tool in schemas.TOOLS}
     h.eq(
@@ -36,7 +36,8 @@ def run(h: Harness) -> None:
         {
             "list", "get", "stats", "next", "agents", "schedule",
             "status", "whoami", "worktree_list", "health", "brief",
-            "memory_search", "memory_playbook", "memory_candidates",
+            "memory_search", "memory_playbook", "memory_checklist",
+            "memory_candidates",
         },
         "readOnlyHint solo se anota en las herramientas de lectura",
     )

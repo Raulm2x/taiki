@@ -27,6 +27,7 @@ from ticketlib import (
     worktree as worktree_lib,
 )
 from ticketlib.guard.context import find_active, session_chain
+from ticketlib.memory.advice import routing_advice
 from ticketlib.util import normalize_agent, resolve_scope
 
 from . import memory as memory_handlers
@@ -705,6 +706,9 @@ def _handle_agents(
     if kind:
         data["recommended"] = agents_lib.recommend(kind, config)
         data["routing"] = agents_lib.assign(kind, config)
+        data["advice"] = routing_advice(conn, kind, [], config)
+    else:
+        data["advice"] = None
     return data
 
 
@@ -803,12 +807,25 @@ def _handle_schedule(
 ) -> dict[str, Any]:
     info = workspace.resolve()
     config = workspace.load_config(info["workspace"]) if info["workspace"] else {}
-    return orchestrator_lib.parallel_plan(
+    plan = orchestrator_lib.parallel_plan(
         conn,
         project=args.get("project"),
         limit=args.get("limit"),
         config=config,
     )
+    codes = [
+        *plan["parallel"],
+        *(item["code"] for item in plan["serial"]),
+        *plan["deferred"],
+    ]
+    advice: dict[str, Any] = {}
+    for code in dict.fromkeys(codes):
+        ticket = repo.get_ticket(conn, code)
+        advice[code] = routing_advice(
+            conn, ticket.get("kind"), ticket.get("paths") or [], config
+        )
+    plan["advice"] = advice
+    return plan
 
 
 def _handle_heartbeat(
