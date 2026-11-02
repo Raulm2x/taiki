@@ -68,10 +68,10 @@ def git_repo(path: Path) -> Path:
     """Inicializa un repositorio Git con identidad mínima."""
     path.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "init", "-q", str(path)], check=True)
-    subprocess.run(
-        ["git", "-C", str(path), "config", "user.email", "t@t"], check=True
-    )
-    subprocess.run(["git", "-C", str(path), "config", "user.name", "t"], check=True)
+    # La identidad va directa a .git/config: dos `git config` por repo son
+    # dos procesos de más y la suite crea varios repos.
+    with (path / ".git" / "config").open("a", encoding="utf-8") as handle:
+        handle.write("\n[user]\n\tname = t\n\temail = t@t\n")
     return path
 
 

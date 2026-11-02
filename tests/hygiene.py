@@ -134,11 +134,11 @@ def quarantine_problem(
     return None
 
 
-def unused_imports(path: Path) -> list[str]:
+def unused_imports(path: Path, tree: ast.AST | None = None) -> list[str]:
     """Nombres importados que el módulo no usa."""
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    module = tree if tree is not None else ast.parse(path.read_text(encoding="utf-8"))
     imported: dict[str, int] = {}
-    for node in ast.walk(tree):
+    for node in ast.walk(module):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 imported[(alias.asname or alias.name).split(".")[0]] = node.lineno
@@ -146,7 +146,7 @@ def unused_imports(path: Path) -> list[str]:
             for alias in node.names:
                 if alias.name != "*":
                     imported[alias.asname or alias.name] = node.lineno
-    used = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    used = {node.id for node in ast.walk(module) if isinstance(node, ast.Name)}
     return sorted(
         name
         for name in imported
@@ -210,7 +210,7 @@ def scan_source(name: str, path: Path | None = None) -> ModuleSource:
     text = target.read_text(encoding="utf-8")
     tree = ast.parse(text)
     source = ModuleSource(name=name, lines=len(text.splitlines()))
-    source.unused_imports = unused_imports(target)
+    source.unused_imports = unused_imports(target, tree)
     source.unsafe_skips = unsafe_skips(tree)
     for node in ast.walk(tree):
         if (

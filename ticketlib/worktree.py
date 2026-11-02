@@ -425,6 +425,7 @@ def merge(
     target: str | Path,
     *,
     test_cmd: list[str] | None = None,
+    test_env: dict[str, str] | None = None,
     delete: bool = False,
 ) -> dict[str, Any]:
     """Rebase + tests + merge ff-only en la rama de integración.
@@ -435,7 +436,10 @@ def merge(
     worktree y el checkout principal limpios; si el rebase o los tests fallan,
     no se mergea nada. ``test_cmd`` lo construye el CLI con el gate estricto
     de la suite (``--strict-budget``), de modo que un merge que rompa el
-    presupuesto global de comprobaciones o de tiempo falla aquí.
+    presupuesto global de comprobaciones o de tiempo falla aquí. ``test_env``
+    permite ejecutar ese gate con el perfil de CI (``CI=true``): el merge es
+    una integración y no una pasada de desarrollo, así que no debe fallar por
+    el ruido del reloj local.
     """
     main = Path(main).expanduser().resolve()
     path = Path(target).expanduser().resolve()
@@ -467,7 +471,11 @@ def merge(
     tested = False
     if test_cmd:
         result = subprocess.run(
-            test_cmd, cwd=str(path), capture_output=True, text=True
+            test_cmd,
+            cwd=str(path),
+            capture_output=True,
+            text=True,
+            env=test_env,
         )
         tested = True
         if result.returncode != 0:
