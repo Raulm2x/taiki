@@ -108,7 +108,11 @@ def _tool_calls(h: Harness) -> None:
     h.eq(before, 0, "el tool no escribe memorias al listar")
     h.eq(after, 0, "el tool sigue sin escribir memorias")
     h.eq(set(listed), {"count", "candidates"}, "el envelope de list es estable")
-    h.eq(listed["count"], len(listed["candidates"]), "el count coincide")
+    h.eq(
+        listed["count"],
+        len(listed["candidates"]),
+        "el count de candidatos MCP coincide",
+    )
     rework_item = next(
         item for item in listed["candidates"] if item["rule"] == "rework"
     )
