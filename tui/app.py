@@ -11,7 +11,7 @@ from ticketlib import db, domain, repo, status as status_lib, workspace
 from ticketlib.domain import OPEN_STATUSES, PRIORITIES, STATUSES
 from ticketlib.domain import KINDS
 
-from . import actions_ui, heatmap
+from . import actions_ui, heatmap, memory
 from .data import DataSource
 from .state import (
     DEFAULT_SCOPE,
@@ -561,6 +561,13 @@ def main_loop(
                 state.notify(f"Error: {exc}", "error")
             else:
                 status_modal(stdscr, status_lib.lines(data))
+        elif key == ord("Y"):
+            try:
+                memory.run(stdscr)
+            except (domain.TicketError, sqlite3.Error) as exc:
+                state.notify(f"Error: {exc}", "error")
+            finally:
+                dirty = True
         elif key == ord("m"):
             actions_ui.run_action(stdscr, state, state.current(), refresh)
         elif key == ord("o"):

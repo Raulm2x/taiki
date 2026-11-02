@@ -448,6 +448,21 @@ enlazar un commit y abrir la sesión del agente.
   reabrir), comentar, copiar código al portapapeles, enlazar commit y abrir
   sesión. Las acciones destructivas piden confirmación y todo pasa por el
   dominio (mismas validaciones y eventos que el CLI).
+- **Pantalla de memoria** (`Y`): propuestas, entradas activas, stale,
+  playbooks y presupuesto sin salir del dashboard. La cabecera muestra los
+  conteos por estado, el presupuesto de `project`/`user`, los playbooks y los
+  umbrales de frescura/archivo. `h/l` (o `←/→`) ciclan los filtros
+  `propuestas → activas → stale → playbooks → todas`; `j/k`, `PgUp/PgDn` y
+  `g/G` recorren la lista, `tab` cambia el foco al detalle y `?` muestra la
+  ayuda. La lista muestra código, estado, tipo y título; el detalle añade
+  contenido, evidencia, uso, presupuesto y ficheros del playbook.
+  Las acciones son explícitas del usuario: `a` aprueba una propuesta, `x` la
+  rechaza con un motivo, `p` fija o desfija en el brief, `r` archiva con
+  confirmación y `o` exporta el playbook a `.taiki/generated/skills/<slug>/`.
+  Aprobar y rechazar nunca son automáticos y ninguna acción borra: archivar
+  conserva el histórico en el ledger. Si la memoria está deshabilitada o
+  vacía, la pantalla lo avisa y sigue siendo navegable. `q`, `Esc` o `Y`
+  vuelven a la lista de tickets.
 - **Auto-refresh**: cada 2 s (`--refresh N`, `0` lo desactiva) se consulta una
   huella barata (`MAX(updated_at)`, `MAX(events.id)`) y solo se recarga si
   cambió; cada 20 s se revalidan las sesiones. `R` pausa/activa y la barra

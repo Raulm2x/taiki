@@ -51,6 +51,7 @@ HELP_LINES = (
     "  s                 Ciclar ámbito: atención → todos → completados → abiertos → cerrados",
     "  M                 Alternar vista de cerrados (vuelve al ámbito anterior)",
     "  S                 Estado de sesiones, claims y solapamientos",
+    "  Y                 Pantalla de memoria: propuestas, playbooks y presupuesto",
     "  O                 Cambiar el orden: código / prioridad",
     "  n                 Cargar más tickets (al llegar al final)",
     "  r                 Recargar desde la base de datos",

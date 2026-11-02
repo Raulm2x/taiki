@@ -50,8 +50,11 @@
 # una vez para runners con carga.
 # T-0049.02 CLI/MCP skills: +41 checks (contrato CLI, MCP read-only y catálogo)
 # y ~0.5s; medido 10.48-10.6s, se amplía el margen local y CI una vez.
-max_seconds = 11.0
-baseline_checks = 1881
+# T-0055 pantalla Memoria de la TUI: +59 comprobaciones del nuevo
+# test_tui_memory y ~0.1s; medido 10.88s con 1942 checks. Revisión única del
+# techo por el módulo nuevo; a partir de aquí, podar antes de volver a subir.
+max_seconds = 11.6
+baseline_checks = 1942
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
 
@@ -62,7 +65,7 @@ max_seconds = 1.1
 # ruido. Se aplica con CI=true (o TAIKI_CI=true) y cada valor se puede
 # sobrescribir con TAIKI_SUITE_BUDGET / TAIKI_MODULE_BUDGET.
 [ci.suite]
-max_seconds = 11.5
+max_seconds = 12.0
 
 [ci.module]
 max_seconds = 1.5

@@ -88,6 +88,11 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
   `.taiki/generated/skills/<slug>/SKILL.md` y se cargan bajo demanda con
   `memory_playbook(slug)` o `taiki://playbook/{slug}`. El brief solo muestra
   su índice. No ejecutes los scripts de apoyo.
+- **Pantalla Memoria (TUI)**: la tecla `Y` abre propuestas, activas, stale,
+  playbooks y presupuesto. `a` aprueba y `x` rechaza (con motivo) propuestas:
+  son acciones del usuario, nunca automáticas. `p` fija o desfija, `r` archiva
+  con confirmación y `o` exporta el playbook. Nunca borra: archivar conserva
+  el histórico en el ledger.
 - **Skills curadas (AutoSkills)**: `taiki skills suggest|list` son de lectura;
   `install` y `remove` son **solo del usuario/CLI** y no se exponen por MCP
   (allí solo existe `skills_suggest`, read-only). `install` descarga con
