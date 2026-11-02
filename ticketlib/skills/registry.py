@@ -42,7 +42,9 @@ Fetch = Callable[[str], bytes | str]
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _SHA = re.compile(r"^[0-9a-f]{7,40}$")
-_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+# El registro de AutoSkills publica nombres camelCase (p. ej. ``emailAndPassword``):
+# se aceptan letras, dígitos, punto, guion y guion bajo, sin separadores de ruta.
+_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def default_fetch(url: str) -> bytes:

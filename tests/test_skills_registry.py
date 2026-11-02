@@ -89,6 +89,18 @@ def _validation(h: Harness) -> None:
         "el bundleHash válido se conserva",
     )
 
+    camel = _registry()
+    camel["skills"] = {
+        "emailAndPassword": _entry(),
+        "twoFactor": _entry(),
+        "react.19_hooks-v2": _entry(),
+    }
+    h.eq(
+        sorted(validate_registry(camel)["skills"]),
+        ["emailAndPassword", "react.19_hooks-v2", "twoFactor"],
+        "el registro acepta nombres camelCase con puntos, guiones y guiones bajos",
+    )
+
     def bad_sha() -> dict:
         data = _registry()
         data["skills"][SKILL]["sha256"]["SKILL.md"] = "no-es-sha"
@@ -123,7 +135,14 @@ def _validation(h: Harness) -> None:
             lambda: validate_registry([]),
             lambda: validate_registry({"version": 0, "skills": {}}),
             lambda: validate_registry({"version": 1, "skills": {}}),
-            lambda: validate_registry({"version": 1, "skills": {"Mayus": _entry()}}),
+            lambda: validate_registry(
+                {"version": 1, "skills": {"con espacio": _entry()}}
+            ),
+            lambda: validate_registry({"version": 1, "skills": {"a/b": _entry()}}),
+            lambda: validate_registry({"version": 1, "skills": {"-empieza": _entry()}}),
+            lambda: validate_registry(
+                {"version": 1, "skills": {"a" * 101: _entry()}}
+            ),
             bad_sha,
             missing_hash,
             bundle_bad,
