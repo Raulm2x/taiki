@@ -16,8 +16,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from ticketlib import workspace
+from ticketlib import db, workspace
 from ticketlib.domain import TicketError
+from ticketlib.memory.sync import (
+    install_opencode_memory,
+    sync_generated,
+    uninstall_opencode_memory,
+)
 
 MCP_NAME = "taiki"
 LEGACY_NAME = "tickets"
@@ -154,6 +159,20 @@ def cmd_mcp_install(args: argparse.Namespace) -> int:
 
     result = install_opencode(root)
     print(f"OpenCode: MCP `{MCP_NAME}` instalado en {result['detail']}")
+
+    conn = db.connect()
+    try:
+        synced = sync_generated(root, conn, config)
+    finally:
+        conn.close()
+    memory = install_opencode_memory(root)
+    print(
+        f"OpenCode: brief generado en {synced['brief_path']} "
+        f"({synced['chars']} chars, v{synced['version']})"
+    )
+    if memory["added"]:
+        print(f"OpenCode: brief añadido a instructions en {memory['path']}")
+
     if getattr(args, "antigravity", False):
         install_antigravity()
         print(
@@ -177,6 +196,9 @@ def cmd_mcp_uninstall(args: argparse.Namespace) -> int:
         print(f"OpenCode: MCP `{MCP_NAME}` retirado de {removed}")
     else:
         print("OpenCode: no había un MCP de Taiki en este proyecto")
+    memory = uninstall_opencode_memory(info["workspace"].parent)
+    if memory is not None:
+        print(f"OpenCode: brief retirado de instructions en {memory}")
     if getattr(args, "antigravity", False):
         binary = shutil.which("agy")
         if binary:

@@ -4,3 +4,4 @@ taiki.db-wal
 taiki.db-shm
 local.json
 backups/
+generated/
