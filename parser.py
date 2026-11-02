@@ -390,6 +390,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Guarda el paquete en .taiki/generated/memory-review.json",
     )
+    m.add_argument(
+        "--run-command",
+        action="store_true",
+        help="Ejecuta memory.review_command y deja sus salidas como propuestas",
+    )
+    m.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Con --run-command, valida sin crear propuestas",
+    )
     m.add_argument("--json", action="store_true")
     m.set_defaults(func=cmd_memory)
 

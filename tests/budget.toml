@@ -39,15 +39,19 @@
 # T-0048.04 export/import/rollback: +33 checks y dos módulos nuevos
 # (checksum, secretos, roundtrip, estrategias, dry-run, rollback y CLI).
 # Medido 9.35s; se amplía el margen local y CI para runners compartidos.
+# T-0048.05 auto-curado/review_command: +14 checks; medido 9.79s y
+# test_hygiene 0.96s por el catálogo creciente. Se ajusta el margen local y
+# el de módulo una vez.
+# T-0048.05 status/next: +6 checks de integración; medido 9.65s.
 # Medido 8.03-8.28s con la suite en 1594 checks; se sube el margen local (CI
 # conserva 8.8s) para no fallar por ruido de carga del host.
-max_seconds = 9.6
-baseline_checks = 1725
+max_seconds = 10.0
+baseline_checks = 1745
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
 
 [module]
-max_seconds = 0.9
+max_seconds = 1.1
 
 # Perfil de CI: los runners compartidos son más lentos y no deben fallar por
 # ruido. Se aplica con CI=true (o TAIKI_CI=true) y cada valor se puede

@@ -19,7 +19,6 @@ from ticketlib.memory import (
     archive_memory,
     archive_playbook,
     create_playbook,
-    curate,
     export_all,
     export_playbook,
     generate_candidates,
@@ -34,12 +33,14 @@ from ticketlib.memory import (
 )
 from ticketlib.memory import budget as memory_budget
 from ticketlib.memory import core as memory_core
+from ticketlib.memory.curate import auto_curate
 from ticketlib.memory.export import (
     export_snapshot,
     import_snapshot,
     rollback as memory_rollback,
 )
 from ticketlib.memory.playbooks import slug_of
+from ticketlib.memory.review import run_review_command
 from ticketlib.memory.stats import impact, stats
 from ticketlib.memory.render import memory_summary
 from ticketlib.util import now, parse_datetime
@@ -235,7 +236,14 @@ def _candidates(conn, args: argparse.Namespace) -> int:
 
 
 def _review(conn, args: argparse.Namespace) -> int:
-    packet = review_packet(conn, memory_core.config(None))
+    cfg = memory_core.config(None)
+    packet = review_packet(conn, cfg)
+    if getattr(args, "run_command", False):
+        packet["command"] = run_review_command(
+            conn,
+            cfg,
+            dry_run=bool(getattr(args, "dry_run", False)),
+        )
     if args.write:
         target = _write_review(workspace.project_root(), packet)
         packet["path"] = str(target)
@@ -258,17 +266,28 @@ def _review(conn, args: argparse.Namespace) -> int:
     print("Instrucciones:")
     for instruction in packet["instructions"]:
         print(f"  - {instruction}")
+    if "command" in packet:
+        report = packet["command"]
+        if report["configured"]:
+            print(
+                f"review_command: {report['operations']} operación(es) → "
+                f"{len(report['proposed'])} propuesta(s)"
+            )
+        else:
+            print("review_command: no configurado")
     if args.write:
         print(f"Escrito: {packet['path']}")
     return 0
 
 
 def _curate(conn, args: argparse.Namespace) -> int:
-    result = curate(
+    outcome = auto_curate(
         conn,
         memory_core.config(None),
         dry_run=bool(getattr(args, "dry_run", False)),
+        force=True,
     )
+    result = outcome["result"]
     if _as_json(args):
         print(render.to_json(result))
         return 0

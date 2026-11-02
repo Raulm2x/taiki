@@ -8,15 +8,19 @@ no llama a un LLM y nunca incluye secretos ni transcripciones.
 
 from __future__ import annotations
 
+import json
 import sqlite3
+import subprocess
 from typing import Any
 
+from .. import db
 from ..domain import ValidationError
 from ..util import now
 from .candidates import CANDIDATE_RULES, generate_candidates, rejection_reason
 from .config import load_memory_config, validate_memory_config
+from .models import default_key
 from .security import SECRET_PATTERNS
-from .store import list_memories
+from .store import add_memory, list_memories
 
 THRESHOLD_KEYS = (
     "candidate_min_evidence",
@@ -144,4 +148,135 @@ def review_packet(
     }
 
 
-__all__ = ["INSTRUCTIONS", "THRESHOLD_KEYS", "review_packet"]
+def _review_operations(payload: Any) -> list[dict[str, Any]]:
+    operations = payload.get("operations") if isinstance(payload, dict) else payload
+    if not isinstance(operations, list):
+        raise ValidationError(
+            "review_command debe devolver una lista de operaciones o "
+            "{\"operations\": [...]}"
+        )
+    if len(operations) > 5:
+        raise ValidationError("review_command no puede proponer más de 5 memorias")
+    if not all(isinstance(item, dict) for item in operations):
+        raise ValidationError("Cada operación de review_command debe ser un objeto")
+    return operations
+
+
+def run_review_command(
+    conn: sqlite3.Connection,
+    config: dict[str, Any] | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Ejecuta el comando externo opt-in y deja sus salidas como propuestas.
+
+    El comando recibe el review packet por stdin y devuelve JSON por stdout. El
+    núcleo no usa red ni claves: solo valida la salida y crea propuestas que el
+    usuario debe aprobar. Sin ``review_command`` no hace nada.
+    """
+    cfg = _config(config)
+    command = cfg["review_command"]
+    if not command:
+        return {
+            "configured": False,
+            "command": None,
+            "operations": 0,
+            "proposed": [],
+            "dry_run": bool(dry_run),
+        }
+    packet = review_packet(conn, cfg)
+    text = json.dumps(packet, ensure_ascii=False, sort_keys=True)
+    timeout = int(cfg["review_timeout_seconds"])
+    try:
+        completed = subprocess.run(
+            str(command),
+            shell=True,
+            input=text,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ValidationError(
+            f"review_command agotó el tiempo de espera ({timeout}s)"
+        ) from exc
+    except OSError as exc:
+        raise ValidationError(f"No se pudo ejecutar review_command: {exc}") from exc
+    if completed.returncode != 0:
+        detail = _scrub(completed.stderr or completed.stdout, 500)
+        raise ValidationError(
+            f"review_command falló con código {completed.returncode}: {detail}"
+        )
+    try:
+        payload = json.loads(completed.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        raise ValidationError(
+            f"review_command devolvió JSON inválido: {exc}"
+        ) from exc
+    operations = _review_operations(payload)
+
+    if dry_run:
+        conn.execute("SAVEPOINT review_command_dry_run")
+    proposed: list[str] = []
+    try:
+        with db.tx(conn):
+            for operation in operations:
+                action = str(operation.get("action") or "add")
+                if action != "add":
+                    raise ValidationError(
+                        "review_command solo puede proponer operaciones add; "
+                        f"recibido {action!r}"
+                    )
+                title = str(operation.get("title") or "")
+                content = str(operation.get("content") or "")
+                key = operation.get("key") or default_key(title)
+                scope = str(operation.get("scope") or "project")
+                existing = conn.execute(
+                    'SELECT code FROM memories WHERE scope = ? AND "key" = ? '
+                    "AND status IN ('active', 'proposed', 'stale') LIMIT 1",
+                    (scope, key),
+                ).fetchone()
+                if existing is not None:
+                    raise ValidationError(
+                        f"review_command intenta reemplazar {existing['code']} "
+                        f"con la clave {key!r}; usa una propuesta manual"
+                    )
+                receipt = add_memory(
+                    conn,
+                    title=title,
+                    content=content,
+                    kind=str(operation.get("kind") or "fact"),
+                    key=key,
+                    scope=scope,
+                    description=operation.get("description") or "",
+                    paths=operation.get("paths") or [],
+                    kinds=operation.get("kinds") or [],
+                    ticket_kinds=operation.get("ticket_kinds") or [],
+                    confidence=operation.get("confidence", 0.5),
+                    source="import",
+                    status="proposed",
+                    actor="review_command",
+                    evidence=operation.get("evidence") or [],
+                    files=operation.get("files") or [],
+                    reason="propuesta de review_command",
+                )
+                proposed.append(str(receipt["code"]))
+    finally:
+        if dry_run:
+            conn.execute("ROLLBACK TO review_command_dry_run")
+            conn.execute("RELEASE review_command_dry_run")
+    return {
+        "configured": True,
+        "command": str(command),
+        "operations": len(operations),
+        "proposed": proposed,
+        "dry_run": bool(dry_run),
+    }
+
+
+__all__ = [
+    "INSTRUCTIONS",
+    "THRESHOLD_KEYS",
+    "review_packet",
+    "run_review_command",
+]

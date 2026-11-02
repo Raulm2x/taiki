@@ -9,6 +9,12 @@ from ..domain import ValidationError
 from ..workspace import load_config
 from .models import MEMORY_SCOPES, WRITE_POLICIES
 
+DEFAULT_AUTO_CURATE: dict[str, Any] = {
+    "enabled": False,
+    "interval_hours": 24,
+    "idle_minutes": 0,
+}
+
 DEFAULT_MEMORY_CONFIG: dict[str, Any] = {
     "enabled": True,
     "write_policy": "balanced",
@@ -28,6 +34,9 @@ DEFAULT_MEMORY_CONFIG: dict[str, Any] = {
     "instructions_sync": True,
     "skills_sync": True,
     "user_scope": "project",
+    "auto_curate": dict(DEFAULT_AUTO_CURATE),
+    "review_command": None,
+    "review_timeout_seconds": 15,
 }
 
 _BOOL_KEYS = (
@@ -46,6 +55,7 @@ _POSITIVE_KEYS = (
     "candidate_lookback_days",
     "candidate_routing_min_samples",
     "candidate_max",
+    "review_timeout_seconds",
 )
 _NON_NEGATIVE_KEYS = ("stale_after_days", "archive_after_days")
 # Umbrales de similitud: proporción abierta por ambos extremos (0 < x <= 1).
@@ -105,6 +115,35 @@ def validate_memory_config(raw: Any) -> dict[str, Any]:
             _fail(key, "un número mayor que 0 y menor o igual que 1", value)
         result[key] = float(value)
 
+    auto = result["auto_curate"]
+    if not isinstance(auto, dict):
+        _fail("auto_curate", "un objeto {enabled, interval_hours, idle_minutes}", auto)
+    unknown_auto = sorted(set(auto) - set(DEFAULT_AUTO_CURATE))
+    if unknown_auto:
+        _fail(
+            "auto_curate",
+            f"claves {', '.join(sorted(DEFAULT_AUTO_CURATE))}",
+            auto,
+        )
+    auto_result = dict(DEFAULT_AUTO_CURATE)
+    auto_result.update(auto)
+    if not isinstance(auto_result["enabled"], bool):
+        _fail("auto_curate.enabled", "true o false", auto_result["enabled"])
+    interval = auto_result["interval_hours"]
+    if isinstance(interval, bool) or not isinstance(interval, int) or interval <= 0:
+        _fail("auto_curate.interval_hours", "un entero mayor que 0", interval)
+    idle = auto_result["idle_minutes"]
+    if isinstance(idle, bool) or not isinstance(idle, int) or idle < 0:
+        _fail("auto_curate.idle_minutes", "un entero mayor o igual que 0", idle)
+    result["auto_curate"] = auto_result
+
+    command = result["review_command"]
+    if command is not None:
+        if not isinstance(command, str):
+            _fail("review_command", "un texto o null", command)
+        command = command.strip()
+        result["review_command"] = command or None
+
     if result["max_playbook_chars"] < result["max_entry_chars"]:
         _fail(
             "max_playbook_chars",
@@ -144,6 +183,7 @@ def load_memory_config(
 
 
 __all__ = [
+    "DEFAULT_AUTO_CURATE",
     "DEFAULT_MEMORY_CONFIG",
     "load_memory_config",
     "validate_memory_config",

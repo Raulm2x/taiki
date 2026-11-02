@@ -21,6 +21,7 @@ from .budget import priority_key
 from .models import BUDGET_STATUSES, normalize_fingerprint
 
 ACTOR = "curado-determinista"
+AUTO_CURATE_LAST_RUN = "memory.auto_curate.last_run"
 _LIVE_STATUSES = BUDGET_STATUSES
 
 
@@ -370,4 +371,78 @@ def curate(
             conn.execute("RELEASE curate_dry_run")
 
 
-__all__ = ["curate"]
+def _last_activity(conn: sqlite3.Connection) -> datetime | None:
+    row = conn.execute("SELECT MAX(updated_at) AS ts FROM memories").fetchone()
+    if row is None or not row["ts"]:
+        return None
+    return parse_datetime(row["ts"])
+
+
+def auto_curate(
+    conn: sqlite3.Connection,
+    config: dict[str, Any] | None = None,
+    dry_run: bool = False,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Ejecuta el curado si el opt-in y el intervalo/idle lo permiten.
+
+    ``force=True`` lo usa el comando explícito ``taiki memory curate``: ignora
+    el interruptor y el intervalo, pero sigue sin aprobar ni borrar. ``dry_run``
+    devuelve el plan sin escribir ni actualizar ``last_run``.
+    """
+    cfg = core.config(config)
+    auto = dict(cfg["auto_curate"])
+    last_run = db.meta_get(conn, AUTO_CURATE_LAST_RUN, None)
+    if not force and not auto["enabled"]:
+        return {
+            "ran": False,
+            "reason": "disabled",
+            "dry_run": dry_run,
+            "last_run": last_run,
+            "result": None,
+        }
+    at = parse_datetime(now())
+    if at is None:  # pragma: no cover - now() siempre es ISO válido
+        raise RuntimeError("No se pudo resolver la hora del auto-curado")
+    previous = parse_datetime(last_run)
+    if (
+        not force
+        and previous is not None
+        and at - previous < timedelta(hours=int(auto["interval_hours"]))
+    ):
+        return {
+            "ran": False,
+            "reason": "interval",
+            "dry_run": dry_run,
+            "last_run": last_run,
+            "result": None,
+        }
+    idle = int(auto["idle_minutes"])
+    if not force and idle > 0:
+        activity = _last_activity(conn)
+        if activity is not None and at - activity < timedelta(minutes=idle):
+            return {
+                "ran": False,
+                "reason": "idle",
+                "dry_run": dry_run,
+                "last_run": last_run,
+                "result": None,
+            }
+    result = curate(conn, cfg, dry_run=dry_run)
+    if not dry_run:
+        with db.tx(conn):
+            db.meta_set(conn, AUTO_CURATE_LAST_RUN, now())
+        last_run = db.meta_get(conn, AUTO_CURATE_LAST_RUN, None)
+    return {
+        "ran": True,
+        "reason": "forced" if force else "due",
+        "dry_run": dry_run,
+        "last_run": last_run,
+        "result": result,
+    }
+
+
+maybe_auto_curate = auto_curate
+
+
+__all__ = ["AUTO_CURATE_LAST_RUN", "auto_curate", "curate", "maybe_auto_curate"]
