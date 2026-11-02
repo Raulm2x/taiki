@@ -280,6 +280,18 @@ desde el `released_sha` de `.taiki/releases.json` (o desde el tag anterior si
 aún no hay marcador); solo se edita a mano para corregir el resumen. Tanto
 `CHANGELOG.md` como `.taiki/releases.json` se versionan en `develop`.
 
+La versión del paquete tiene una **única fuente de verdad** en dos ficheros que
+deben coincidir siempre con el último tag `vX.Y.Z`:
+`ticketlib/__init__.py` (`__version__`) y `pyproject.toml`
+(`[project].version`). Ningún worker ni rama de trabajo los edita a mano: es
+`taiki release` quien escribe ambos con la versión nueva **dentro del commit de
+release**, después del squash y del CHANGELOG y antes de commitear, de modo que
+el commit, el tag y el código publicado anuncian la misma versión. `--dry-run`
+no toca los ficheros; si la escritura falla, la release restaura el contenido
+anterior y aborta antes de commitear. El servidor MCP deriva su versión del
+código (`git describe`, con `__version__` como respaldo), así que alinea su
+anuncio con el tag publicado sin cambios propios.
+
 ### Roles
 
 - **Worker**: crea la rama del ticket desde `develop`, commitea, ejecuta los
