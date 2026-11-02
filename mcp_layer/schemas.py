@@ -31,6 +31,7 @@ Memoria:
 - No guardes fallos transitorios, secretos ni prohibiciones amplias; destila hechos y convenciones accionables.
 - Las memorias propuestas no son instrucciones hasta que el usuario las apruebe.
 - Si una memoria resulta incorrecta, usa patch, supersede o feedback en memory_write.
+- Antes de cerrar una épica o al acumular >=3 candidatos, usa memory_candidates(mode=review) y propone lecciones; la aprobación es del usuario.
 
 Estados: nuevo → pendiente → en_progreso → completado → verificado → confirmado.
 "verificado" lo marca el conductor con evidencia (tests/CI/revisión) y sigue
@@ -894,6 +895,40 @@ TOOL_SPECS = [
         },
         ("operations",),
     ),
+    ToolSpec(
+        "memory_candidates",
+        "Candidatos de aprendizaje deterministas a partir del histórico. "
+        "mode=list devuelve candidatos compactos (rework, rechazos, bloqueos, "
+        "cierres costosos, routing, hotspots y directivas); mode=review "
+        "devuelve el paquete completo para el curator con memorias actuales, "
+        "tickets recientes, umbrales, reglas e instrucciones. Solo lectura.",
+        {
+            "mode": {
+                "type": "string",
+                "enum": ["list", "review"],
+                "default": "list",
+                "description": "list para candidatos; review para el paquete",
+            },
+            "since": {
+                "type": "string",
+                "maxLength": 40,
+                "description": "Ventana temporal: 90d o una fecha ISO",
+            },
+            "kind": {
+                "type": "string",
+                "enum": list(MEMORY_KINDS),
+                "description": "Filtra por tipo de memoria sugerida",
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 20,
+                "description": "Máximo de candidatos o de tickets recientes",
+            },
+        },
+        read_only=True,
+    ),
 ]
 
 RESOURCES = [
@@ -914,6 +949,12 @@ RESOURCES = [
         "name": "Brief operativo",
         "description": "Memoria vigente acotada: proyecto, usuario y routing observado",
         "mimeType": "text/markdown",
+    },
+    {
+        "uri": "taiki://memory/candidates",
+        "name": "Candidatos de memoria",
+        "description": "Candidatos deterministas de aprendizaje del histórico (máximo 20)",
+        "mimeType": "application/json",
     },
 ]
 
@@ -961,5 +1002,10 @@ PROMPTS = [
                 "required": False,
             }
         ],
+    },
+    {
+        "name": "taiki:curate",
+        "description": "Revisa candidatos y propone lecciones sin tocar código ni aprobar",
+        "arguments": [],
     },
 ]

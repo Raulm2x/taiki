@@ -1060,6 +1060,9 @@ def read_resource(uri: str) -> dict[str, Any]:
             data = memory_handlers.handle_brief(conn, {})
             mime_type = "text/markdown"
             text = str(data["text"])
+        elif uri == "taiki://memory/candidates":
+            data = memory_handlers.handle_memory_candidates(conn, {})
+            text = render.to_json(data, compact=True)
         elif uri.startswith("taiki://ticket/"):
             code = unquote(uri.removeprefix("taiki://ticket/"))
             data = repo.get_ticket(conn, code, history_limit=50)
@@ -1108,6 +1111,12 @@ def get_prompt(name: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
             )
             text = _brief_prompt(str(brief["text"]))
             description = "Brief operativo de memoria"
+        elif name == "taiki:curate":
+            packet = memory_handlers.handle_memory_candidates(
+                conn, {"mode": "review"}
+            )
+            text = _curate_prompt(packet)
+            description = "Revisión de candidatos y propuesta de lecciones"
         else:
             raise domain.NotFoundError(f"Prompt desconocido: {name}")
     finally:
@@ -1154,6 +1163,41 @@ Después revisa el ticket activo o usa next. Si detectas una lección durable al
 terminar (corrección, rework o workaround), propón una memoria con
 memory_write y evidencia. La aprobación de propuestas es del usuario.
 """
+
+
+def _curate_prompt(packet: dict[str, Any]) -> str:
+    candidates = packet.get("candidates") or []
+    lines = [
+        "Actúa como curator de memoria: destila lecciones del histórico sin tocar código.",
+        "",
+        "Flujo:",
+        "1. Lee este paquete de revisión (candidatos, memorias actuales y tickets recientes).",
+        f"2. Propón como máximo 5 lecciones con memory_write; hay {len(candidates)} candidato(s).",
+        "3. Prefiere patch o supersede sobre add cuando la clave ya exista.",
+        "4. Toda propuesta necesita evidencia (ticket, commit, archivo o URL).",
+        "5. No apruebes ni rechaces: la decisión es del usuario.",
+        "6. No edites código, configuración ni tickets desde la revisión.",
+        "7. No aprendas de fallos transitorios, secretos, narrativas de una tarea ni prohibiciones amplias sin evidencia repetida.",
+        "",
+        "Candidatos:",
+    ]
+    for candidate in candidates[:10]:
+        lines.append(
+            f"- [{candidate['rule']}] {candidate['title']} "
+            f"(confianza {candidate['confidence']}, muestra {candidate['sample_size']})"
+        )
+    if not candidates:
+        lines.append("- (ninguno)")
+    lines += [
+        "",
+        "Umbrales: "
+        + ", ".join(
+            f"{key}={value}" for key, value in (packet.get("thresholds") or {}).items()
+        ),
+        "Antes de cerrar una épica o al acumular >=3 candidatos, repite "
+        "memory_candidates(mode=review) y propone lecciones.",
+    ]
+    return "\n".join(lines)
 
 
 def _review_prompt(rows: list[dict[str, Any]]) -> str:

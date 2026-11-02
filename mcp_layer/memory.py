@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 from ticketlib import domain, workspace
 from ticketlib.memory.brief import render_brief, write_brief
+from ticketlib.memory.candidates import generate_candidates
 from ticketlib.memory.config import load_memory_config
 from ticketlib.memory.lifecycle import (
     archive_memory,
@@ -16,17 +19,19 @@ from ticketlib.memory.lifecycle import (
     pin_memory,
     supersede_memory,
 )
+from ticketlib.memory.review import review_packet
 from ticketlib.memory.store import (
     add_memory,
     get_memory,
     list_memories,
     search_memories,
 )
-from ticketlib.util import now
+from ticketlib.util import now, parse_datetime
 
 SNIPPET_CHARS = 240
 HINT_LIMIT = 3
 _ACTIVE_STATUSES = ("active", "stale")
+_SINCE_RE = re.compile(r"^(\d+)d$", re.IGNORECASE)
 
 
 def _config() -> dict[str, Any]:
@@ -369,8 +374,56 @@ def handle_memory_write(
     }
 
 
+def _since(value: Any) -> str | None:
+    """Convierte ``90d`` o una fecha ISO en una marca ISO para el motor."""
+    if not value:
+        return None
+    text = str(value).strip()
+    match = _SINCE_RE.fullmatch(text)
+    if match is not None:
+        days = int(match.group(1))
+        if days <= 0:
+            raise domain.ValidationError("since debe ser mayor que 0 (por ejemplo 90d)")
+        base = parse_datetime(now())
+        if base is None:  # pragma: no cover - now() siempre es ISO válido
+            return None
+        return (base - timedelta(days=days)).isoformat(timespec="seconds")
+    if parse_datetime(text) is None:
+        raise domain.ValidationError(
+            f"since inválido: {value!r} (usa 90d o una fecha ISO)"
+        )
+    return text
+
+
+def handle_memory_candidates(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    _session: str | None = None,
+    _actor: str = "agente",
+) -> dict[str, Any]:
+    """Lista candidatos deterministas o el paquete de revisión del curator."""
+    mode = str(args.get("mode") or "list")
+    limit = int(args.get("limit") or 20)
+    since = _since(args.get("since"))
+    cfg = _config()
+    if mode == "review":
+        return review_packet(conn, cfg, since=since, limit=limit)
+    if mode != "list":
+        raise domain.ValidationError(f"mode inválido: {mode!r} (usa list o review)")
+    kind = args.get("kind")
+    # Con filtro se genera sin el techo y se recorta después: así un ``kind``
+    # poco frecuente no queda vacío por el límite.
+    rows = generate_candidates(
+        conn, cfg, since=since, limit=100000 if kind else limit
+    )
+    if kind:
+        rows = [row for row in rows if row["kind_sugerido"] == kind][:limit]
+    return {"count": len(rows), "candidates": rows}
+
+
 HANDLERS = {
     "brief": handle_brief,
+    "memory_candidates": handle_memory_candidates,
     "memory_search": handle_memory_search,
     "memory_write": handle_memory_write,
 }
