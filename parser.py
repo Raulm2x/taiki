@@ -415,6 +415,35 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--json", action="store_true")
     m.set_defaults(func=cmd_memory)
 
+    m = memory_sub.add_parser(
+        "export", help="Exporta un snapshot JSON o Markdown de la memoria"
+    )
+    m.add_argument("path")
+    m.add_argument(
+        "--format", choices=["json", "markdown"], help="Formato de salida"
+    )
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser(
+        "import", help="Importa un snapshot con estrategia keep/replace/new"
+    )
+    m.add_argument("path")
+    m.add_argument("--strategy", choices=["keep", "replace", "new"], default="keep")
+    m.add_argument("--dry-run", action="store_true")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser(
+        "rollback", help="Revierte por asiento de ledger o por snapshot"
+    )
+    m.add_argument("ledger_id", nargs="?", type=int)
+    m.add_argument("--snapshot", help="Snapshot de memoria a restaurar")
+    m.add_argument("--dry-run", action="store_true")
+    m.add_argument("--why")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
     m = memory_sub.add_parser("approve", help="Aprueba una propuesta")
     m.add_argument("code")
     m.add_argument("--actor", default="usuario")

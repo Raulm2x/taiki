@@ -36,10 +36,13 @@
 # T-0048.03 MCP memory_stats/health: +22 checks y dos módulos nuevos
 # (solo lectura, modos, health OK/pendiente/stale/presupuesto/artefactos/roto).
 # Medido 9.17s en la primera pasada; se amplía el margen local una vez.
+# T-0048.04 export/import/rollback: +33 checks y dos módulos nuevos
+# (checksum, secretos, roundtrip, estrategias, dry-run, rollback y CLI).
+# Medido 9.35s; se amplía el margen local y CI para runners compartidos.
 # Medido 8.03-8.28s con la suite en 1594 checks; se sube el margen local (CI
 # conserva 8.8s) para no fallar por ruido de carga del host.
-max_seconds = 9.3
-baseline_checks = 1692
+max_seconds = 9.6
+baseline_checks = 1725
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
 
@@ -50,7 +53,7 @@ max_seconds = 0.9
 # ruido. Se aplica con CI=true (o TAIKI_CI=true) y cada valor se puede
 # sobrescribir con TAIKI_SUITE_BUDGET / TAIKI_MODULE_BUDGET.
 [ci.suite]
-max_seconds = 10.0
+max_seconds = 10.5
 
 [ci.module]
 max_seconds = 1.5
