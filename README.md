@@ -54,6 +54,12 @@ taiki memory pending --diff    # cambio frente a la memoria sustituida
 taiki memory approve M-0001    # solo el usuario
 taiki memory playbook list     # playbooks exportables como skills
 taiki memory playbook export --all   # .taiki/generated/skills
+taiki memory curate            # caduca, archiva y deduplica sin borrar
+taiki memory stats             # estado, presupuesto, uso y routing
+taiki memory impact            # tendencias, sin afirmar causalidad
+taiki memory export FILE       # snapshot JSON/Markdown con checksum
+taiki memory import FILE       # importa con keep/replace/new y --dry-run
+taiki memory rollback ID       # revierte por asiento o --snapshot
 ```
 
 Las memorias llevan evidencia (ticket, commit, archivo…), respetan un
@@ -61,7 +67,10 @@ presupuesto de caracteres y se archivan en vez de borrarse. El motor de
 candidatos es determinista: no usa LLM ni escribe memoria. El subagente
 **curator** lee el paquete de revisión y propone como máximo 5 memorias; el
 conductor lo lanza cada 5 tickets cerrados o con 3+ candidatos. Los agentes
-proponen y **solo el usuario aprueba**.
+proponen y **solo el usuario aprueba**. El curado (`curate`) y el auto-curado
+opt-in mantienen la memoria sana con ledger y sin borrar; `export`/`import` y
+`rollback` permiten versionar, mover y deshacer con checksum y auditoría.
+`stats` e `impact` son métricas descriptivas: no demuestran causalidad.
 
 Los **playbooks** guardan procedimientos completos con evidencia y ficheros de
 apoyo, se exportan como skills de OpenCode (`.taiki/generated/skills`) y se

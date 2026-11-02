@@ -98,6 +98,13 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
   etiqueta son generales), mientras que `memory_kind` es el tipo de **memoria**.
   Completa con `memory_search` de pitfalls. Si detecta un fallo recurrente,
   propone un pitfall sin aprobarlo.
+- **Curado y portabilidad**: `taiki memory curate` caduca, archiva y deduplica
+  sin borrar ni aprobar; `pin`/`lock` quedan exentos y `--dry-run` no escribe.
+  `auto_curate` es opt-in y se dispara desde `status`, `next` o `memory curate`.
+  Para versionar o mover memoria usa `memory export`/`import` (JSON/Markdown,
+  checksum, estrategias y `--dry-run`). `memory rollback` revierte por asiento
+  de ledger o por snapshot y deja auditoría. `memory stats` e `impact` dan
+  tendencias descriptivas: **no afirmes causalidad**.
 
 ## Agentes en paralelo
 
@@ -181,6 +188,12 @@ taiki memory pending        # propuestas pendientes de aprobación
 taiki memory pending --diff # diff frente a la memoria sustituida
 taiki memory candidates     # candidatos deterministas del histórico
 taiki memory review --write # paquete para el curator
+taiki memory curate         # caducidad, archivo y dedupe (nunca borra)
+taiki memory stats          # estado, presupuesto, uso y routing
+taiki memory impact         # tendencias, sin causalidad
+taiki memory export FILE    # snapshot JSON/Markdown con checksum
+taiki memory import FILE    # importa con keep/replace/new y --dry-run
+taiki memory rollback ID    # revierte un asiento; --snapshot para un archivo
 taiki memory approve M-0001 # solo el usuario
 taiki memory playbook list  # playbooks y su export
 taiki memory playbook export --all  # .taiki/generated/skills

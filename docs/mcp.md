@@ -4,7 +4,7 @@ Volver a [README](../README.md) · [Índice de documentación](README.md)
 
 ## Herramientas MCP
 
-El servidor expone 30 herramientas. El nombre real no lleva prefijo (`list`,
+El servidor expone 31 herramientas. El nombre real no lleva prefijo (`list`,
 `claim`…), aunque algunos clientes las muestren como `taiki_*`.
 
 | Herramienta | Uso |
@@ -19,13 +19,14 @@ El servidor expone 30 herramientas. El nombre real no lleva prefijo (`list`,
 | `worktree_create`, `worktree_list` | Aislan la escritura por tarea |
 | `promote` | Convierte un scratch `S-####` en `T-####` |
 | `scratch_drop` | Archiva y cancela un scratch sin consumir `T-####` |
-| `health` | MCP, hooks, claims caducados, solapamientos y worktrees |
+| `health` | MCP, hooks, claims caducados, solapamientos, worktrees e integridad de memoria (`memory`) |
 | `brief` | Brief operativo de memoria; `section`, `budget` y `write` |
 | `memory_search` | Busca memorias por texto, scope, tipo, estado, rutas o kinds; snippets salvo `include_content=true` |
 | `memory_write` | Operaciones `add`, `patch`, `remove`, `supersede` y `feedback` con evidencia y aprobación humana; con `kind=playbook` acepta `description` y `files [{path, content}]` |
 | `memory_playbook` | Solo lectura: carga un playbook por `slug`; `path` devuelve un fichero de apoyo concreto |
 | `memory_checklist` | Solo lectura: checklist de pitfalls y convenciones por tipo de memoria (`pitfall`/`convention`) y rutas |
 | `memory_candidates` | Solo lectura: `mode=list` lista candidatos; `mode=review` devuelve el paquete del curator. Acepta `since`, `kind` y `limit` |
+| `memory_stats` | Solo lectura: `mode=stats`, `mode=impact` o `mode=all`; `days` ajusta la ventana de tendencias |
 
 Los errores llegan como `{code, message, hint, retryable}` y las herramientas
 de lectura llevan `readOnlyHint`. Si el código del MCP cambia, las escrituras
@@ -43,7 +44,7 @@ cualquier worktree; no se crea una DB vacía dentro de `.worktrees/`.
 
 ## Recursos y prompts MCP
 
-El catálogo de 30 herramientas está en [Herramientas MCP](#herramientas-mcp) y
+El catálogo de 31 herramientas está en [Herramientas MCP](#herramientas-mcp) y
 se genera desde `mcp_layer/schemas.py`. Aquí solo quedan los recursos y prompts:
 
 Recursos: `taiki://inbox`, `taiki://stats`, `taiki://ticket/{code}`,
@@ -110,3 +111,6 @@ el nombre real de la herramienta es el que aparece en `tools/list`.
   entradas, 5 por defecto, y no incluye el contenido completo.
 - `memory_search` devuelve snippets de 240 caracteres salvo
   `include_content=true`.
+- `memory_stats` devuelve agregados y tendencias, no contenido de memorias.
+  Usa `mode=stats` o `mode=impact` para acotar la respuesta; `days` solo aplica
+  a impacto.

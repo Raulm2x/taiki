@@ -355,7 +355,8 @@ El presupuesto es un techo por scope, no un objetivo. Las entradas `active`,
 
 Si una escritura deja el scope por encima del límite, falla con el total usado,
 el límite y las entradas que ocupan sitio; no recorta en silencio. Para liberar
-espacio, archiva (`rm`) o edita entradas.
+espacio, ejecuta `taiki memory curate`, archiva (`rm`) o edita entradas. El
+curado solo recorta lo no protegido y lo deja en el ledger.
 
 Los playbooks no consumen el presupuesto del scope: se cargan de forma
 progresiva y solo su índice consume `playbook_index_chars`. El cuerpo y los
@@ -363,6 +364,46 @@ apoyos quedan bajo demanda.
 
 Prioridad de selección para el brief: fijadas (`pin`) primero, luego scope
 `user`, después confianza, recencia y número de usos.
+
+## Curado determinista
+
+`taiki memory curate` mantiene la memoria sana sin LLM y sin borrar filas:
+
+- `active → stale` cuando la entrada lleva más de `stale_after_days` sin uso ni
+  actualización.
+- `stale → archived` cuando lleva más de `archive_after_days` en ese estado.
+- `pin` y `lock` quedan **exentos**: el curado no los caduca, archiva ni recorta.
+- **Dedupe**: agrupa por fingerprint exacto, por la misma clave o por similitud
+  (`candidate_similarity`) dentro del scope. Gana la entrada de mayor prioridad
+  (pin/lock, estado vigente y prioridad normal); el perdedor se archiva y sus
+  evidencias y ficheros se absorben en el ganador.
+- **Presupuesto**: si un scope supera su límite, archiva primero las entradas de
+  menor prioridad no protegidas hasta cumplirlo y reporta las retiradas. Si no
+  puede recortar porque todo está fijado, lo deja explícito en el informe.
+- Cada transición y merge deja un asiento en el ledger. `--dry-run` calcula el
+  mismo plan dentro de un savepoint y lo revierte: no cambia estados ni ledger.
+  El curado nunca aprueba propuestas ni borra datos.
+
+## Métricas e impacto
+
+`taiki memory stats` devuelve conteos por estado, scope y kind, presupuesto por
+scope, propuestas pendientes, uso (`by_action`, `use_count`, feedback y último
+uso) y routing observado por `(tipo de ticket, perfil)`.
+
+`taiki memory impact` resume cierres, intentos, lead time, verificaciones y
+fallos de la ventana, agrupados por semana. Son **datos descriptivos**: una
+tendencia no demuestra que la memoria haya causado la mejora. No se calculan
+métricas por proveedor ni se extrapolan muestras pequeñas.
+
+## Salud de memoria
+
+La herramienta MCP `health` incluye `memory` con `enabled`, `db_ok`, `entries`,
+`pending`, `stale`, `budget`, `generated_synced` e `issues[]`. Comprueba que las
+tablas y el FTS de memoria existan y estén sincronizados, que los artefactos
+generados (brief y skills activos) estén presentes, y avisa de propuestas con
+más de 7 días, entradas `stale` y presupuesto excedido. Los avisos no bloquean
+`health`; solo una integridad rota (`db_ok=false`) se considera grave. No
+aprueba nada.
 
 ## Evidencia
 
@@ -399,17 +440,54 @@ Antes de guardar, Taiki escanea títulos, contenidos, evidencias y motivos:
 Además, toda propuesta pasa por aprobación humana. Un agente no puede aprobar
 ni rechazar: el CLI exige actor `usuario`.
 
-## Ledger y rollback
+## Ledger, export/import y rollback
 
-Cada alta, edición, aprobación, rechazo, archivado, fijado, feedback o
-supersesión deja un asiento **append-only** en `memory_ledger`, con actor,
-sesión, acción, motivo y hashes del estado anterior y posterior. Los snapshots
-completos se guardan como blobs content-addressed.
+Cada alta, edición, aprobación, rechazo, archivado, fijado, feedback,
+supersesión o curado deja un asiento **append-only** en `memory_ledger`, con
+actor, sesión, acción, motivo y hashes del estado anterior y posterior. Los
+snapshots completos se guardan como blobs content-addressed. `taiki memory show
+M-0001` muestra los últimos asientos y el uso de la entrada.
 
-`taiki memory show M-0001` muestra los últimos asientos y el uso de la entrada.
-La API interna `rollback` restaura el estado anterior a un asiento y registra
-un asiento nuevo; en P1 el CLI expone el historial, no un comando de rollback.
-Para retirar algo de circulación usa `taiki memory rm` (archiva, nunca borra).
+**Exportación**. `taiki memory export <ruta>` escribe un snapshot con memorias,
+playbooks, ficheros, evidencia, propuestas y relaciones. Incluye `format`,
+`version` y un `checksum` sha256 determinista; los secretos conocidos se
+redactan antes de escribir. En JSON es directamente reimportable. En Markdown
+la parte visible es un informe y el JSON canónico viaja embebido para que la
+importación no pierda datos.
+
+**Importación**. `taiki memory import <ruta>` valida formato, versión, checksum
+y contenido (secretos, rutas, límites) antes de escribir. Estrategias:
+
+- `keep`: omite conflictos con el código o la clave existente.
+- `replace`: actualiza la entrada existente con los datos del snapshot.
+- `new`: inserta con un código nuevo.
+
+`--dry-run` devuelve el informe de conflictos sin escribir. La importación deja
+ledger y no borra filas.
+
+**Rollback**. `taiki memory rollback <ledger-id>` restaura el estado anterior a
+ese asiento y registra un asiento nuevo. `taiki memory rollback --snapshot
+<fichero>` reimporta el snapshot en modo `replace` exacto: restaura las
+entradas y archiva las que sobran, sin borrarlas. Ambos admiten `--dry-run` y
+quedan auditados. Para retirar algo de circulación manualmente usa `taiki memory
+rm` (archiva, nunca borra).
+
+## Auto-curado y review_command (opt-in)
+
+`memory.auto_curate` está desactivado por defecto. Con `enabled=true`, `taiki
+status`, `taiki next` y `taiki memory curate` ejecutan el curado determinista
+cuando toca según `interval_hours` y `idle_minutes`; `taiki memory curate` lo
+fuerza explícitamente. La marca `last_run` vive en la meta de la DB y `--dry-run`
+no la actualiza. El auto-curado no aprueba ni borra.
+
+`memory.review_command` es opcional. Si se configura, `taiki memory review
+--run-command` envía el paquete de revisión por stdin al comando y espera JSON
+por stdout: una lista de operaciones o `{"operations": [...]}`. Taiki valida la
+salida, aplica un timeout (`review_timeout_seconds`) y convierte las altas en
+propuestas `proposed` para que las revise el usuario. En esta versión el comando
+solo puede proponer `add`, hasta 5 entradas, y no puede reemplazar claves
+existentes. El núcleo no usa API keys ni red; el comando externo es
+responsabilidad de quien lo configura.
 
 ## CLI
 
@@ -452,6 +530,26 @@ taiki memory candidates
 taiki memory candidates --since 30d --kind pitfall --limit 5 --json
 taiki memory review
 taiki memory review --write            # .taiki/generated/memory-review.json
+taiki memory review --run-command      # review_command opt-in → propuestas
+taiki memory review --run-command --dry-run
+
+# Curado y métricas
+taiki memory curate
+taiki memory curate --dry-run
+taiki memory curate --json
+taiki memory stats
+taiki memory stats --json
+taiki memory impact --days 30
+taiki memory impact --days 30 --json
+
+# Export/import y rollback
+taiki memory export .taiki/generated/memoria.json
+taiki memory export .taiki/generated/memoria.md --format markdown
+taiki memory import .taiki/generated/memoria.json --strategy keep --dry-run
+taiki memory import .taiki/generated/memoria.json --strategy replace
+taiki memory rollback 42 --dry-run
+taiki memory rollback 42
+taiki memory rollback --snapshot .taiki/generated/memoria.json
 
 # Mantenimiento
 taiki memory edit M-0001 --content "Texto corregido"
@@ -462,7 +560,8 @@ taiki memory rm M-0001 --why "Ya no aplica"
 
 `memory list` excluye archivadas y sustituidas salvo que pidas ese estado.
 `--json` está disponible en todos los subcomandos. `memory rm` archiva: no hay
-borrado destructivo.
+borrado destructivo. `memory curate` nunca aprueba ni borra; `memory impact`
+describe tendencias y no afirma causalidad.
 
 ## MCP
 
@@ -474,6 +573,8 @@ borrado destructivo.
 | `memory_playbook` | Solo lectura: carga un playbook por `slug` (título, descripción, cuerpo, apoyos y evidencia); `path` carga un apoyo concreto. |
 | `memory_checklist` | Solo lectura: pitfalls y convenciones activos por tipo de ticket (`kind`), tipo de memoria (`memory_kind`) y rutas; `limit` de 1 a 20. |
 | `memory_candidates` | Solo lectura: `mode=list` lista candidatos; `mode=review` devuelve el paquete del curator. Acepta `since`, `kind` y `limit`. |
+| `memory_stats` | Solo lectura: `mode=stats` (conteos, presupuesto, propuestas, uso y routing), `mode=impact` (tendencias) o `mode=all`; `days` ajusta la ventana de impacto. |
+| `health` | Incluye la sección `memory` con integridad, cola, stale, presupuesto y artefactos generados; los avisos no bloquean salvo `db_ok=false`. |
 
 Recursos: `taiki://brief` (Markdown), `taiki://memory/{code}` (JSON),
 `taiki://playbook/{slug}` (JSON) y `taiki://memory/candidates` (JSON).
@@ -514,7 +615,14 @@ al arrancar para que una errata no se ignore en silencio.
     "candidate_similarity": 0.8,
     "instructions_sync": true,
     "skills_sync": true,
-    "user_scope": "project"
+    "user_scope": "project",
+    "auto_curate": {
+      "enabled": false,
+      "interval_hours": 24,
+      "idle_minutes": 0
+    },
+    "review_command": null,
+    "review_timeout_seconds": 15
   }
 }
 ```
@@ -523,8 +631,9 @@ al arrancar para que una errata no se ignore en silencio.
 - `write_policy`: `balanced` o `manual`.
 - `user_scope`: scope por defecto de las preferencias de usuario.
 - `stale_after_days` y `archive_after_days`: umbrales validados de caducidad;
-  deben cumplir `archive_after_days >= stale_after_days` y `0` los desactiva.
-  P1 no ejecuta una caducidad automática.
+  deben cumplir `archive_after_days >= stale_after_days`. Los aplica `taiki
+  memory curate`; `0` es un umbral inmediato, no un interruptor. El auto-curado
+  tiene su propio `enabled`.
 - `max_playbook_chars`: límite del cuerpo de un playbook y de cada fichero de
   apoyo; los playbooks no consumen el presupuesto del scope.
 - `playbook_index_chars`: tamaño máximo del índice de playbooks en el brief;
@@ -534,6 +643,13 @@ al arrancar para que una errata no se ignore en silencio.
   en `memory candidates` y `memory_candidates`.
 - `instructions_sync` y `skills_sync` se validan como parte del bloque;
   `skills_sync=false` evita exportar playbooks al sincronizar OpenCode.
+- `auto_curate`: `enabled` (por defecto `false`), `interval_hours` y
+  `idle_minutes`. Con el opt-in activo, `status`, `next` y `memory curate`
+  lanzan el curado cuando corresponde; `memory curate` lo fuerza.
+- `review_command`: comando externo opcional para `memory review --run-command`.
+  Recibe el paquete por stdin y devuelve operaciones JSON; el núcleo no usa API
+  keys ni red.
+- `review_timeout_seconds`: timeout del comando externo; por defecto 15 s.
 
 ## Flujo recomendado
 
@@ -554,6 +670,10 @@ al arrancar para que una errata no se ignore en silencio.
 7. El usuario revisa con `taiki memory pending --diff` y aprueba o rechaza.
 8. Refresca el brief con `taiki brief --write` si quieres actualizar el
    artefacto inyectado.
+9. Mantén la memoria con `taiki memory curate` (o el auto-curado opt-in) y
+   revisa `taiki memory stats`/`impact`. Para versionar o mover memoria usa
+   `memory export`/`import`; para deshacer un cambio, `memory rollback` por
+   asiento o snapshot.
 
 ## FAQ
 

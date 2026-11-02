@@ -108,6 +108,24 @@ taiki memory candidates                # candidatos deterministas del histórico
 taiki memory candidates --since 30d --kind pitfall --limit 5
 taiki memory review                    # paquete para el curator
 taiki memory review --write            # .taiki/generated/memory-review.json
+taiki memory review --run-command      # comando opt-in → propuestas
+taiki memory review --run-command --dry-run
+
+taiki memory curate                    # caduca/archiva/deduplica sin borrar
+taiki memory curate --dry-run
+taiki memory curate --json
+taiki memory stats                     # conteos, presupuesto, uso y routing
+taiki memory stats --json
+taiki memory impact --days 30          # tendencias, sin causalidad
+taiki memory impact --days 30 --json
+
+taiki memory export .taiki/generated/memoria.json
+taiki memory export .taiki/generated/memoria.md --format markdown
+taiki memory import .taiki/generated/memoria.json --strategy keep --dry-run
+taiki memory import .taiki/generated/memoria.json --strategy replace
+taiki memory rollback 42               # por asiento de ledger
+taiki memory rollback 42 --dry-run
+taiki memory rollback --snapshot .taiki/generated/memoria.json
 
 taiki brief                            # brief operativo
 taiki brief --write                    # .taiki/generated/brief.md
@@ -137,6 +155,22 @@ máximo 5 memorias y prefiere `patch`/`supersede` sobre altas nuevas. No aprueba
 no edita código y no lanza subagentes. El conductor lo ejecuta en background
 cada 5 tickets verificados/cerrados o cuando hay 3 o más candidatos, y publica
 las propuestas pendientes. La aprobación sigue siendo del usuario.
+
+`memory curate` aplica caducidad, archivo y dedupe deterministas: `active →
+stale`, `stale → archived`, consolida duplicados y recorta el presupuesto por
+menor prioridad. `pin`/`lock` quedan exentos y nada se borra ni se aprueba.
+`--dry-run` muestra el plan sin escribir. `memory stats` resume estado, scope,
+kind, presupuesto, propuestas, uso y routing; `memory impact` muestra
+tendencias semanales de cierres, intentos, lead time y verificación. El impacto
+es descriptivo: no demuestra causalidad.
+
+`memory export` escribe un snapshot JSON o Markdown con versión y checksum;
+`memory import` valida el checksum y acepta `--strategy keep|replace|new` y
+`--dry-run`, informando conflictos. `memory rollback <ledger-id>` restaura el
+estado anterior a un asiento; `--snapshot <fichero>` restaura un snapshot
+exportado y archiva lo que sobra. Ambos son auditables y admiten `--dry-run`.
+El auto-curado (`memory.auto_curate`) y `memory.review_command` son opt-in: el
+segundo recibe el paquete por stdin y solo deja propuestas para el usuario.
 
 `taiki mcp install` regenera el brief y lo añade a las instrucciones del
 proyecto para que el agente lo reciba al empezar. Una memoria de origen agente
