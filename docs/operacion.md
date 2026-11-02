@@ -109,9 +109,12 @@ Dentro de la lista blanca de los workers:
   `diff`, `file`, `stat`, `mkdir -p docs`, `git show`, `git rev-parse` y las
   lecturas con `git -C <worktree>` (`show`, `diff`, `log`, `rev-parse`);
   además de `python3 tests/*`, `timeout * python3 tests/*`,
-  `python3 -m tests.*`, `git status/diff/log/add/commit`,
-  `git add .opencode/*`, `TAIKI_TICKET=* taiki commit *`, las lecturas de
-  `taiki` y `taiki commit`. `echo`/`printf`/`sed`/`md5sum` son para inspección
+  `python3 -m tests.*`, `git status/diff/log/add/commit`, `git rebase <rama>`
+  (`--continue`, `--abort`, `--skip`), `git add .opencode/*`,
+  `TAIKI_TICKET=* taiki commit *`, las lecturas de `taiki` y `taiki commit`.
+  El rebase forma parte del ciclo del worker antes de integrar; nunca uses
+  `git rebase -i` ni `--exec` (sin TTY se cuelgan): resuelve conflictos con
+  `edit`, `git add` y `git rebase --continue`. `echo`/`printf`/`sed`/`md5sum` son para inspección
   puntual: la edición va por `edit`/`read`, no por shell. No uses `cd` (la
   sesión ya está en el worktree), ni `for`, ni heredocs `python3 - <<EOF`; la
   inspección va por `read`/`grep`/`edit`.

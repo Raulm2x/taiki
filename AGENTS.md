@@ -46,7 +46,10 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    necesitan algo más, publican `checkpoint`/`comment` con el comando exacto y
    el conductor lo ejecuta o autoriza. Nunca piden permiso al usuario. Siguen
    denegados push, merge directo, confirm, `rm -rf`, `sudo`, `bash`/`sh` y los
-   writes de estado por CLI. No es un sandbox: la garantía
+   writes de estado por CLI. Los workers sí pueden `git rebase` (incluidos
+   `--continue`, `--abort` y `--skip`), pero no `-i` ni `--exec`: sin TTY se
+   cuelgan; los conflictos se resuelven con `edit`, `git add` y `--continue`.
+   No es un sandbox: la garantía
    es el guard, la revisión y los gates. `uvx` solo ruff/mypy. El smoke opt-in
    es `python3 tests/live_orchestrator.py`.
    Merge de la épica: .03 → .04 → … → .13. `taiki status`
