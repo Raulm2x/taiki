@@ -210,7 +210,7 @@ def main(argv: list[str] | None = None) -> int:
         if failures:
             return 1
         if args.strict_budget:
-            violations = hygiene.budget_violations(results, budget, partial=partial)
+            violations = hygiene.budget_failures(results, budget, partial=partial)
             if violations:
                 print("\nPresupuesto incumplido:")
                 for item in violations:
@@ -226,7 +226,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {item}")
         return 1
     if args.strict_budget:
-        violations = hygiene.budget_violations(results, budget, partial=partial)
+        violations = hygiene.budget_failures(results, budget, partial=partial)
         if violations:
             print("\nPresupuesto incumplido:")
             for item in violations:

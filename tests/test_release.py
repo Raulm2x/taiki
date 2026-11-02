@@ -44,7 +44,8 @@ def _release(root: Path, **options) -> tuple[int, dict]:
         json=True,
     )
     output = io.StringIO()
-    with contextlib.redirect_stdout(output):
+    with contextlib.redirect_stdout(output), \
+            contextlib.redirect_stderr(io.StringIO()):
         code = cmd_release(args)
     raw = output.getvalue().strip()
     return code, (json.loads(raw) if raw else {})

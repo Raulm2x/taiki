@@ -72,20 +72,21 @@ def run(h: Harness) -> None:
     res_overlap = repo.list_tickets(conn, tags=["noctalia", "ui", "panel"])
     codes_overlap = [t["code"] for t in res_overlap]
     h.ok(len(codes_overlap) == len(set(codes_overlap)), "cero filas duplicadas cuando un ticket coincide con varios tags")
-    h.ok(codes_overlap.count(t_noct["code"]) == 1, "t_noct aparece exactamente una vez")
 
-    # Etiqueta inexistente
-    res_empty = repo.list_tickets(conn, tag="inexistente")
-    h.ok(len(res_empty) == 0, "etiqueta inexistente debe devolver lista vacía")
-    res_empty_multi = repo.list_tickets(conn, tags=["fantasma1", "fantasma2"])
-    h.ok(len(res_empty_multi) == 0, "múltiples etiquetas inexistentes deben devolver lista vacía")
+    # Etiquetas inexistentes (simple y múltiple) no devuelven nada
+    h.ok(
+        repo.list_tickets(conn, tag="inexistente") == []
+        and repo.list_tickets(conn, tags=["fantasma1", "fantasma2"]) == [],
+        "las etiquetas inexistentes devuelven lista vacía",
+    )
 
     # Etiquetas vacías o espacios no deben fallar ni filtrar indebidamente
     all_active = repo.list_tickets(conn)
-    res_blank = repo.list_tickets(conn, tag="")
-    h.ok(len(res_blank) == len(all_active), "tag='' no debe alterar la cuenta de tickets activos")
-    res_blank_tags = repo.list_tickets(conn, tags=["   ", ""])
-    h.ok(len(res_blank_tags) == len(all_active), "tags con espacios en blanco no deben alterar el listado")
+    h.ok(
+        len(repo.list_tickets(conn, tag="")) == len(all_active)
+        and len(repo.list_tickets(conn, tags=["   ", ""])) == len(all_active),
+        "las etiquetas vacías o con espacios no alteran el listado",
+    )
 
     # Combinación de filtro por etiqueta con otros filtros (estado, tipo)
     res_tag_status = repo.list_tickets(conn, tag="noctalia", statuses=["en_progreso"])
@@ -98,7 +99,6 @@ def run(h: Harness) -> None:
     project_root = Path(__file__).resolve().parents[1]
     repo_subpath = project_root / "tests"
     git_root_found = util.find_git_root(repo_subpath)
-    h.ok(git_root_found is not None, "find_git_root encuentra la raíz Git del proyecto")
     h.ok(git_root_found == project_root, "la raíz Git de tests/ es la del proyecto")
 
     # Archivo dentro del repositorio

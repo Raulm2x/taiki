@@ -358,6 +358,31 @@ def budget_violations(
     return violations
 
 
+def check_deviation(
+    results: list[dict[str, Any]],
+    budget: dict[str, Any],
+    partial: bool = False,
+) -> str | None:
+    """Desviación del techo de comprobaciones, o ``None`` si está dentro.
+
+    El techo es global: se compara el total de la suite, no cada módulo. Es un
+    techo, no un objetivo: bajar comprobaciones es válido (poda) mientras la
+    cobertura se mantenga; solo preocupa pasarse del margen por arriba.
+    """
+    if partial:
+        return None
+    suite = budget["suite"]
+    total_checks = sum(row.get("checks", 0) for row in results)
+    baseline = int(suite.get("baseline_checks", 0) or 0)
+    tolerance = int(suite.get("checks_tolerance", 0) or 0)
+    if baseline and total_checks > baseline + tolerance:
+        return (
+            f"{total_checks} comprobaciones superan el techo de {baseline} "
+            f"(+{tolerance}); poda o justifica el aumento"
+        )
+    return None
+
+
 def budget_warnings(
     results: list[dict[str, Any]],
     budget: dict[str, Any],
@@ -365,15 +390,24 @@ def budget_warnings(
 ) -> list[str]:
     """Avisos accionables por tiempo o desviación de la línea base."""
     warnings = budget_violations(results, budget, partial=partial)
-    suite = budget["suite"]
-    total_checks = sum(row.get("checks", 0) for row in results)
-    baseline = int(suite.get("baseline_checks", 0) or 0)
-    tolerance = int(suite.get("checks_tolerance", 0) or 0)
-    # Techo, no objetivo: bajar comprobaciones es válido (poda) mientras la
-    # cobertura se mantenga; solo preocupa pasarse del margen por arriba.
-    if not partial and baseline and total_checks > baseline + tolerance:
-        warnings.append(
-            f"{total_checks} comprobaciones superan el techo de {baseline} "
-            f"(+{tolerance}); poda o justifica el aumento"
-        )
+    deviation = check_deviation(results, budget, partial=partial)
+    if deviation:
+        warnings.append(deviation)
     return warnings
+
+
+def budget_failures(
+    results: list[dict[str, Any]],
+    budget: dict[str, Any],
+    partial: bool = False,
+) -> list[str]:
+    """Fallos duros de ``--strict-budget``: tiempo y techo de comprobaciones.
+
+    El merge y la CI usan este gate para que la acumulación de checks falle en
+    el punto de integración en vez de descubrirse en el siguiente ticket.
+    """
+    failures = budget_violations(results, budget, partial=partial)
+    deviation = check_deviation(results, budget, partial=partial)
+    if deviation:
+        failures.append(deviation)
+    return failures

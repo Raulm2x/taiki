@@ -228,7 +228,9 @@ def cmd_worktree_merge(args: argparse.Namespace) -> int:
         target = found["path"]
     test_cmd = None
     if not args.no_tests and (Path(target) / "tests" / "run.py").is_file():
-        test_cmd = [sys.executable, "tests/run.py"]
+        # El presupuesto de la suite es global: el merge lo comprueba con el
+        # mismo gate que la CI para que la acumulación de checks falle aquí.
+        test_cmd = [sys.executable, "tests/run.py", "--strict-budget"]
     ref = worktree.integration_ref(root)
     if ref["warning"]:
         print(f"aviso: {ref['warning']}", file=sys.stderr)

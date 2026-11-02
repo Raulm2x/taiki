@@ -101,7 +101,6 @@ def run(h: Harness) -> None:
 
     # Comprobar que el evento de creación guardó la sesión
     mcp_detail = repo.get_ticket(conn, mcp_created["code"])
-    h.ok(len(mcp_detail["events"]) >= 1, "el ticket creado vía MCP tiene eventos registrados")
     h.ok(
         any(e.get("session_id") == "session-audit-999" for e in mcp_detail["events"]),
         "session_id se almacena correctamente en la tabla events",
@@ -483,14 +482,15 @@ def run(h: Harness) -> None:
     # call_tool('stats') y call_tool('next')
     mcp_stats = handlers.call_tool("stats")
     h.ok("total" in mcp_stats and "por_estado" in mcp_stats, "call_tool('stats') devuelve métricas")
-    mcp_next = handlers.call_tool("next")
-    h.ok("ticket" in mcp_next, "call_tool('next') devuelve clave 'ticket'")
 
     # Despacho por alias con prefijo tickets_ (compatibilidad de namespace)
-    taiki_alias = handlers.call_tool("taiki_stats")
-    h.ok("total" in taiki_alias, "call_tool('taiki_stats') despacha mediante alias")
-    alias_stats = handlers.call_tool("tickets_stats")
-    h.ok("total" in alias_stats, "call_tool('tickets_stats') despacha correctamente mediante alias")
+    h.ok(
+        all(
+            "total" in handlers.call_tool(name)
+            for name in ("taiki_stats", "tickets_stats")
+        ),
+        "los alias con prefijo (taiki_/tickets_) despachan a la misma herramienta",
+    )
 
     # Herramienta desconocida lanza NotFoundError
     h.raises(

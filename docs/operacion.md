@@ -269,8 +269,12 @@ Varias sesiones pueden trabajar a la vez sin pisarse:
 - **Merge asistido**: el usuario confirma; solo después el conductor mergea en
   orden de dependencias. `taiki worktree merge T-XXXX` hace rebase sobre
   `orchestrator.integration_branch` (`develop` por defecto), ejecuta
-  `tests/run.py` si existe (`--no-tests` para omitir), `merge --ff-only` y
-  limpia con `--delete`. Nunca mergea si algo falla. Si `develop` no existe,
+  `tests/run.py --strict-budget` si existe (`--no-tests` para omitir),
+  `merge --ff-only` y limpia con `--delete`. El presupuesto de la suite es
+  global (techo de comprobaciones y tiempo de toda la suite, no por módulo):
+  el merge usa el mismo gate que la CI, así que si la acumulación de checks
+  deja la suite por encima del techo el merge falla ahí y no mergea nada.
+  Nunca mergea si algo falla. Si `develop` no existe,
   avisa y usa la rama actual sin romper. Exige que el ticket esté
   `confirmado`: el commit vive en el worktree, pero la rama de integración solo
   recibe lo que el usuario ya revisó. `main` no se toca aquí: solo la release

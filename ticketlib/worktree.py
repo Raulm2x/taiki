@@ -433,7 +433,9 @@ def merge(
     (``develop`` por defecto) y se integra ahí, no en la rama actual. Si la
     rama configurada no existe se usa la actual con un aviso. Exige el
     worktree y el checkout principal limpios; si el rebase o los tests fallan,
-    no se mergea nada.
+    no se mergea nada. ``test_cmd`` lo construye el CLI con el gate estricto
+    de la suite (``--strict-budget``), de modo que un merge que rompa el
+    presupuesto global de comprobaciones o de tiempo falla aquí.
     """
     main = Path(main).expanduser().resolve()
     path = Path(target).expanduser().resolve()
