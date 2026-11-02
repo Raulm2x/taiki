@@ -10,15 +10,17 @@ from typing import Any
 from ..domain import ValidationError
 from .budget import select_for_budget
 from .config import load_memory_config, validate_memory_config
+from .playbooks import brief_index
 from .render import format_chars, memory_line, percentage
 from .store import list_memories
 
 VERSION = 1
-_SECTION_ORDER = ("project", "user", "routing", "pending")
+_SECTION_ORDER = ("project", "user", "routing", "playbooks", "pending")
 _SECTION_TITLES = {
     "project": "Proyecto",
     "user": "Usuario",
     "routing": "Routing observado",
+    "playbooks": "Playbooks",
     "pending": "Pendientes",
     "warnings": "Avisos",
 }
@@ -94,8 +96,26 @@ def render_brief(
 
     dropped = sorted(dropped, key=lambda item: str(item.get("code") or ""))
     omitted = [str(item.get("code") or "") for item in dropped]
+    playbook_index: dict[str, Any] = {
+        "text": "",
+        "entries": [],
+        "chars": 0,
+        "omitted": 0,
+    }
+    if section == "all":
+        remaining = max(0, limit - used)
+        index_budget = min(int(cfg["playbook_index_chars"]), remaining)
+        if index_budget > 0:
+            index_config = dict(cfg)
+            index_config["playbook_index_chars"] = index_budget
+            playbook_index = brief_index(conn, index_config)
+            used += int(playbook_index["chars"])
+    show_playbooks = bool(playbook_index["text"])
     data_sections = [
-        name for name in _SECTION_ORDER if buckets[name] and section in ("all", name)
+        name
+        for name in _SECTION_ORDER
+        if (buckets[name] and section in ("all", name))
+        or (name == "playbooks" and show_playbooks)
     ]
 
     header = (
@@ -109,7 +129,10 @@ def render_brief(
     ]
     for name in data_sections:
         lines.append(f"## {_SECTION_TITLES[name]}")
-        lines.extend(memory_line(memory) for memory in buckets[name])
+        if name == "playbooks":
+            lines.append(str(playbook_index["text"]).rstrip())
+        else:
+            lines.extend(memory_line(memory) for memory in buckets[name])
         lines.append("")
 
     warnings = [memory_line(memory) for memory in buckets["warnings"]]
@@ -126,10 +149,16 @@ def render_brief(
         lines.append("(sin memorias)")
         lines.append("")
 
-    sections = {
-        name: [str(memory.get("code") or "") for memory in buckets[name]]
-        for name in data_sections
-    }
+    sections: dict[str, list[str]] = {}
+    for name in data_sections:
+        if name == "playbooks":
+            sections[name] = [
+                str(entry.get("code") or "") for entry in playbook_index["entries"]
+            ]
+        else:
+            sections[name] = [
+                str(memory.get("code") or "") for memory in buckets[name]
+            ]
     if buckets["warnings"]:
         sections["warnings"] = [
             str(memory.get("code") or "") for memory in buckets["warnings"]
@@ -142,6 +171,7 @@ def render_brief(
             "limit": limit,
             "percent": percentage(used, limit),
             "omitted": len(omitted),
+            "playbooks": int(playbook_index["chars"]),
         },
         "sections": sections,
         "version": VERSION,

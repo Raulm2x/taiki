@@ -20,6 +20,7 @@ from ticketlib.memory.lifecycle import (
     pin_memory,
     supersede_memory,
 )
+from ticketlib.memory.models import PLAYBOOK_KIND
 from ticketlib.memory.playbooks import get_playbook, slug_of
 from ticketlib.memory.review import review_packet
 from ticketlib.memory.security import validate_memory_path
@@ -33,6 +34,7 @@ from ticketlib.util import now, parse_datetime
 
 SNIPPET_CHARS = 240
 HINT_LIMIT = 3
+PLAYBOOK_HINT_LIMIT = 2
 _ACTIVE_STATUSES = ("active", "stale")
 _SINCE_RE = re.compile(r"^(\d+)d$", re.IGNORECASE)
 
@@ -59,6 +61,61 @@ def _paths_overlap(left: str, right: str) -> bool:
     return a == b or a.startswith(b + "/") or b.startswith(a + "/")
 
 
+def _playbook_hints(
+    conn: sqlite3.Connection,
+    ticket_paths: list[str],
+    ticket_kind: str,
+    tags: list[str],
+) -> list[dict[str, Any]]:
+    """Hasta dos playbooks activos relevantes por rutas, tipo o etiquetas."""
+    rows = list_memories(conn, kind=PLAYBOOK_KIND, status="active", limit=100)
+    ranked: list[tuple[int, dict[str, Any]]] = []
+    for memory in rows:
+        slug = slug_of(memory)
+        if slug is None:
+            continue
+        score = 0
+        reasons: list[str] = []
+        memory_paths = [str(item) for item in memory.get("paths") or []]
+        matches = [
+            path
+            for path in memory_paths
+            if any(_paths_overlap(path, wanted) for wanted in ticket_paths)
+        ]
+        if matches:
+            score += 10
+            reasons.append(f"ruta {matches[0]}")
+        haystack = " ".join(
+            str(memory.get(key) or "")
+            for key in ("title", "description", "key")
+        ).lower()
+        if ticket_kind and ticket_kind in haystack:
+            score += 4
+            reasons.append(f"tipo {ticket_kind}")
+        for tag in tags:
+            if tag and tag in haystack:
+                score += 2
+                reasons.append(f"etiqueta {tag}")
+                break
+        if not score:
+            continue
+        ranked.append(
+            (
+                score,
+                {
+                    "code": memory.get("code"),
+                    "slug": slug,
+                    "title": memory.get("title"),
+                    "description": memory.get("description"),
+                    "kind": PLAYBOOK_KIND,
+                    "reason": "; ".join(reasons),
+                },
+            )
+        )
+    ranked.sort(key=lambda item: (-item[0], str(item[1]["slug"])))
+    return [item for _, item in ranked[:PLAYBOOK_HINT_LIMIT]]
+
+
 def hints(
     conn: sqlite3.Connection,
     ticket: dict[str, Any],
@@ -75,6 +132,8 @@ def hints(
     rows = list_memories(conn, limit=200)
     ranked: list[tuple[int, dict[str, Any]]] = []
     for memory in rows:
+        if memory.get("kind") == PLAYBOOK_KIND:
+            continue
         if memory.get("status") not in _ACTIVE_STATUSES:
             continue
         score = 0
@@ -120,7 +179,10 @@ def hints(
             )
         )
     ranked.sort(key=lambda item: (-item[0], str(item[1]["code"])))
-    return [item for _, item in ranked[:limit]]
+    memory_hints = [item for _, item in ranked[:limit]]
+    return memory_hints + _playbook_hints(
+        conn, ticket_paths, ticket_kind, tags
+    )
 
 
 def learning(ticket: dict[str, Any]) -> dict[str, Any] | None:

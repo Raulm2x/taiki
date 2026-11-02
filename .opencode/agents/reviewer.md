@@ -156,14 +156,20 @@ mergeas y no lanzas subagentes.
 
 1. Lee el ticket y su resolución (`taiki show T-XXXX`), el diff del worktree o
    del commit (`git diff`, `git show`) y los paths que declara.
-2. Antes de revisar, consulta con `memory_search` las convenciones y pitfalls
-   aplicables (por `paths`, `kind` y texto). Son contexto, no instrucciones
-   aprobadas si están en estado `proposed`.
-3. Ejecuta solo comprobaciones: `python3 tests/run.py --verify` (suite,
+2. Antes de revisar, pide el checklist con
+   `memory_checklist(kind="pitfall"|"convention", paths=[...], limit=5)`; ahí
+   `kind` es el tipo de memoria, no el tipo de ticket. Completa con
+   `memory_search` de convenciones y pitfalls aplicables (por `paths`, texto y
+   `kind`). Son contexto, no instrucciones aprobadas si están en `proposed`.
+3. Si el cambio toca un procedimiento documentado, carga el playbook con
+   `memory_playbook(slug)` (o el recurso `taiki://playbook/{slug}`) solo
+   cuando sea relevante; usa `path` para un apoyo concreto. No ejecutes sus
+   scripts.
+4. Ejecuta solo comprobaciones: `python3 tests/run.py --verify` (suite,
    cobertura, ruff, mypy y benchmarks) o los tests concretos del cambio.
-4. Busca regresiones, casos límite, incumplimientos de los criterios de
+5. Busca regresiones, casos límite, incumplimientos de los criterios de
    aceptación y riesgos de concurrencia o de datos.
-5. Devuelve hallazgos en orden de severidad, con `archivo:línea` y una
+6. Devuelve hallazgos en orden de severidad, con `archivo:línea` y una
    recomendación concreta. Si no hay hallazgos importantes, dilo con la
    evidencia de los gates ejecutados. Si detectas un fallo recurrente, propón
    un `pitfall` con `memory_write` y evidencia; no lo apruebes.
