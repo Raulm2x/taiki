@@ -311,6 +311,17 @@ informa `reconcile_error` para resolverlo a mano. Para deshacer una release,
 `develop` no estorba y solo se revierte con
 `git revert -m 1 <commit-de-reconciliación>` si hace falta.
 
+La release también registra el commit aplanado en `.taiki/releases.json`
+(**versionado**), con `{tag, version, released_sha, date}` por entrega. El
+registro va dentro del merge de reconciliación de `develop` o, si no hizo falta
+merge, en un commit `chore(release): registrar vX.Y.Z`; `main` no recibe ningún
+commit extra por esto. La siguiente release calcula los tickets desde el
+`released_sha` de la última entrada, no desde el tag squash, así que no repite
+commits ya publicados ni fuerza un bump por un `feat` antiguo. En repos sin
+marcador se usa el rango `<tag>..develop` y, si existe, el primer padre del
+merge `chore: reconciliar … tras <tag>`. Si el rango no tiene commits
+publicables, la release aborta con *«No hay commits nuevos desde vX.Y.Z»*.
+
 `git push origin main --follow-tags` publica la release. El hook `pre-push`
 solo deja empujar `main` cuando el tip es una release de `taiki release`
 (asunto `chore(release): vX.Y.Z` y/o tag `v*` que lo apunte) y, en ese caso,

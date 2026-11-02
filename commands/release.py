@@ -25,9 +25,16 @@ Flujo:
    ``git merge --no-ff`` (idempotente: no hace nada si ``main`` ya es
    ancestro). Sin este paso la segunda release fallaría por la comprobación de
    ancestro. Al terminar se restaura el checkout original.
+6. Registra la release en ``.taiki/releases.json`` (versionado): ``tag``,
+   ``version``, ``released_sha`` (commit de integración aplanado) y ``date``.
+   El registro viaja en el mismo merge de reconciliación o en un commit propio
+   de la integración; ``main`` no cambia. La siguiente release usa ese
+   ``released_sha`` como inicio del rango, así que el squash no repite commits
+   ya publicados.
 
 La versión sube según los commits: ``!`` o ``BREAKING CHANGE`` → major,
-``feat`` → minor y el resto → patch; ``--bump`` fuerza el incremento.
+``feat`` → minor y el resto → patch; ``--bump`` fuerza el incremento. Si el
+rango no tiene commits publicables, la release aborta con un error claro.
 
 Rollback: ``git revert <commit>`` del commit de release (y retira el tag si aún
 no se publicó). Nunca se reescribe ``main`` publicado. La reconciliación es un
@@ -39,6 +46,7 @@ reconciliar.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import shlex
 import subprocess
@@ -55,6 +63,7 @@ MAIN_BRANCH = "main"
 DEFAULT_INTEGRATION = "develop"
 VERIFY_ENV = "RELEASE_VERIFY"
 DEFAULT_VERIFY = (sys.executable, "tests/run.py", "--verify")
+RELEASES_FILE = ".taiki/releases.json"
 BUMPS = ("major", "minor", "patch")
 # Orden estable de los grupos del resumen; el resto va al final como "otros".
 TYPE_ORDER = (
@@ -72,6 +81,16 @@ TYPE_ORDER = (
 )
 _CONVENTIONAL = re.compile(
     r"^(?P<type>[a-zA-Z]+)(?:\([^)]*\))?(?P<breaking>!)?:\s*(?P<desc>.+)$"
+)
+# Commits que genera la propia release en la integración. No son trabajo
+# publicable: si entraran en el rango, una segunda release los repetiría en el
+# CHANGELOG y, sin commits nuevos, el rango nunca quedaría vacío.
+_BOOKKEEPING = re.compile(
+    r"^(?:"
+    r"chore\(release\): v\d+\.\d+\.\d+"
+    r"|chore\(release\): registrar v\d+\.\d+\.\d+"
+    r"|chore: reconciliar .+ tras v\d+\.\d+\.\d+"
+    r")$"
 )
 
 
@@ -148,6 +167,85 @@ def _latest_tag(root: Path, branch: str) -> str | None:
         "--sort=-v:refname",
     )
     return raw.splitlines()[0].strip() if raw else None
+
+
+def _load_releases(root: Path) -> list[dict[str, Any]]:
+    """Lee el marcador versionado; solo acepta una lista de entradas."""
+    path = root / RELEASES_FILE
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise TicketError(f"No se pudo leer {RELEASES_FILE}: {exc}") from exc
+    if isinstance(data, dict):
+        data = data.get("releases")
+    if not isinstance(data, list):
+        raise TicketError(f"{RELEASES_FILE} debe contener una lista de releases")
+    return [entry for entry in data if isinstance(entry, dict)]
+
+
+def _reconciliation_parent(root: Path, branch: str, tag: str) -> str | None:
+    """Padre de integración del merge ``chore: reconciliar … tras <tag>``.
+
+    Repos publicados antes de existir el marcador: el primer padre del merge de
+    reconciliación es el commit de ``develop`` que se aplanó en ``main``.
+    """
+    sha = _capture(
+        root,
+        "log",
+        "--format=%H",
+        "--fixed-strings",
+        "--grep",
+        f"chore: reconciliar {branch} tras {tag}",
+        "-n",
+        "1",
+        branch,
+    )
+    if not sha:
+        return None
+    return _capture(root, "rev-parse", f"{sha}^1") or None
+
+
+def _range_start(
+    root: Path,
+    branch: str,
+    main: str,
+    tag: str | None,
+    releases: list[dict[str, Any]],
+) -> tuple[str, str]:
+    """Inicio del rango y etiqueta para los mensajes de error."""
+    if releases:
+        last = releases[-1]
+        sha = last.get("released_sha")
+        if (
+            isinstance(sha, str)
+            and sha
+            and _git_ok(root, "merge-base", "--is-ancestor", sha, branch)
+        ):
+            return sha, str(last.get("tag") or tag or sha)
+    if tag:
+        # Fallback para repos anteriores al marcador: si existe la
+        # reconciliación de ese tag, su primer padre es el commit publicado.
+        parent = _reconciliation_parent(root, branch, tag)
+        return (parent or tag), tag
+    return main, main
+
+
+def _is_bookkeeping(commit: dict[str, str]) -> bool:
+    return bool(_BOOKKEEPING.match(commit["subject"]))
+
+
+def _write_releases(root: Path, entry: dict[str, str]) -> Path:
+    """Añade o reemplaza la entrada del tag y devuelve la ruta escrita."""
+    path = root / RELEASES_FILE
+    entries = [item for item in _load_releases(root) if item.get("tag") != entry["tag"]]
+    entries.append(entry)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(entries, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    return path
 
 
 def _commits(root: Path, lines: list[str]) -> list[dict[str, str]]:
@@ -260,32 +358,46 @@ def _verify_command(explicit: str | list[str] | None) -> list[str]:
 
 
 def _reconcile(
-    root: Path, branch: str, main: str, version: str, original: str
+    root: Path,
+    branch: str,
+    main: str,
+    version: str,
+    original: str,
+    marker: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Integra ``main`` en ``branch`` tras el squash, sin tocar ``main``.
+    """Integra ``main`` en ``branch`` y registra la release, sin tocar ``main``.
 
-    Idempotente: si ``main`` ya es ancestro de la integración no hace nada. Un
-    conflicto se aborta y se informa; la release ya está publicada y no se
-    revierte por ello. Restaura el checkout original pase lo que pase.
+    Idempotente: si ``main`` ya es ancestro de la integración no hay merge,
+    pero sí se escribe el marcador en un commit propio. Cuando hay
+    reconciliación, el marcador se integra en el mismo merge commit
+    (``merge --no-commit`` → escribir → commit), de modo que no queda un commit
+    extra. Un conflicto se aborta y se informa; la release ya está publicada y
+    no se revierte por ello. Restaura el checkout original pase lo que pase.
     """
     outcome: dict[str, Any] = {
         "reconciled": False,
         "reconcile_command": None,
+        "release_marker": None,
     }
-    if _git_ok(root, "merge-base", "--is-ancestor", main, branch):
-        return outcome
+    needs_merge = not _git_ok(root, "merge-base", "--is-ancestor", main, branch)
     message = f"chore: reconciliar {branch} tras v{version}"
-    command = (
-        f"git switch {branch} && git merge --no-ff --no-verify {main} "
-        f"-m {shlex.quote(message)}"
-    )
-    outcome["reconcile_command"] = command
+    if needs_merge:
+        outcome["reconcile_command"] = (
+            f"git switch {branch} && git merge --no-ff --no-verify {main} "
+            f"-m {shlex.quote(message)}"
+        )
+    if not needs_merge and marker is None:
+        return outcome
     result = subprocess.run(
         ["git", "-C", str(root), "checkout", branch],
         capture_output=True,
         text=True,
     )
-    if result.returncode == 0:
+    if result.returncode != 0:
+        outcome["reconcile_error"] = (result.stderr or result.stdout).strip()
+        return outcome
+    failed = False
+    if needs_merge:
         result = subprocess.run(
             [
                 "git",
@@ -293,23 +405,42 @@ def _reconcile(
                 str(root),
                 "merge",
                 "--no-ff",
+                "--no-commit",
                 "--no-verify",
-                "-m",
-                message,
                 main,
             ],
             capture_output=True,
             text=True,
         )
-    if result.returncode == 0:
-        outcome["reconciled"] = True
-    else:
-        subprocess.run(
-            ["git", "-C", str(root), "merge", "--abort"],
-            capture_output=True,
-            text=True,
-        )
-        outcome["reconcile_error"] = (result.stderr or result.stdout).strip()
+        if result.returncode == 0:
+            outcome["reconciled"] = True
+        else:
+            subprocess.run(
+                ["git", "-C", str(root), "merge", "--abort"],
+                capture_output=True,
+                text=True,
+            )
+            outcome["reconcile_error"] = (result.stderr or result.stdout).strip()
+            failed = True
+    if marker is not None and not failed:
+        path = _write_releases(root, marker)
+        outcome["release_marker"] = str(path.relative_to(root))
+        try:
+            _git(root, "add", RELEASES_FILE)
+            commit_message = (
+                message if needs_merge else f"chore(release): registrar v{version}"
+            )
+            _git(root, "commit", "--no-verify", "-m", commit_message)
+            outcome["marker_commit"] = _git(root, "rev-parse", "HEAD")
+        except TicketError as exc:
+            if needs_merge:
+                subprocess.run(
+                    ["git", "-C", str(root), "merge", "--abort"],
+                    capture_output=True,
+                    text=True,
+                )
+            outcome["reconcile_error"] = str(exc)
+            failed = True
     if original != branch:
         restored = subprocess.run(
             ["git", "-C", str(root), "checkout", original],
@@ -396,10 +527,17 @@ def run(
         )
 
     previous = _latest_tag(base, main)
-    start = previous or main
-    commits = _commits(base, [f"{start}..{branch}"])
+    releases = _load_releases(base)
+    start, start_label = _range_start(base, branch, main, previous, releases)
+    # Los commits de housekeeping de releases anteriores (reconciliación y
+    # registro del marcador) no son trabajo publicable: se excluyen del rango.
+    commits = [
+        commit
+        for commit in _commits(base, [f"{start}..{branch}"])
+        if not _is_bookkeeping(commit)
+    ]
     if not commits:
-        raise TicketError(f"No hay commits nuevos en {branch} desde {start}")
+        raise TicketError(f"No hay commits nuevos desde {start_label}")
     level = bump or _bump_for(commits)
     current = _parse_version(previous) if previous else (0, 0, 0)
     version = ".".join(str(part) for part in _next_version(current, level))
@@ -410,12 +548,15 @@ def run(
     tickets = _tickets(commits)
     groups = _groups(commits)
     message = _message(version, tickets, groups)
+    released_sha = _git(base, "rev-parse", branch)
     summary: dict[str, Any] = {
         "version": version,
         "tag": tag,
         "main": main,
         "integration": branch,
         "previous_tag": previous,
+        "range": start,
+        "released_sha": released_sha,
         "bump": level,
         "tickets": tickets,
         "commits": len(commits),
@@ -476,11 +617,18 @@ def run(
     _git(base, "commit", "--no-verify", "-m", message)
     commit = _git(base, "rev-parse", "HEAD")
     _git(base, "tag", "-a", tag, "-m", f"Release {tag}")
-    summary.update(_reconcile(base, branch, main, version, original))
+    marker = {
+        "tag": tag,
+        "version": version,
+        "released_sha": released_sha,
+        "date": date.today().isoformat(),
+    }
+    summary.update(_reconcile(base, branch, main, version, original, marker))
     summary.update(
         {
             "commit": commit,
             "changelog": str(changelog_path),
+            "marker": RELEASES_FILE,
             "branch": _git(base, "rev-parse", "--abbrev-ref", "HEAD"),
         }
     )

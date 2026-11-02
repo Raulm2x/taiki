@@ -173,6 +173,19 @@ develop»*. Si el merge diera conflicto, la release ya está publicada: el
 comando aborta el merge, avisa con `reconcile_error` y deja `develop` intacta
 para resolver a mano.
 
+Además, la release registra el commit de integración publicado en
+`.taiki/releases.json`, un fichero **versionado** con una entrada
+`{tag, version, released_sha, date}` por release. El registro viaja en el mismo
+merge de reconciliación (o en un commit `chore(release): registrar vX.Y.Z` de
+`develop` si no hizo falta merge); `main` no recibe ningún commit propio por
+esto. La siguiente release usa el `released_sha` de la última entrada como
+inicio del rango, así que el squash de `main` no repite en el CHANGELOG commits
+ya publicados ni fuerza un bump por un `feat` antiguo. En repos sin marcador
+(primera release o proyectos anteriores a este fichero) se cae al rango
+`<tag>..develop`; si existe el merge de reconciliación de ese tag, se usa su
+primer padre. Si el rango no deja commits publicables, la release aborta con
+*«No hay commits nuevos desde vX.Y.Z»*.
+
 ```bash
 taiki release
 # Release v0.2.0 publicada en main: 1a2b3c4d5e6f
@@ -219,7 +232,9 @@ desde `main`, se etiqueta una versión de parche y se integra también en
 Versionado semántico: un cambio incompatible sube **major**, un `feat:` sube
 **minor** y el resto (`fix:`, `docs:`, `refactor:`…) sube **patch**. El
 `CHANGELOG.md` se genera durante la release agrupando los tickets y commits
-desde el tag anterior; solo se edita a mano para corregir el resumen.
+desde el `released_sha` de `.taiki/releases.json` (o desde el tag anterior si
+aún no hay marcador); solo se edita a mano para corregir el resumen. Tanto
+`CHANGELOG.md` como `.taiki/releases.json` se versionan en `develop`.
 
 ### Roles
 
