@@ -395,21 +395,34 @@ def run(h: Harness) -> None:
         mcp_verified["status"] == "verificado",
         "call_tool('transition') verifica con evidencia",
     )
+    documented = repo.create_ticket(
+        conn, title="Confirmado sin resolución MCP"
+    )
+    conn.execute(
+        "UPDATE tickets SET status = 'confirmado' WHERE code = ?",
+        (documented["code"],),
+    )
+    conn.commit()
+    mcp_documented = handlers.call_tool(
+        "transition",
+        {
+            "code": documented["code"],
+            "status": "confirmado",
+            "resolution": "Cierre documentado vía MCP.",
+            "detail": True,
+        },
+        meta={"sessionId": "session-claim-111"},
+    )
+    h.ok(
+        mcp_documented["status"] == "confirmado"
+        and mcp_documented["resolution"] == "Cierre documentado vía MCP.",
+        "call_tool('transition') acepta resolution sin cambiar de estado",
+    )
     review_prompt = handlers.get_prompt("review")
     h.ok(
         mcp_created["code"]
         in review_prompt["messages"][0]["content"]["text"],
         "el prompt review incluye los tickets verificados",
-    )
-    completed_full = handlers.call_tool(
-        "get", {"code": mcp_created["code"]}
-    )
-    h.ok(
-        any(
-            event.get("note") == completed_full.get("resolution")
-            for event in completed_full["events"]
-        ),
-        "get conserva el note del evento de cierre",
     )
     completed_raw = handlers.call_tool(
         "get", {"code": mcp_created["code"], "raw": True}

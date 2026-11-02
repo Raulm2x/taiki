@@ -530,6 +530,7 @@ def _handle_transition(
         actor=actor,
         actor_type="agente",
         session_id=session,
+        resolution=args.get("resolution"),
         force=bool(args.get("force")),
     )
     return _receipt(

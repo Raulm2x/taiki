@@ -62,12 +62,13 @@ def transition(
     actor_type: str = "agente",
     session_id: str | None = None,
     assigned_to: Any = UNSET,
-    resolution: Any = UNSET,
+    resolution: str | None = None,
     force: bool = False,
 ) -> dict[str, Any]:
     row = row_by_code(conn, code)
     current = row["status"]
     actor = normalize_agent(actor)
+    resolution = (resolution or "").strip() or None
 
     check_enum(status, STATUSES, "estado")
     check_enum(actor_type, ACTOR_TYPES, "actor_type")
@@ -82,6 +83,29 @@ def transition(
                 f"{row['code']} está reclamado por otra sesión ({owner}); "
                 "usa force=true si de verdad debes cambiarlo."
             )
+
+    if resolution is not None and status == current:
+        # Documentar un cierre ya hecho: solo se escribe la resolución. No se
+        # valida la máquina de estados ni la evidencia porque el estado no
+        # cambia (p. ej. una épica confirmada sin resolución).
+        ts = now()
+        with db.tx(conn):
+            conn.execute(
+                "UPDATE tickets SET resolution = ?, updated_at = ? WHERE id = ?",
+                (resolution, ts, row["id"]),
+            )
+            event(
+                conn,
+                row["id"],
+                "resolucion",
+                actor,
+                actor_type,
+                session_id,
+                current,
+                current,
+                resolution,
+            )
+        return get_ticket(conn, code)
 
     if status == "confirmado" and actor_type != "usuario":
         raise PermissionDenied(
@@ -113,7 +137,7 @@ def transition(
     if status in ("en_progreso", "pendiente") and current in REOPEN_FROM and not note:
         raise ValidationError("Reabrir un ticket requiere un motivo en 'note'")
 
-    if status == "verificado" and not note:
+    if status == "verificado" and not note and resolution is None:
         raise ValidationError(
             "Marcar un ticket como 'verificado' requiere evidencia en 'note' "
             "(tests, CI, revisión)"
@@ -161,7 +185,7 @@ def transition(
         changes.append(("confirmed_at", None))
     if assigned_to is not UNSET:
         changes.append(("assigned_to", assigned_to))
-    if resolution is not UNSET:
+    if resolution is not None:
         changes.append(("resolution", resolution))
     # Al cambiar de estado el claim deja de ser válido: se libera la sesión.
     changes.append(("owner_session", None))

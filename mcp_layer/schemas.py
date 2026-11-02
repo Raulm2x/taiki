@@ -413,6 +413,8 @@ TOOL_SPECS = [
         "transition",
         "Cambia el estado de un ticket validando la máquina de estados. "
         "Pasar a 'verificado' exige evidencia en note. "
+        "Si se indica 'resolution' con el estado actual, documenta el cierre "
+        "sin cambiar de estado (útil en tickets ya confirmados). "
         "No permite pasar a 'confirmado' (reservado al usuario).",
         {
             "code": CODE,
@@ -421,6 +423,14 @@ TOOL_SPECS = [
                 "type": "string",
                 "maxLength": 10_000,
                 "description": "Motivo o contexto. Obligatorio al reabrir.",
+            },
+            "resolution": {
+                "type": "string",
+                "maxLength": 100_000,
+                "description": (
+                    "Resolución del cierre. Con el mismo estado, solo "
+                    "actualiza la resolución sin reabrir el ticket."
+                ),
             },
             "agent": AGENT,
             "session_id": SESSION,
