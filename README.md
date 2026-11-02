@@ -37,6 +37,24 @@ Comandos imprescindibles: `list`, `show`, `new`, `claim`, `complete`,
 `confirm`, `status`, `next` y `tui`. `--json`, `--compact` y `--json-summary`
 están pensados para agentes.
 
+## Memoria operativa
+
+`taiki` puede destilar lo aprendido en memorias pequeñas y revisables, sin
+guardar transcripciones. El **brief** recupera el contexto vigente al empezar;
+las lecciones de los agentes nacen como propuestas y solo el usuario las
+aprueba.
+
+```bash
+taiki brief                    # brief operativo (datos, no instrucciones)
+taiki remember "Prefiero commits en español"
+taiki memory pending           # propuestas de los agentes
+taiki memory approve M-0001    # solo el usuario
+```
+
+Las memorias llevan evidencia (ticket, commit, archivo…), respetan un
+presupuesto de caracteres y se archivan en vez de borrarse. Detalle:
+[Memoria](docs/memoria.md).
+
 ## Estados
 
 ```
@@ -76,6 +94,8 @@ El borrado requiere OK del conductor y una ruta exacta:
   proyecto y migración desde `ticket`.
 - [Uso](docs/uso.md) — CLI diario, épicas y numeración, TUI, revisión y
   confirmación.
+- [Memoria](docs/memoria.md) — brief, propuestas, aprobación, presupuesto,
+  evidencia y seguridad.
 - [MCP](docs/mcp.md) — herramientas, envelopes, recursos, prompts y sesiones.
 - [Operación](docs/operacion.md) — workspaces, orquestación, guard, worktrees,
   tickets temporales, servidores MCP, datos y aislamiento.

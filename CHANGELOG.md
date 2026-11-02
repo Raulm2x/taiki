@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+Tickets: T-0045.01–T-0045.05
+
+### feat
+- feat: memoria semántica P0/P1 con brief, búsqueda, propuestas y aprobación (T-0045)
+
 ## v0.2.0 — 2026-11-02
 
 Tickets: T-0038, T-0039, T-0042, T-0040, T-0043, T-0041, T-0044

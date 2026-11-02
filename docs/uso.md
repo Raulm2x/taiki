@@ -71,9 +71,47 @@ taiki scheme-install           # registra ticket:// para Ctrl+clic
 taiki tui                      # TUI con toggles para confirmar
 ```
 
-`--json` está disponible en `list`, `show`, `stats`, `next`, `guard` y `audit`.
+`--json` está disponible en `list`, `show`, `stats`, `next`, `guard`, `audit`,
+`memory`, `remember` y `brief`.
 En `list` y `show`, `--compact` y `--json-summary` implican `--json`: no hay
 combinaciones que se ignoren en silencio.
+
+### Memoria y brief
+
+La memoria guarda hechos, convenciones y pitfalls reutilizables; no sustituye
+al ticket ni guarda transcripciones. Las propuestas de los agentes quedan
+pendientes hasta que el usuario las aprueba. El detalle está en
+[Memoria](memoria.md).
+
+```bash
+taiki remember "Prefiero commits en español"        # preferencia (scope user)
+taiki remember "El gate exige ruff" --ticket T-0045.05
+
+taiki memory add --scope project --kind convention \
+  --title "Los docs van en docs/" \
+  --content "La documentación vive en docs/ y se enlaza desde docs/README.md." \
+  --evidence T-0045.05 --pin
+
+taiki memory list                      # vigentes y propuestas
+taiki memory list --kind pitfall
+taiki memory show M-0001               # detalle, uso y ledger
+taiki memory pending                   # propuestas pendientes
+taiki memory approve M-0002            # solo el usuario
+taiki memory reject M-0003 --why "Fallo transitorio"
+taiki memory edit M-0001 --content "Texto corregido"
+taiki memory pin M-0001                # fijar en el brief
+taiki memory unpin M-0001
+taiki memory rm M-0001 --why "Ya no aplica"  # archiva, no borra
+
+taiki brief                            # brief operativo
+taiki brief --write                    # .taiki/generated/brief.md
+taiki brief --section project --budget 2000
+```
+
+`taiki mcp install` regenera el brief y lo añade a las instrucciones del
+proyecto para que el agente lo reciba al empezar. Una memoria de origen agente
+exige evidencia y no puede aprobarse desde un agente: `approve` y `reject`
+requieren el actor `usuario`.
 
 ### Épicas y tareas
 

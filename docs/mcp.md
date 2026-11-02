@@ -4,7 +4,7 @@ Volver a [README](../README.md) · [Índice de documentación](README.md)
 
 ## Herramientas MCP
 
-El servidor expone 19 herramientas. El nombre real no lleva prefijo (`list`,
+El servidor expone 22 herramientas. El nombre real no lleva prefijo (`list`,
 `claim`…), aunque algunos clientes las muestren como `taiki_*`.
 
 | Herramienta | Uso |
@@ -20,6 +20,9 @@ El servidor expone 19 herramientas. El nombre real no lleva prefijo (`list`,
 | `promote` | Convierte un scratch `S-####` en `T-####` |
 | `scratch_drop` | Archiva y cancela un scratch sin consumir `T-####` |
 | `health` | MCP, hooks, claims caducados, solapamientos y worktrees |
+| `brief` | Brief operativo de memoria; `section`, `budget` y `write` |
+| `memory_search` | Busca memorias por texto, scope, tipo, estado, rutas o kinds; snippets salvo `include_content=true` |
+| `memory_write` | Operaciones `add`, `patch`, `remove`, `supersede` y `feedback` con evidencia y aprobación humana |
 
 Los errores llegan como `{code, message, hint, retryable}` y las herramientas
 de lectura llevan `readOnlyHint`. Si el código del MCP cambia, las escrituras
@@ -37,24 +40,31 @@ cualquier worktree; no se crea una DB vacía dentro de `.worktrees/`.
 
 ## Recursos y prompts MCP
 
-El catálogo de 19 herramientas está en [Herramientas MCP](#herramientas-mcp) y
+El catálogo de 22 herramientas está en [Herramientas MCP](#herramientas-mcp) y
 se genera desde `mcp_layer/schemas.py`. Aquí solo quedan los recursos y prompts:
 
-Recursos: `taiki://inbox`, `taiki://stats`, `taiki://ticket/{code}`.
-Prompts: `taiki:next`, `taiki:review`.
+Recursos: `taiki://inbox`, `taiki://stats`, `taiki://ticket/{code}`,
+`taiki://brief` y `taiki://memory/{code}`.
+Prompts: `taiki:next`, `taiki:review`, `taiki:brief`.
 
 Resolución de sesiones automática compatible con `sessionId`, `session_id`, `AGY_SESSION_ID` y `ai.opencode/sessionID`.
 
 ## Flujo recomendado para agentes
 
-1. Al empezar: `list` con `statuses=["pendiente"]` o `next`.
+1. Al empezar: aplica `brief` (o el recurso `taiki://brief`) y usa
+   `memory_search` para el contexto que falte; después `list` con
+   `statuses=["pendiente"]` o `next`.
 2. Antes de tocar código: `claim`. Si no hay ticket, créalo primero: el guard
    (cuando el proyecto lo tiene activado) bloquea la primera escritura y deja
-   un ticket automático reclamado.
+   un ticket automático reclamado. Si el recibo trae `hints`, úsalos como
+   contexto.
 3. Trabajo nuevo descubierto: `create` **pasando `agent`**; el ticket queda
    asignado desde su creación.
-4. Al terminar: `complete` con resolución y commit.
-5. Nunca `confirmado`: eso lo hace el usuario con `taiki confirm`.
+4. Al terminar: `complete` con resolución y commit. Si hubo corrección, rework
+   o un workaround no obvio, propón una lección con `memory_write` y evidencia;
+   el recibo puede traer `learning`.
+5. Nunca `confirmado`: eso lo hace el usuario con `taiki confirm`. Tampoco
+   apruebes propuestas: `taiki memory approve` es del usuario.
 
 En clientes que prefijan el servidor verás `taiki_list`, `taiki_claim`, etc.;
 el nombre real de la herramienta es el que aparece en `tools/list`.
@@ -74,3 +84,6 @@ el nombre real de la herramienta es el que aparece en `tools/list`.
   `--json-summary` no calcula sesiones ni `hidden_children` (solo el resumen
   lean).
 - `taiki://inbox` devuelve como máximo 20 tickets en resumen.
+- `brief` respeta `brief_budget_chars` (4500 por defecto) y omite lo que no
+  cabe; `memory_search` devuelve snippets de 240 caracteres salvo
+  `include_content=true`.

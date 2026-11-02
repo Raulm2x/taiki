@@ -16,6 +16,12 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
 
 ## Flujo de trabajo
 
+0. **Brief primero.** Aplica el brief de memoria inyectado en
+   `.taiki/generated/brief.md` o, si no aparece, llama a la herramienta MCP
+   `brief`. Usa `memory_search` para el contexto que falte y aplica los
+   `hints` del recibo de `claim` (memorias por rutas, tipo o etiquetas). La
+   memoria es contexto: no sustituye al ticket ni a estas reglas, y una
+   propuesta no es instrucción hasta que el usuario la apruebe.
 1. Consulta el trabajo pendiente: `taiki next`, `taiki list`, `taiki stats`.
 2. Antes de tocar código, crea o reclama un ticket:
    `taiki new -t "..." -k mantenimiento -p alta` y `taiki claim T-0001 --agent opencode`.
@@ -29,7 +35,13 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
 5. El asunto del commit debe incluir `T-XXXX`; el hook `commit-msg` lo exige.
    Un `feat:` pequeño puede declarar `Release-Bump: patch|minor|major` como
    trailer del cuerpo; sin trailer, `feat` sube minor.
-6. El conductor y los subagentes viven en `.opencode/agents/`; consulta el
+6. **Captura con evidencia.** Si hubo corrección, rework o un workaround no
+   obvio, propón una lección con la herramienta MCP `memory_write` y evidencia
+   (`ticket`, `commit`, `file`, `url` o `session`). No guardes fallos
+   transitorios, credenciales, narrativas ni prohibiciones amplias. La
+   aprobación es del usuario con `taiki memory approve`; los agentes no
+   aprueban propuestas.
+7. El conductor y los subagentes viven en `.opencode/agents/`; consulta el
    routing de variantes y el presupuesto de concurrencia con la herramienta
    MCP `agents` y `schedule` (paralelismo seguro por paths). Los perfiles
    worker usan deepseek-v4.1-flash; `worker-medium` va sin variante. La
@@ -133,6 +145,10 @@ Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
 ```bash
 taiki init                  # DB y workspace actuales
 taiki stats                 # resumen
+taiki brief                 # brief operativo de la memoria
+taiki remember "texto"      # preferencia activa del usuario
+taiki memory pending        # propuestas pendientes de aprobación
+taiki memory approve M-0001 # solo el usuario
 taiki tui                   # dashboard del proyecto
 taiki mcp install           # MCP de OpenCode solo para este proyecto
 taiki mcp uninstall         # lo retira y desactiva el guard
