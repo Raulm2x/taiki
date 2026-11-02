@@ -14,6 +14,7 @@ from commands import (
     cmd_attach,
     cmd_audit,
     cmd_auto_link,
+    cmd_brief,
     cmd_claim,
     cmd_comment,
     cmd_commit,
@@ -32,6 +33,7 @@ from commands import (
     cmd_list,
     cmd_mcp_install,
     cmd_mcp_uninstall,
+    cmd_memory,
     cmd_new,
     cmd_next,
     cmd_open,
@@ -41,6 +43,7 @@ from commands import (
     cmd_repair_gaps,
     cmd_reject,
     cmd_release,
+    cmd_remember,
     cmd_reopen,
     cmd_scheme_install,
     cmd_servers,
@@ -59,6 +62,7 @@ from commands import (
 )
 from ticketlib import domain
 from ticketlib.domain import KINDS, LINK_KINDS, PRIORITIES, STATUSES
+from ticketlib.memory import MEMORY_KINDS, MEMORY_SCOPES, MEMORY_STATUSES
 
 
 # ── Parser ───────────────────────────────────────────────────────────────────
@@ -312,6 +316,101 @@ def build_parser() -> argparse.ArgumentParser:
         help="Quita la marca scratch y lo devuelve a la tabla",
     )
     p.set_defaults(func=cmd_scratch)
+
+    p = sub.add_parser("memory", help="Gestiona la memoria semántica")
+    memory_sub = p.add_subparsers(dest="memory_action", required=True)
+    p.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser("add", help="Añade una memoria")
+    m.add_argument("--scope", choices=MEMORY_SCOPES, default="project")
+    m.add_argument("--kind", choices=MEMORY_KINDS, default="fact")
+    m.add_argument("--key")
+    m.add_argument("--title", required=True)
+    m.add_argument("--content", "--body", dest="content", required=True)
+    m.add_argument("--evidence", action="append", default=[])
+    m.add_argument("--confidence", type=float, default=0.5)
+    m.add_argument("--pin", action="store_true")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser("list", help="Lista memorias")
+    m.add_argument("--scope", choices=MEMORY_SCOPES)
+    m.add_argument("--kind", choices=MEMORY_KINDS)
+    m.add_argument("--status", choices=MEMORY_STATUSES)
+    m.add_argument("--limit", type=int, default=50)
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser("show", help="Detalle de una memoria")
+    m.add_argument("code")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser("pending", help="Propuestas pendientes")
+    m.add_argument("--limit", type=int, default=50)
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser("approve", help="Aprueba una propuesta")
+    m.add_argument("code")
+    m.add_argument("--actor", default="usuario")
+    m.add_argument("--why")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser("reject", help="Rechaza una propuesta")
+    m.add_argument("code")
+    m.add_argument("--actor", default="usuario")
+    m.add_argument("--why")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser("pin", help="Fija una memoria en el brief")
+    m.add_argument("code")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser("unpin", help="Desfija una memoria")
+    m.add_argument("code")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser("rm", help="Archiva una memoria (nunca la borra)")
+    m.add_argument("code")
+    m.add_argument("--why", required=True)
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser("edit", help="Edita una memoria")
+    m.add_argument("code")
+    m.add_argument("-t", "--title")
+    m.add_argument("--content", "--body", dest="content")
+    m.add_argument("--description")
+    m.add_argument("--key")
+    m.add_argument("--kind", choices=MEMORY_KINDS)
+    m.add_argument("--confidence", type=float)
+    m.add_argument("--paths", nargs="+")
+    m.add_argument("--why")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    p = sub.add_parser(
+        "remember", help="Atajo: guarda una preferencia activa del usuario"
+    )
+    p.add_argument("text", nargs="+")
+    p.add_argument("-t", "--title")
+    p.add_argument("--ticket", help="Ticket de evidencia (si no, la sesión)")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_remember)
+
+    p = sub.add_parser("brief", help="Brief operativo de la memoria")
+    p.add_argument("--write", action="store_true", help="Escribe el artefacto")
+    p.add_argument("--json", action="store_true")
+    p.add_argument(
+        "--section", choices=("project", "user", "all"), default="all"
+    )
+    p.add_argument("--budget", type=int, help="Presupuesto en caracteres")
+    p.set_defaults(func=cmd_brief)
 
     p = sub.add_parser("stats", help="Resumen de tickets")
     p.add_argument("--json", action="store_true")

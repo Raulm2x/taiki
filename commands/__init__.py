@@ -36,6 +36,8 @@ from .git import (
     cmd_hook_install,
 )
 from .guard import cmd_guard
+from .brief import cmd_brief
+from .memory import cmd_memory, cmd_remember
 from .mcp import cmd_mcp_install, cmd_mcp_uninstall
 from .servers import cmd_servers
 from .commit import cmd_commit, cmd_hook_check_index
@@ -85,6 +87,9 @@ __all__ = [
     "cmd_hook_install",
     "cmd_audit",
     "cmd_guard",
+    "cmd_brief",
+    "cmd_memory",
+    "cmd_remember",
     "cmd_mcp_install",
     "cmd_mcp_uninstall",
     "cmd_servers",

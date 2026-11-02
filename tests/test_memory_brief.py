@@ -1,0 +1,230 @@
+"""Brief operativo: secciones, orden, escape, presupuesto y escritura."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from ticketlib import db
+from ticketlib.memory import add_memory
+from ticketlib.memory.brief import render_brief, write_brief
+from ticketlib.memory.render import escape_text
+from tests.support import Harness
+
+
+def _seed(conn) -> dict[str, str]:
+    rama = add_memory(
+        conn,
+        title="Rama de integración",
+        content="develop integra con --ff-only.",
+        kind="convention",
+        key="rama-integracion",
+        scope="project",
+        source="user",
+    )
+    commits = add_memory(
+        conn,
+        title="Commits pequeños",
+        content="Prefiero commits pequeños con el código en el asunto.",
+        kind="preference",
+        key="commits-pequenos",
+        scope="user",
+        source="user",
+    )
+    flujo = add_memory(
+        conn,
+        title="Flujo de tests",
+        content="Primero los tests, luego el commit.",
+        kind="workflow",
+        key="flujo-tests",
+        scope="project",
+        source="user",
+    )
+    propuesta = add_memory(
+        conn,
+        title="Propuesta de decisión",
+        content="Revisar el presupuesto del brief.",
+        kind="decision",
+        key="propuesta-brief",
+        scope="project",
+        source="agent",
+        confidence=0.9,
+        evidence=[{"kind": "file", "ref": "README.md"}],
+    )
+    return {
+        "rama": rama["code"],
+        "commits": commits["code"],
+        "flujo": flujo["code"],
+        "propuesta": propuesta["code"],
+    }
+
+
+def run(h: Harness) -> None:
+    conn = h.conn
+    codes = _seed(conn)
+
+    result = render_brief(conn, {}, budget=5000)
+    text = result["text"]
+    h.ok(
+        "% — " in text and "chars]" in text,
+        "la cabecera incluye porcentaje y caracteres",
+    )
+    h.eq(result["version"], 1, "el brief declara su versión")
+    h.ok(
+        "## Proyecto" in text
+        and "## Usuario" in text
+        and "## Routing observado" in text
+        and "## Pendientes" in text,
+        "el brief incluye las cuatro secciones con datos",
+    )
+    h.ok(
+        codes["rama"] in result["sections"]["project"]
+        and codes["commits"] in result["sections"]["user"]
+        and codes["flujo"] in result["sections"]["routing"]
+        and codes["propuesta"] in result["sections"]["pending"],
+        "cada memoria cae en su sección",
+    )
+    h.eq(
+        render_brief(conn, {}, budget=5000)["text"],
+        text,
+        "dos renders seguidos son idénticos",
+    )
+    h.eq(
+        result["usage"]["used"],
+        sum(len(item) for item in (
+            "develop integra con --ff-only.",
+            "Prefiero commits pequeños con el código en el asunto.",
+            "Primero los tests, luego el commit.",
+            "Revisar el presupuesto del brief.",
+        )),
+        "el uso cuenta el contenido de las entradas incluidas",
+    )
+
+    first = add_memory(
+        conn,
+        title="Entrada normal",
+        content="Contenido normal.",
+        kind="fact",
+        key="entrada-normal",
+        scope="project",
+        source="user",
+    )
+    pinned = add_memory(
+        conn,
+        title="Entrada fijada",
+        content="Contenido fijado.",
+        kind="fact",
+        key="entrada-fijada",
+        scope="project",
+        source="user",
+        pinned=True,
+    )
+    ordered = render_brief(conn, {}, budget=5000)["text"]
+    h.ok(
+        ordered.index(pinned["code"]) < ordered.index(first["code"]),
+        "las memorias pinned aparecen primero",
+    )
+
+    escaped = add_memory(
+        conn,
+        title="Entrada multilínea",
+        content="primera\nsegunda linea",
+        kind="fact",
+        key="entrada-multilinea",
+        scope="project",
+        source="user",
+    )
+    escaped_text = render_brief(conn, {}, budget=5000)["text"]
+    entered = escaped["content"]
+    h.ok(
+        escaped_text.count(entered) == 0
+        and "primera\\nsegunda linea" in escaped_text,
+        "los saltos se escapan en el brief",
+    )
+    h.eq(
+        escape_text("a\nb\tc\x07"),
+        "a\\nb\\tc\\x07",
+        "escape_text convierte saltos, tabuladores y controles",
+    )
+
+    filtered = render_brief(conn, {}, budget=5000, section="user")
+    h.ok(
+        "## Usuario" in filtered["text"]
+        and "## Proyecto" not in filtered["text"],
+        "--section user limita el brief al usuario",
+    )
+
+    budget_conn = db.connect(h.tmp / "brief-budget.db")
+    try:
+        one = add_memory(
+            budget_conn,
+            title="Bloque uno",
+            content="A" * 20,
+            kind="fact",
+            key="bloque-uno",
+            source="user",
+        )
+        two = add_memory(
+            budget_conn,
+            title="Bloque dos",
+            content="B" * 20,
+            kind="fact",
+            key="bloque-dos",
+            source="user",
+        )
+        tight = render_brief(budget_conn, {}, budget=25)
+        h.eq(tight["usage"]["used"], 20, "el brief no supera el presupuesto")
+        h.eq(len(tight["omitted"]), 1, "solo una entrada cabe en 25 caracteres")
+        h.ok(
+            len(tight["omitted"]) == 1
+            and tight["omitted"][0] in (one["code"], two["code"])
+            and "entradas omitidas; usa memory_search" in tight["text"],
+            "el footer nombra las omitidas y cómo buscarlas",
+        )
+        included = one["code"] if one["code"] not in tight["omitted"] else two["code"]
+        content = "A" * 20 if included == one["code"] else "B" * 20
+        h.ok(
+            included in tight["text"] and content in tight["text"],
+            "la entrada incluida se conserva entera, sin truncar",
+        )
+    finally:
+        budget_conn.close()
+
+    empty_conn = db.connect(h.tmp / "brief-empty.db")
+    try:
+        empty = render_brief(empty_conn, {}, budget=100)
+        h.ok(
+            "## Routing" not in empty["text"] and "(sin memorias)" in empty["text"],
+            "sin datos se omite routing y se avisa de que no hay memorias",
+        )
+    finally:
+        empty_conn.close()
+
+    data = write_brief(h.tmp, conn, {}, budget=5000)
+    target = Path(h.tmp) / ".taiki" / "generated" / "brief.md"
+    h.eq(data["path"], str(target), "write_brief devuelve la ruta del artefacto")
+    h.ok(
+        target.read_text(encoding="utf-8").startswith(
+            "generated by taiki; do not edit"
+        ),
+        "el artefacto lleva la cabecera de generado",
+    )
+    folder = target.parent
+    h.eq(
+        [item.name for item in folder.iterdir()],
+        ["brief.md"],
+        "la escritura atómica no deja temporales",
+    )
+    add_memory(
+        conn,
+        title="Entrada posterior",
+        content="Aparece tras reescribir.",
+        kind="fact",
+        key="entrada-posterior",
+        scope="project",
+        source="user",
+    )
+    write_brief(h.tmp, conn, {}, budget=5000)
+    h.ok(
+        "Aparece tras reescribir." in target.read_text(encoding="utf-8"),
+        "reescribir reemplaza el artefacto completo",
+    )

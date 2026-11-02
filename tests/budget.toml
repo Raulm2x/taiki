@@ -7,8 +7,10 @@
 # P4: integración real (status, atribución, worktree y smoke opt-in).
 # P0/P1 (T-0045.01): +2 módulos de memoria (105 comprobaciones) y el esquema v5.
 # Revisión única del techo para la fundación de memoria; a partir de aquí, podar.
-max_seconds = 5.5
-baseline_checks = 1158
+# P1 (T-0045.02): +2 módulos de contrato de CLI y brief (+46 comprobaciones).
+# El techo se sube solo para cubrir el contrato nuevo; podar antes de volver a subir.
+max_seconds = 6.5
+baseline_checks = 1215
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
 
