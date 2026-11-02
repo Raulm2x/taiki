@@ -393,6 +393,28 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--json", action="store_true")
     m.set_defaults(func=cmd_memory)
 
+    m = memory_sub.add_parser(
+        "curate", help="Caduca, archiva y deduplica memorias de forma determinista"
+    )
+    m.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Muestra el plan sin escribir estados ni ledger",
+    )
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser("stats", help="Estadísticas de la memoria")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser(
+        "impact", help="Tendencias de cierre, intentos y lead time"
+    )
+    m.add_argument("--days", type=int, default=30)
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
     m = memory_sub.add_parser("approve", help="Aprueba una propuesta")
     m.add_argument("code")
     m.add_argument("--actor", default="usuario")

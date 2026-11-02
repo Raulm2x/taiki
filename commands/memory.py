@@ -19,6 +19,7 @@ from ticketlib.memory import (
     archive_memory,
     archive_playbook,
     create_playbook,
+    curate,
     export_all,
     export_playbook,
     generate_candidates,
@@ -34,6 +35,7 @@ from ticketlib.memory import (
 from ticketlib.memory import budget as memory_budget
 from ticketlib.memory import core as memory_core
 from ticketlib.memory.playbooks import slug_of
+from ticketlib.memory.stats import impact, stats
 from ticketlib.memory.render import memory_summary
 from ticketlib.util import now, parse_datetime
 
@@ -253,6 +255,115 @@ def _review(conn, args: argparse.Namespace) -> int:
         print(f"  - {instruction}")
     if args.write:
         print(f"Escrito: {packet['path']}")
+    return 0
+
+
+def _curate(conn, args: argparse.Namespace) -> int:
+    result = curate(
+        conn,
+        memory_core.config(None),
+        dry_run=bool(getattr(args, "dry_run", False)),
+    )
+    if _as_json(args):
+        print(render.to_json(result))
+        return 0
+    print("Curado de memoria" + (" (dry-run)" if args.dry_run else ""))
+    print(f"Stale: {len(result['stale'])}")
+    if result["stale"]:
+        print("  " + ", ".join(result["stale"]))
+    print(f"Archivadas: {len(result['archived'])}")
+    if result["archived"]:
+        print("  " + ", ".join(result["archived"]))
+    print(f"Merges: {len(result['merged'])}")
+    for item in result["merged"]:
+        print(f"  {item['code']} → {item['into']}")
+    print("Presupuesto:")
+    for scope in ("project", "user"):
+        data = result["budget"][scope]
+        estado = " · EXCEDIDO" if data["over"] else ""
+        print(
+            f"  {scope}: {data['used']}/{data['limit']} chars · "
+            f"retiradas {len(data['retired'])}{estado}"
+        )
+    return 0
+
+
+def _stats(conn, args: argparse.Namespace) -> int:
+    data = stats(conn, memory_core.config(None))
+    if _as_json(args):
+        print(render.to_json(data))
+        return 0
+    print(f"Memorias: {data['total']}")
+    print(
+        "  estado: "
+        + ", ".join(f"{name}={value}" for name, value in data["by_status"].items())
+    )
+    print(
+        "  scope: "
+        + ", ".join(f"{name}={value}" for name, value in data["by_scope"].items())
+    )
+    print(
+        "  kind: "
+        + ", ".join(f"{name}={value}" for name, value in data["by_kind"].items())
+    )
+    print("Presupuesto:")
+    for scope in ("project", "user"):
+        item = data["budget"][scope]
+        print(
+            f"  {scope}: {item['used']}/{item['limit']} chars · "
+            f"quedan {item['remaining']} · {item['entries']} entrada(s)"
+        )
+    proposals = data["proposals"]
+    print(f"Propuestas: {proposals['count']}")
+    if proposals["codes"]:
+        print("  " + ", ".join(proposals["codes"]))
+    usage = data["usage"]
+    print(
+        f"Uso: {usage['events']} evento(s) · use_count {usage['use_count']} · "
+        f"útil {usage['helpful']} · no útil {usage['unhelpful']}"
+    )
+    routing = data["routing"]
+    print(f"Routing observado: {len(routing['groups'])} grupo(s)")
+    for group in routing["groups"][:5]:
+        print(
+            f"  {group['kind']} · {group['profile']}: "
+            f"{group['samples']} cierre(s), first-pass "
+            f"{group['first_pass_rate']:.0%}, intentos {group['avg_attempts']}"
+        )
+    return 0
+
+
+def _impact(conn, args: argparse.Namespace) -> int:
+    data = impact(conn, memory_core.config(None), args.days)
+    if _as_json(args):
+        print(render.to_json(data))
+        return 0
+    print(
+        f"Impacto · últimos {data['days']} días · "
+        f"{data['closed']} ticket(s) cerrado(s)"
+    )
+    print(
+        f"Intentos: media {data['attempts']['avg']} · "
+        f"total {data['attempts']['total']}"
+    )
+    lead = data["lead_time_hours"]
+    print(f"Lead time: media {lead['avg']} h ({lead['samples']} muestra(s))")
+    verification = data["verification"]
+    print(
+        f"Verificación: {verification['verified']} verificaciones · "
+        f"{verification['failures']} fallo(s)"
+    )
+    if data["trend"]:
+        print("Tendencia semanal:")
+        for item in data["trend"]:
+            print(
+                f"  {item['period']}: {item['closed']} cierre(s), "
+                f"intentos {item['avg_attempts']}, "
+                f"lead {item['avg_lead_time_hours']} h, "
+                f"verificados {item['verified']}, "
+                f"fallos {item['verification_failures']}"
+            )
+    print(f"Nota: {data['notes'][0]}")
     return 0
 
 
@@ -667,6 +778,12 @@ def cmd_memory(args: argparse.Namespace) -> int:
             return _candidates(conn, args)
         if action == "review":
             return _review(conn, args)
+        if action == "curate":
+            return _curate(conn, args)
+        if action == "stats":
+            return _stats(conn, args)
+        if action == "impact":
+            return _impact(conn, args)
         if action == "approve":
             return _approve(conn, args)
         if action == "reject":
