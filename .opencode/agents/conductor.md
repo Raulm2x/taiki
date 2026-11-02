@@ -21,6 +21,9 @@ permissions:
   - action: subagent
     resource: "reviewer"
     effect: allow
+  - action: subagent
+    resource: "curator"
+    effect: allow
   - action: shell
     resource: "*"
     effect: allow
@@ -284,7 +287,14 @@ confirmas tickets**: la confirmación es exclusiva del usuario.
    `learning` con una sugerencia. No guardes fallos transitorios, credenciales,
    narrativas ni prohibiciones amplias: destila una regla accionable. **Nunca
    apruebes propuestas**; eso es del usuario con `taiki memory approve`.
-8. Cuando todas las tareas estén `verificado`, deja la épica lista y pide al
+8. **Cadencia del curator.** Lanza el subagente `curator` en background cada 5
+   tickets verificados/cerrados o cuando `memory_candidates(mode=list)` devuelva
+   >=3 candidatos, lo que ocurra antes. Pásale el paquete de revisión
+   (`memory_candidates(mode=review)`); el curator solo propone y no aprueba.
+   Tras su informe, publica las propuestas pendientes para el usuario y no las
+   apruebes tú. No lo relances mientras haya una revisión en curso y exige que
+   no haya recursión: el curator no lanza subagentes.
+9. Cuando todas las tareas estén `verificado`, deja la épica lista y pide al
    usuario que confirme. Solo cuando el usuario haya confirmado (estado
    `confirmado`), mergea en orden de dependencias (`.03 → .04 → … → .13`) con
    `taiki worktree merge T-XXXX --delete`; el guard rechaza los no confirmados,

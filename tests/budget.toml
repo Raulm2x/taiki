@@ -8,12 +8,14 @@
 # P0/P1 (T-0045.01): +2 módulos de memoria (105 comprobaciones) y el esquema v5.
 # Revisión única del techo para la fundación de memoria; a partir de aquí, podar.
 # P1 (T-0045.02): +2 módulos de contrato de CLI y brief (+46 comprobaciones).
+# P2 (T-0046.04): +1 módulo del subagente curator y su cadencia (+18
+# comprobaciones). Techo ajustado una vez; podar antes de volver a subir.
 # P2 (T-0046.03): +1 módulo de contrato MCP de candidatos (+29
 # comprobaciones) y el tool memory_candidates en el catálogo. La suite queda en
 # ~6.95s y los módulos más lentos rozan 0.80s; se amplía el margen local una vez
 # (CI conserva su presupuesto propio). Podar antes de volver a subir.
 max_seconds = 7.2
-baseline_checks = 1352
+baseline_checks = 1370
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
 

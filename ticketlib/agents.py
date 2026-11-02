@@ -178,6 +178,15 @@ DEFAULT_AGENTS: dict[str, dict[str, Any]] = {
         "cost": 0.5,
         "steps": 20,
     },
+    "curator": {
+        "model": "opencode-go/deepseek-v4.1-flash",
+        "variant": "high",
+        "strengths": [],
+        "max_parallel": 1,
+        "paths": [],
+        "cost": 1.0,
+        "steps": 24,
+    },
 }
 
 
