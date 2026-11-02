@@ -137,10 +137,13 @@ permissions:
     resource: "timeout * python3 tests/*"
     effect: allow
   - action: shell
-    resource: "taiki worktree merge * --force*"
+    resource: "taiki worktree merge*--force*"
     effect: deny
   - action: shell
-    resource: "taiki worktree merge * --no-tests*"
+    resource: "taiki worktree merge*--no-tests*"
+    effect: deny
+  - action: shell
+    resource: "taiki worktree merge*--path*"
     effect: deny
   - action: shell
     resource: "taiki worktree remove*"
@@ -236,12 +239,14 @@ Trabajas siempre en el checkout principal.
    - `git -C <worktree> status --porcelain` → vacío, sin cambios pendientes;
    - `git -C <worktree> rev-parse --abbrev-ref HEAD` → rama `agent/T-XXXX-*`.
    Si algo no cuadra, detente y repórtalo; no intentes arreglarlo.
-3. Mergea uno a uno con `taiki worktree merge T-XXXX --delete`. Captura la
-   salida completa y, tras cada merge, el SHA de develop:
-   `git rev-parse --short HEAD`.
-4. **Detente en el primer fallo.** No reintentes, no usas `--force` ni
-   `--no-tests` y no tocas el worktree. Devuelve el error completo, el estado
-   del worktree y la lista de pendientes (los que no llegaste a mergear).
+3. Mergea uno a uno con exactamente `taiki worktree merge T-XXXX --delete`.
+   `--force`, `--no-tests` y `--path` están prohibidos: no los uses ni antes ni
+   después del código. Captura la salida completa y, tras cada merge, el SHA de
+   develop: `git rev-parse --short HEAD`.
+4. **Detente en el primer fallo.** No reintentes, no usas `--force`,
+   `--no-tests` ni `--path` y no tocas el worktree. Devuelve el error completo,
+   el estado del worktree y la lista de pendientes (los que no llegaste a
+   mergear).
 5. Al terminar comprueba `git status --short --branch`, `git log --oneline -N`
    y, para cada mergeado, `git merge-base --is-ancestor <sha> HEAD`.
 6. Devuelve un **informe final** en tabla: ticket, rama, commit, tests OK y

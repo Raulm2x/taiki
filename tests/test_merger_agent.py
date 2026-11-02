@@ -127,10 +127,11 @@ def run(h: Harness) -> None:
         "el merger integra worktrees y puede ejecutar los tests",
     )
     h.ok(
-        _effect(front, "shell", "taiki worktree merge * --force*") == "deny"
-        and _effect(front, "shell", "taiki worktree merge * --no-tests*") == "deny"
+        _effect(front, "shell", "taiki worktree merge*--force*") == "deny"
+        and _effect(front, "shell", "taiki worktree merge*--no-tests*") == "deny"
+        and _effect(front, "shell", "taiki worktree merge*--path*") == "deny"
         and _effect(front, "shell", "taiki worktree remove*") == "deny",
-        "el merger no fuerza, no salta tests y no retira worktrees a mano",
+        "el merger no fuerza, no salta tests, no cambia el path ni retira worktrees",
     )
     h.ok(
         all(
@@ -179,7 +180,8 @@ def run(h: Harness) -> None:
         "no editas" in lowered
         and "no confirmas" in lowered
         and "--force" in lowered
-        and "--no-tests" in lowered,
+        and "--no-tests" in lowered
+        and "--path" in lowered,
         "el prompt prohíbe editar, confirmar y usar flags de bypass",
     )
 

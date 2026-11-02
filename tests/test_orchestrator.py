@@ -1230,8 +1230,9 @@ def run(h: Harness) -> None:
         and _rule(merger, "shell", "timeout * python3 tests/*") == "allow"
         and _rule(merger, "shell", "sed -n *") == "allow"
         and _rule(merger, "shell", "sed *") is None
-        and _rule(merger, "shell", "taiki worktree merge * --force*") == "deny"
-        and _rule(merger, "shell", "taiki worktree merge * --no-tests*") == "deny"
+        and _rule(merger, "shell", "taiki worktree merge*--force*") == "deny"
+        and _rule(merger, "shell", "taiki worktree merge*--no-tests*") == "deny"
+        and _rule(merger, "shell", "taiki worktree merge*--path*") == "deny"
         and _rule(merger, "shell", "taiki worktree remove*") == "deny"
         and _rule(merger, "shell", "taiki commit*") == "deny"
         and _rule(merger, "shell", "git add*") == "deny"
