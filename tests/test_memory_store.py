@@ -25,7 +25,7 @@ from tests.support import Harness
 
 
 def _migration(h: Harness) -> None:
-    """Una DB v4 conserva tickets y comentarios al migrar a v5."""
+    """Una DB v4 conserva tickets y comentarios al migrar a v6."""
     path = h.tmp / "v4.db"
     old = db.connect(path)
     try:
@@ -44,7 +44,7 @@ def _migration(h: Harness) -> None:
         old.execute("PRAGMA user_version = 4")
         h.eq(db.schema_version(old), 4, "la DB de prueba arranca en v4")
         db.migrate(old)
-        h.eq(db.schema_version(old), 5, "la migración sube a v5")
+        h.eq(db.schema_version(old), 6, "la migración sube a v6")
         h.eq(
             repo.get_ticket(old, ticket["code"])["title"],
             "Sobrevive a la migración",
@@ -74,6 +74,121 @@ def _migration(h: Harness) -> None:
         )
     finally:
         old.close()
+
+
+def _ticket_kinds(h: Harness) -> None:
+    """v5→v6, etiquetas de tipo de ticket, compatibilidad y filtros."""
+    path = h.tmp / "v5.db"
+    old = db.connect(path)
+    try:
+        seeded = add_memory(
+            old,
+            title="Memoria v5",
+            content="Se creó antes de la columna ticket_kinds.",
+            key="memoria-v5",
+            source="user",
+        )
+        old.execute("ALTER TABLE memories DROP COLUMN ticket_kinds")
+        old.execute("PRAGMA user_version = 5")
+        db.migrate(old)
+        h.ok(
+            db.schema_version(old) == 6
+            and "ticket_kinds"
+            in {row["name"] for row in old.execute("PRAGMA table_info(memories)")}
+            and get_memory(old, seeded["code"])["ticket_kinds"] == [],
+            "v5→v6 añade ticket_kinds y las memorias antiguas quedan generales",
+        )
+    finally:
+        old.close()
+
+    conn = db.connect(h.tmp / "ticket-kinds.db")
+    bug = add_memory(
+        conn,
+        title="Riesgo zeta en pagos",
+        content="El riesgo zeta aparece al cobrar.",
+        kind="pitfall",
+        ticket_kinds=["bug", "funcionalidad", "bug"],
+        source="user",
+    )
+    docs = add_memory(
+        conn,
+        title="Riesgo zeta en docs",
+        content="El riesgo zeta aparece al documentar.",
+        kind="pitfall",
+        ticket_kinds=["documentacion"],
+        source="user",
+    )
+    general = add_memory(
+        conn,
+        title="Riesgo zeta general",
+        content="El riesgo zeta aplica a cualquier ticket.",
+        kind="pitfall",
+        source="user",
+    )
+    h.ok(
+        bug["ticket_kinds"] == ["bug", "funcionalidad"]
+        and docs["ticket_kinds"] == ["documentacion"]
+        and general["ticket_kinds"] == [],
+        "add_memory persiste ticket_kinds sin duplicados y vacío es general",
+    )
+    h.eq(
+        {item["code"] for item in list_memories(conn, ticket_kinds=["bug"])},
+        {bug["code"], general["code"]},
+        "list_memories incluye las generales y excluye otras etiquetas",
+    )
+    h.eq(
+        {
+            item["code"]
+            for item in list_memories(conn, ticket_kinds=["bug", "documentacion"])
+        },
+        {bug["code"], docs["code"], general["code"]},
+        "list_memories une varios tipos de ticket",
+    )
+    h.eq(
+        {
+            item["code"]
+            for item in search_memories(
+                conn, "zeta", ticket_kinds=["bug"], record_usage=False
+            )
+        },
+        {bug["code"], general["code"]},
+        "search_memories filtra por ticket_kinds con la misma compatibilidad",
+    )
+    patched = patch_memory(conn, bug["code"], ticket_kinds=["seguridad"])
+    h.eq(
+        patched["ticket_kinds"],
+        ["seguridad"],
+        "patch_memory reemplaza las etiquetas de ticket",
+    )
+    h.eq(
+        {item["code"] for item in list_memories(conn, ticket_kinds=["bug"])},
+        {general["code"]},
+        "una memoria reetiquetada deja de casar con el tipo anterior",
+    )
+    cleared = patch_memory(conn, bug["code"], ticket_kinds=[])
+    h.ok(
+        cleared["ticket_kinds"] == []
+        and bug["code"]
+        in {item["code"] for item in list_memories(conn, ticket_kinds=["bug"])},
+        "patch_memory con lista vacía devuelve la memoria a general",
+    )
+    h.raises(
+        ValidationError,
+        lambda: add_memory(
+            conn,
+            title="Tipo inválido",
+            content="No debe guardarse.",
+            ticket_kinds=["inventado"],
+            source="user",
+        ),
+        "un tipo de ticket inválido se rechaza al crear",
+    )
+    h.raises(
+        ValidationError,
+        lambda: list_memories(conn, ticket_kinds=["inventado"]),
+        "un tipo de ticket inválido se rechaza al filtrar",
+    )
+    conn.close()
 
 
 def _crud(h: Harness) -> None:
@@ -746,6 +861,7 @@ def _ledger(h: Harness) -> None:
 
 def run(h: Harness) -> None:
     _migration(h)
+    _ticket_kinds(h)
     _crud(h)
     _policy(h)
     _status_explicit(h)

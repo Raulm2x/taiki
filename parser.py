@@ -329,6 +329,12 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--content", "--body", dest="content", required=True)
     m.add_argument("--evidence", action="append", default=[])
     m.add_argument("--confidence", type=float, default=0.5)
+    m.add_argument(
+        "--ticket-kinds",
+        nargs="+",
+        choices=KINDS,
+        help="Tipos de ticket aplicables; sin la opción, la memoria es general",
+    )
     m.add_argument("--pin", action="store_true")
     m.add_argument("--json", action="store_true")
     m.set_defaults(func=cmd_memory)
@@ -336,6 +342,12 @@ def build_parser() -> argparse.ArgumentParser:
     m = memory_sub.add_parser("list", help="Lista memorias")
     m.add_argument("--scope", choices=MEMORY_SCOPES)
     m.add_argument("--kind", choices=MEMORY_KINDS)
+    m.add_argument(
+        "--ticket-kinds",
+        nargs="+",
+        choices=KINDS,
+        help="Solo memorias aplicables a alguno de esos tipos de ticket",
+    )
     m.add_argument("--status", choices=MEMORY_STATUSES)
     m.add_argument("--limit", type=int, default=50)
     m.add_argument("--json", action="store_true")
@@ -420,6 +432,12 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--kind", choices=MEMORY_KINDS)
     m.add_argument("--confidence", type=float)
     m.add_argument("--paths", nargs="+")
+    m.add_argument(
+        "--ticket-kinds",
+        nargs="+",
+        choices=KINDS,
+        help="Reemplaza las etiquetas de tipo de ticket de la memoria",
+    )
     m.add_argument("--why")
     m.add_argument("--json", action="store_true")
     m.set_defaults(func=cmd_memory)

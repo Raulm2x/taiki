@@ -39,9 +39,26 @@ from ticketlib.util import now, parse_datetime
 
 from .common import _conn
 
-_EDIT_FIELDS = ("title", "content", "description", "key", "kind", "confidence")
+_EDIT_FIELDS = (
+    "title",
+    "content",
+    "description",
+    "key",
+    "kind",
+    "confidence",
+    "ticket_kinds",
+)
 _SINCE_RE = re.compile(r"^(\d+)d$", re.IGNORECASE)
-_DIFF_FIELDS = ("title", "kind", "key", "content", "description", "paths", "confidence")
+_DIFF_FIELDS = (
+    "title",
+    "kind",
+    "ticket_kinds",
+    "key",
+    "content",
+    "description",
+    "paths",
+    "confidence",
+)
 
 # ``--support`` clasifica por extensión; el resto son referencias de texto.
 _SUPPORT_PREFIXES = {
@@ -249,6 +266,9 @@ def _print_memory(memory: dict[str, Any], as_json: bool) -> None:
     )
     if memory.get("content"):
         print(f"  {memory['content']}")
+    ticket_kinds = memory.get("ticket_kinds") or []
+    if ticket_kinds:
+        print("  Tipos de ticket: " + ", ".join(str(item) for item in ticket_kinds))
     evidence = memory.get("evidence") or []
     if evidence:
         print(
@@ -279,6 +299,7 @@ def _add(conn, args: argparse.Namespace) -> int:
         actor="usuario",
         session_id=_session(),
         evidence=list(args.evidence or []),
+        ticket_kinds=args.ticket_kinds,
         pinned=bool(args.pin),
     )
     _print_memory(memory, _as_json(args))
@@ -291,6 +312,7 @@ def _list(conn, args: argparse.Namespace) -> int:
         scope=args.scope,
         status=args.status,
         kind=args.kind,
+        ticket_kinds=args.ticket_kinds,
         limit=args.limit,
         include_inactive=args.status in ("archived", "superseded"),
     )

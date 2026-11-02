@@ -60,6 +60,7 @@ def add_memory(
     description: str = "",
     paths: Iterable[object] | None = None,
     kinds: Iterable[object] | None = None,
+    ticket_kinds: Iterable[object] | None = None,
     confidence: float = 0.5,
     source: str = "agent",
     actor: str | None = None,
@@ -127,6 +128,7 @@ def add_memory(
     )
     project_paths = core.clean_project_paths(paths)
     kind_list = core.clean_kinds(kinds)
+    ticket_kind_list = core.clean_ticket_kinds(ticket_kinds)
     evidence_rows = core.clean_evidence(evidence)
     file_rows = core.clean_files(files, cfg)
     ticket = core.ticket_id(ticket_id)
@@ -173,10 +175,11 @@ def add_memory(
         cursor = conn.execute(
             "INSERT INTO memories("
             "code, scope, kind, \"key\", title, description, content, paths, kinds, "
+            "ticket_kinds, "
             "status, confidence, source, actor, session_id, ticket_id, "
             "supersedes_id, pinned, locked, created_at, updated_at, archived_at, "
             "fingerprint"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 code,
                 scope,
@@ -189,6 +192,9 @@ def add_memory(
                 if project_paths
                 else None,
                 json.dumps(kind_list, ensure_ascii=False) if kind_list else None,
+                json.dumps(ticket_kind_list, ensure_ascii=False)
+                if ticket_kind_list
+                else None,
                 final_status,
                 level,
                 source,
@@ -262,23 +268,35 @@ def get_memory(
     return core.row_to_memory(row, conn, details=True)
 
 
+def _ticket_kinds_filter(column: str, values: list[str]) -> tuple[str, list[Any]]:
+    """SQL que aplica memorias generales y las etiquetadas con algún tipo."""
+    marks = ", ".join("?" for _ in values)
+    clause = (
+        f"({column} IS NULL OR {column} = '' OR EXISTS ("
+        f"SELECT 1 FROM json_each({column}) WHERE value IN ({marks})))"
+    )
+    return clause, list(values)
+
+
 def list_memories(
     conn: sqlite3.Connection,
     *,
     scope: str | None = None,
     status: str | None = None,
     kind: str | None = None,
+    ticket_kinds: Iterable[object] | None = None,
     key: str | None = None,
     limit: int = 50,
     include_inactive: bool = False,
 ) -> list[dict[str, Any]]:
-    """Lista memorias por scope, estado, tipo o clave."""
+    """Lista memorias por scope, estado, tipo, tipo de ticket o clave."""
     if scope is not None:
         check_enum(scope, MEMORY_SCOPES, "scope")
     if status is not None:
         check_enum(status, MEMORY_STATUSES, "status")
     if kind is not None:
         check_enum(kind, MEMORY_KINDS, "kind")
+    ticket_kind_list = core.clean_ticket_kinds(ticket_kinds)
     if isinstance(limit, bool) or int(limit) <= 0:
         raise ValidationError("El límite de memorias debe ser mayor que 0")
 
@@ -295,6 +313,10 @@ def list_memories(
     if kind:
         where.append("kind = ?")
         params.append(kind)
+    if ticket_kind_list:
+        clause, values = _ticket_kinds_filter("ticket_kinds", ticket_kind_list)
+        where.append(clause)
+        params.extend(values)
     if key:
         where.append('"key" = ?')
         params.append(str(key).strip())
@@ -314,6 +336,7 @@ def search_memories(
     *,
     scope: str | None = None,
     status: str | None = None,
+    ticket_kinds: Iterable[object] | None = None,
     limit: int = 10,
     session_id: str | None = None,
     record_usage: bool = True,
@@ -326,6 +349,7 @@ def search_memories(
         check_enum(scope, MEMORY_SCOPES, "scope")
     if status is not None:
         check_enum(status, MEMORY_STATUSES, "status")
+    ticket_kind_list = core.clean_ticket_kinds(ticket_kinds)
     if isinstance(limit, bool) or int(limit) <= 0:
         raise ValidationError("El límite de búsqueda debe ser mayor que 0")
 
@@ -339,6 +363,10 @@ def search_memories(
         params.append(status)
     else:
         where.append("m.status NOT IN ('archived', 'superseded')")
+    if ticket_kind_list:
+        clause, values = _ticket_kinds_filter("m.ticket_kinds", ticket_kind_list)
+        where.append(clause)
+        params.extend(values)
     sql = (
         "SELECT m.* FROM memories_fts "
         "JOIN memories m ON m.id = memories_fts.rowid "

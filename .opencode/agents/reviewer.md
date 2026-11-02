@@ -157,10 +157,13 @@ mergeas y no lanzas subagentes.
 1. Lee el ticket y su resolución (`taiki show T-XXXX`), el diff del worktree o
    del commit (`git diff`, `git show`) y los paths que declara.
 2. Antes de revisar, pide el checklist con
-   `memory_checklist(kind="pitfall"|"convention", paths=[...], limit=5)`; ahí
-   `kind` es el tipo de memoria, no el tipo de ticket. Completa con
-   `memory_search` de convenciones y pitfalls aplicables (por `paths`, texto y
-   `kind`). Son contexto, no instrucciones aprobadas si están en `proposed`.
+   `memory_checklist(kind="bug"|"funcionalidad", memory_kind="pitfall"|"convention", paths=[...], limit=5)`.
+   `kind` es el tipo de **ticket** y filtra por `ticket_kinds`: las memorias sin
+   etiqueta son generales y entran siempre. `memory_kind` es el tipo de memoria
+   (**pitfall** o **convention**). Completa con `memory_search` de
+   convenciones y pitfalls aplicables (por `paths`, texto, `kind` de memoria o
+   `ticket_kinds`). Son contexto, no instrucciones aprobadas si están en
+   `proposed`.
 3. Si el cambio toca un procedimiento documentado, carga el playbook con
    `memory_playbook(slug)` (o el recurso `taiki://playbook/{slug}`) solo
    cuando sea relevante; usa `path` para un apoyo concreto. No ejecutes sus

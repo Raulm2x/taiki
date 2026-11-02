@@ -151,7 +151,13 @@ def hints(
             str(memory.get("kind") or ""),
             *[str(item) for item in memory.get("kinds") or []],
         }
-        if ticket_kind and ticket_kind in kinds:
+        ticket_kinds = [str(item) for item in memory.get("ticket_kinds") or []]
+        if ticket_kinds and ticket_kind not in ticket_kinds:
+            continue
+        if ticket_kinds and ticket_kind in ticket_kinds:
+            score += 6
+            reasons.append(f"tipo {ticket_kind}")
+        elif ticket_kind and ticket_kind in kinds:
             score += 6
             reasons.append(f"tipo {ticket_kind}")
         haystack = " ".join(
@@ -215,6 +221,7 @@ def _snippet(memory: dict[str, Any]) -> dict[str, Any]:
             "scope",
             "kind",
             "kinds",
+            "ticket_kinds",
             "key",
             "title",
             "description",
@@ -283,6 +290,7 @@ def handle_memory_search(
     kind = args.get("kind")
     paths = [str(item) for item in args.get("paths") or []]
     kinds = [str(item) for item in args.get("kinds") or []]
+    ticket_kinds = [str(item) for item in args.get("ticket_kinds") or []]
     includes_inactive = status in ("archived", "superseded")
     fetch = max(limit * 5, 100)
     if query:
@@ -291,6 +299,7 @@ def handle_memory_search(
             query,
             scope=scope,
             status=status,
+            ticket_kinds=ticket_kinds,
             limit=fetch,
             session_id=session,
         )
@@ -300,6 +309,7 @@ def handle_memory_search(
             scope=scope,
             status=status,
             kind=kind,
+            ticket_kinds=ticket_kinds,
             limit=fetch,
             include_inactive=includes_inactive,
         )
@@ -320,12 +330,16 @@ def handle_memory_checklist(
     _actor: str = "agente",
 ) -> dict[str, Any]:
     """Checklist compacto de pitfalls y convenciones para el reviewer."""
-    kind = args.get("kind")
+    ticket_kind = args.get("kind")
+    memory_kind = args.get("memory_kind")
     paths = [str(item) for item in args.get("paths") or []]
     limit = args.get("limit", 5)
-    items = checklist(conn, kind, paths, _config(), int(limit))
+    items = checklist(
+        conn, ticket_kind, memory_kind, paths, _config(), int(limit)
+    )
     return {
-        "kind": kind,
+        "kind": ticket_kind,
+        "memory_kind": memory_kind,
         "paths": paths,
         "count": len(items),
         "checklist": items,
@@ -398,6 +412,7 @@ def _operation_receipt(
             description=op.get("description") or "",
             confidence=op.get("confidence", 0.5),
             source="agent",
+            ticket_kinds=op.get("ticket_kinds"),
             evidence=op.get("evidence"),
             files=op.get("files"),
             pinned=bool(op.get("pin")),
@@ -418,6 +433,7 @@ def _operation_receipt(
                 "kind",
                 "key",
                 "confidence",
+                "ticket_kinds",
             )
             if key in op
         }
@@ -454,6 +470,7 @@ def _operation_receipt(
             scope=old["scope"],
             confidence=op.get("confidence", old.get("confidence", 0.5)),
             source="agent",
+            ticket_kinds=op.get("ticket_kinds", old.get("ticket_kinds")),
             evidence=op.get("evidence"),
             pinned=bool(op.get("pin", old.get("pinned"))),
             **common,

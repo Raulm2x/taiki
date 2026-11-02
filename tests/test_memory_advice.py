@@ -127,6 +127,26 @@ def _checklist(h: Harness) -> None:
         paths=["docs/"],
         source="user",
     )
+    bug_pitfall = add_memory(
+        conn,
+        title="Pitfall de bug en advice",
+        content="Un bug de advice revisa muestras y rutas.",
+        kind="pitfall",
+        ticket_kinds=["bug"],
+        paths=["ticketlib/memory/advice.py"],
+        confidence=0.8,
+        source="user",
+    )
+    func_convention = add_memory(
+        conn,
+        title="Convención de funcionalidad",
+        content="Una funcionalidad nueva documenta el contrato.",
+        kind="convention",
+        ticket_kinds=["funcionalidad"],
+        paths=["ticketlib/memory/advice.py"],
+        confidence=0.7,
+        source="user",
+    )
     proposed = add_memory(
         conn,
         title="Pitfall propuesto",
@@ -147,54 +167,93 @@ def _checklist(h: Harness) -> None:
     )
     archive_memory(conn, archived["code"], reason="obsoleto")
 
-    by_path = checklist(conn, None, ["ticketlib/memory/advice.py"])
+    by_path = checklist(conn, None, None, ["ticketlib/memory/advice.py"])
     h.eq(
-        [item["code"] for item in by_path],
-        [path_pitfall["code"]],
+        {item["code"] for item in by_path},
+        {path_pitfall["code"], bug_pitfall["code"], func_convention["code"]},
         "el checklist filtra por rutas y excluye propuestas y archivadas",
     )
     h.ok(
-        {"code", "kind", "title", "summary", "paths", "evidence", "confidence"}
+        {"code", "kind", "ticket_kinds", "title", "summary", "paths", "evidence"}
         <= set(by_path[0])
         and by_path[0]["evidence"][0]["ref"] == "T-0047.04"
         and "ruta" in by_path[0]["reason"],
-        "cada entrada es compacta y lleva evidencia y motivo",
+        "cada entrada es compacta y lleva etiquetas, evidencia y motivo",
     )
     h.eq(
-        [item["code"] for item in checklist(conn, "pitfall", ["ticketlib/memory/advice.py"])],
+        {
+            item["code"]
+            for item in checklist(
+                conn, "bug", None, ["ticketlib/memory/advice.py"]
+            )
+        },
+        {path_pitfall["code"], bug_pitfall["code"]},
+        "kind de ticket incluye las generales y la etiquetada para bug",
+    )
+    h.eq(
+        {
+            item["code"]
+            for item in checklist(
+                conn, "funcionalidad", None, ["ticketlib/memory/advice.py"]
+            )
+        },
+        {path_pitfall["code"], func_convention["code"]},
+        "kind de ticket excluye las memorias de otros tipos",
+    )
+    h.eq(
+        [
+            item["code"]
+            for item in checklist(
+                conn, "documentacion", None, ["ticketlib/memory/advice.py"]
+            )
+        ],
         [path_pitfall["code"]],
-        "kind=pitfall filtra por tipo de memoria",
+        "sin etiquetas que casen solo quedan las memorias generales",
     )
     h.eq(
-        checklist(conn, "convention", ["ticketlib/memory/advice.py"]),
+        checklist(conn, "bug", "convention", ["ticketlib/memory/advice.py"]),
         [],
-        "una convención de otras rutas no entra",
+        "memory_kind filtra por tipo de memoria aunque el ticket case",
     )
     h.eq(
-        [item["code"] for item in checklist(conn, "convention", ["ticketlib/memory/checks.py"])],
+        [
+            item["code"]
+            for item in checklist(
+                conn, None, "convention", ["ticketlib/memory/checks.py"]
+            )
+        ],
         [convention["code"]],
-        "kind=convention devuelve la convención que casa",
+        "sin tipo de ticket, memory_kind devuelve la convención que casa",
     )
-    general = checklist(conn, None, None)
+    general = checklist(conn, None, None, None)
     h.ok(
-        len(general) == 3
+        len(general) == 5
         and unrelated["code"] in {item["code"] for item in general}
         and proposed["code"] not in {item["code"] for item in general},
         "sin filtros lista pits y convenciones activos sin propuestas",
     )
-    h.eq(len(checklist(conn, None, None, limit=1)), 1, "el límite recorta el checklist")
+    h.eq(
+        len(checklist(conn, None, None, None, limit=1)),
+        1,
+        "el límite recorta el checklist",
+    )
     h.raises(
         ValidationError,
-        lambda: checklist(conn, None, None, limit=0),
+        lambda: checklist(conn, None, None, None, limit=0),
         "un límite inválido se rechaza",
     )
     h.raises(
         ValidationError,
-        lambda: checklist(conn, "bug"),
-        "kind solo admite pitfall o convention",
+        lambda: checklist(conn, "inventado"),
+        "kind solo admite tipos de ticket",
+    )
+    h.raises(
+        ValidationError,
+        lambda: checklist(conn, None, "bug"),
+        "memory_kind solo admite pitfall o convention",
     )
     h.eq(
-        checklist(conn, None, None, {"enabled": False}),
+        checklist(conn, None, None, None, {"enabled": False}),
         [],
         "la memoria desactivada no devuelve checklist",
     )

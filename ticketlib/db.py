@@ -155,6 +155,7 @@ CREATE TABLE IF NOT EXISTS memories (
     content         TEXT NOT NULL,
     paths           TEXT,
     kinds           TEXT,
+    ticket_kinds    TEXT,
     status          TEXT NOT NULL DEFAULT 'proposed',
     confidence      REAL NOT NULL DEFAULT 0.5,
     source          TEXT NOT NULL DEFAULT 'agent',
@@ -413,11 +414,18 @@ def _migrate_v5(conn: sqlite3.Connection, force: bool = False) -> None:
     )
 
 
+def _migrate_v6(conn: sqlite3.Connection, force: bool = False) -> None:
+    """Etiquetas de tipo de ticket en la memoria (aditiva, sin backfill)."""
+    if "ticket_kinds" not in _table_columns(conn, "memories"):
+        conn.execute("ALTER TABLE memories ADD COLUMN ticket_kinds TEXT")
+
+
 MIGRATIONS = {
     2: _migrate_v2,
     3: _migrate_v3,
     4: _migrate_v4,
     5: _migrate_v5,
+    6: _migrate_v6,
 }
 
 

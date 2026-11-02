@@ -136,6 +136,24 @@ def _hints(h: Harness) -> None:
         paths=["src/a/"],
         source="user",
     )
+    bug_memory = add_memory(
+        conn,
+        title="Memoria de bug en src",
+        content="Riesgo específico de bug en src/a.",
+        kind="pitfall",
+        ticket_kinds=["bug"],
+        paths=["src/a/"],
+        source="user",
+    )
+    docs_memory = add_memory(
+        conn,
+        title="Memoria de docs en src",
+        content="Riesgo de documentación en src/a.",
+        kind="pitfall",
+        ticket_kinds=["documentacion"],
+        paths=["src/a/"],
+        source="user",
+    )
     relevant = _playbook(
         conn,
         "revisar-pr",
@@ -173,6 +191,11 @@ def _hints(h: Harness) -> None:
     h.ok(
         any(item["code"] == memory["code"] for item in hints),
         "los hints siguen incluyendo memorias normales",
+    )
+    h.ok(
+        any(item["code"] == bug_memory["code"] for item in hints)
+        and docs_memory["code"] not in {item.get("code") for item in hints},
+        "los hints incluyen el tipo del ticket y excluyen otras etiquetas",
     )
     h.eq(
         slugs,
@@ -232,8 +255,9 @@ def _reviewer(h: Harness) -> None:
     h.ok(
         "memory_checklist" in text
         and "memory_playbook" in text
-        and "tipo de memoria" in text,
-        "el reviewer usa memory_checklist y memory_playbook y aclara kind",
+        and "tipo de memoria" in text
+        and "memory_kind" in text,
+        "el reviewer usa memory_checklist y memory_playbook y aclara los kinds",
     )
     h.ok(
         "memory_search" in text

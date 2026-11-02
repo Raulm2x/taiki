@@ -90,9 +90,11 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
   medios (mínimo 5 muestras). Es una sugerencia: nunca cambia la configuración
   ni lanza agentes; decide el conductor.
 - **Reviewer**: antes de revisar usa
-  `memory_checklist(kind="pitfall"|"convention", paths=[...])`, donde `kind` es
-  el tipo de memoria y no el tipo de ticket, y completa con `memory_search` de
-  pitfalls. Si detecta un fallo recurrente, propone un pitfall sin aprobarlo.
+  `memory_checklist(kind="bug"|"funcionalidad", memory_kind="pitfall"|"convention", paths=[...])`:
+  `kind` es el tipo de **ticket** y filtra por `ticket_kinds` (las memorias sin
+  etiqueta son generales), mientras que `memory_kind` es el tipo de **memoria**.
+  Completa con `memory_search` de pitfalls. Si detecta un fallo recurrente,
+  propone un pitfall sin aprobarlo.
 
 ## Agentes en paralelo
 

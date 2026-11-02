@@ -33,6 +33,7 @@ def patch_memory(
     confidence: Any = UNSET,
     paths: Any = UNSET,
     kinds: Any = UNSET,
+    ticket_kinds: Any = UNSET,
     files: Any = UNSET,
     actor: str | None = None,
     session_id: str | None = None,
@@ -96,6 +97,13 @@ def patch_memory(
         kind_list = core.clean_kinds(kinds)
         updates["kinds"] = (
             json.dumps(kind_list, ensure_ascii=False) if kind_list else None
+        )
+    if ticket_kinds is not UNSET:
+        ticket_kind_list = core.clean_ticket_kinds(ticket_kinds)
+        updates["ticket_kinds"] = (
+            json.dumps(ticket_kind_list, ensure_ascii=False)
+            if ticket_kind_list
+            else None
         )
     file_rows = None if files is UNSET else core.clean_files(files, cfg)
 

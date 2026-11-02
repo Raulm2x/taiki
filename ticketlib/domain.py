@@ -67,7 +67,7 @@ TRANSITIONS: dict[str, set[str]] = {
 
 REOPEN_FROM = {"completado", "verificado", "confirmado", "cancelado"}
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # Marcador interno de los tickets temporales (scratch). Lleva guion bajo para
 # no colisionar con etiquetas de tema del usuario (p. ej. tags=["scratch"]).

@@ -43,8 +43,10 @@ def run(h: Harness) -> None:
         and "memory_checklist" in handlers.TOOL_DISPATCH
         and "memory_checklist" not in handlers.MUTATING_TOOLS
         and checklist_tool["inputSchema"]["properties"]["kind"]["enum"]
+        == list(domain.KINDS)
+        and checklist_tool["inputSchema"]["properties"]["memory_kind"]["enum"]
         == ["pitfall", "convention"],
-        "el catálogo expone memory_checklist como herramienta de lectura",
+        "el catálogo expone memory_checklist con tipo de ticket y de memoria",
     )
 
     for _ in range(5):
@@ -86,6 +88,7 @@ def run(h: Harness) -> None:
         description="La muestra mínima son 5 tickets.",
         content="No inventes advice con muestras pequeñas.",
         kind="pitfall",
+        ticket_kinds=["bug"],
         paths=["ticketlib/memory/advice.py"],
         source="user",
         evidence=[{"kind": "ticket", "ref": "T-0047.04"}],
@@ -115,23 +118,41 @@ def run(h: Harness) -> None:
     )
     by_kind = handlers.call_tool(
         "memory_checklist",
-        {"kind": "convention", "paths": ["ticketlib/memory/advice.py"]},
+        {
+            "kind": "bug",
+            "memory_kind": "convention",
+            "paths": ["ticketlib/memory/advice.py"],
+        },
     )
     h.ok(
         by_kind["count"] == 1
         and by_kind["checklist"][0]["kind"] == "convention",
-        "memory_checklist filtra por tipo de memoria",
+        "memory_checklist combina tipo de ticket y tipo de memoria",
+    )
+    by_ticket = handlers.call_tool(
+        "memory_checklist",
+        {"kind": "funcionalidad", "paths": ["ticketlib/memory/advice.py"]},
+    )
+    h.ok(
+        by_ticket["count"] == 1
+        and by_ticket["checklist"][0]["kind"] == "convention",
+        "memory_checklist excluye memorias etiquetadas para otro ticket",
     )
     h.ok(
         _raises(
             lambda: handlers.call_tool(
-                "memory_checklist", {"kind": "bug"}
+                "memory_checklist", {"kind": "inventado"}
+            )
+        )
+        and _raises(
+            lambda: handlers.call_tool(
+                "memory_checklist", {"memory_kind": "bug"}
             )
         )
         and _raises(
             lambda: handlers.call_tool("memory_checklist", {"limit": 0})
         ),
-        "memory_checklist rechaza tipo y límite inválidos",
+        "memory_checklist rechaza tipos y límite inválidos",
     )
 
     original = memory_handlers._config

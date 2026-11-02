@@ -40,6 +40,8 @@ def run(h: Harness) -> None:
         "solo brief y memory_search son de lectura",
     )
     operations = _tool("memory_write")["inputSchema"]["properties"]["operations"]
+    search_props = _tool("memory_search")["inputSchema"]["properties"]
+    write_props = operations["items"]["properties"]
     h.ok(
         set(memory_handlers.HANDLERS) <= set(handlers.TOOL_DISPATCH)
         and all(
@@ -47,6 +49,8 @@ def run(h: Harness) -> None:
             for name in ("brief", "memory_search", "memory_write")
         )
         and operations["items"]["additionalProperties"] is False
+        and search_props["ticket_kinds"]["items"]["enum"] == list(domain.KINDS)
+        and write_props["ticket_kinds"]["items"]["enum"] == list(domain.KINDS)
         and "memory_write" in handlers.MUTATING_TOOLS
         and "brief" not in handlers.MUTATING_TOOLS,
         "despacho, esquemas estrictos y mutating derivados del catálogo",
@@ -85,6 +89,7 @@ def run(h: Harness) -> None:
         kind="pitfall",
         scope="project",
         paths=["mcp_layer/memory.py"],
+        ticket_kinds=["bug", "funcionalidad"],
         kinds=["fact"],
         source="user",
         actor="usuario",
@@ -138,6 +143,7 @@ def run(h: Harness) -> None:
                     "key": "fact-mcp",
                     "title": "Hecho MCP",
                     "content": "El brief reutiliza el store de memoria.",
+                    "ticket_kinds": ["bug"],
                     "evidence": [ticket["code"], "mcp_layer/memory.py"],
                     "confidence": 0.9,
                 },
@@ -169,6 +175,12 @@ def run(h: Harness) -> None:
     miss = handlers.call_tool(
         "memory_search", {"paths": ["no-existe/"], "limit": 5}
     )
+    by_ticket = handlers.call_tool(
+        "memory_search", {"query": "reutiliza", "ticket_kinds": ["bug"]}
+    )
+    other_ticket = handlers.call_tool(
+        "memory_search", {"query": "reutiliza", "ticket_kinds": ["funcionalidad"]}
+    )
     h.ok(
         search["count"] >= 3
         and all("snippet" in item and "content" not in item for item in search["memories"])
@@ -177,8 +189,10 @@ def run(h: Harness) -> None:
         and by_paths["count"] == 1
         and by_paths["memories"][0]["code"] == hint_match["code"]
         and "content" in by_paths["memories"][0]
-        and miss["count"] == 0,
-        "memory_search combina FTS, filtros, rutas y snippets",
+        and miss["count"] == 0
+        and by_ticket["count"] == 1
+        and other_ticket["count"] == 0,
+        "memory_search combina FTS, filtros, rutas, ticket_kinds y snippets",
     )
 
     lifecycle = handlers.call_tool(
@@ -223,10 +237,10 @@ def run(h: Harness) -> None:
         {"code": "T-X", "paths": ["mcp_layer/memory.py"], "kind": "funcionalidad", "tags": []},
     )
     by_kind = memory_handlers.hints(
-        h.conn, {"code": "T-X", "paths": [], "kind": "pitfall", "tags": []}
+        h.conn, {"code": "T-X", "paths": [], "kind": "funcionalidad", "tags": []}
     )
     no_hints = memory_handlers.hints(
-        h.conn, {"code": "T-X", "paths": ["nada/"], "kind": "bug", "tags": []}
+        h.conn, {"code": "T-X", "paths": ["nada/"], "kind": "documentacion", "tags": []}
     )
     original_config = memory_handlers._config
     memory_handlers._config = lambda: {"enabled": False}

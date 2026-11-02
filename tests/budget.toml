@@ -20,8 +20,11 @@
 # P3 advice/checklist (T-0047.04): +30 comprobaciones y ~0.2s; medido 7.66-8.04s
 # según carga, así que sube el margen local y el de CI (8.3s) una vez.
 # P3 brief/hints (T-0047.05): +17 comprobaciones y ~0.1s (8.02-8.18s medidos).
+# T-0052 ticket_kinds: +19 comprobaciones (migración v6, filtros store/MCP/CLI,
+# checklist por tipo de ticket y hints). Revisión única del techo; a partir de
+# aquí, podar antes de volver a subir.
 max_seconds = 8.2
-baseline_checks = 1574
+baseline_checks = 1593
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
 

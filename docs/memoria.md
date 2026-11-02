@@ -54,6 +54,31 @@ memorias de proyecto se crean con `taiki memory add` o con `memory_write`.
 | `reference` | Enlace o ruta de consulta. |
 | `playbook` | Procedimiento completo, exportable como skill. |
 
+### Tipos de ticket (`ticket_kinds`)
+
+`kind` y `ticket_kinds` son conceptos distintos y no se mezclan:
+
+- `kind` es el **tipo de memoria** (`fact`, `pitfall`, `convention`…).
+- `ticket_kinds` es una lista opcional de **tipos de ticket** a los que aplica
+  la memoria: `mantenimiento`, `funcionalidad`, `bug`, `documentacion`,
+  `seguridad` u `otro`.
+
+Una memoria sin `ticket_kinds` es **general**: aplica a cualquier ticket, igual
+que las memorias creadas antes de la migración v6. Una memoria etiquetada solo
+aplica a los tipos que incluye. El checklist del reviewer filtra por el tipo del
+ticket revisado y los hints descartan las memorias etiquetadas que no casan.
+
+La columna `ticket_kinds` es un JSON en `memories`. La migración v6 es aditiva
+(`ALTER TABLE`) y no reescribe memorias existentes: quedan con la lista vacía y
+se comportan como generales.
+
+```bash
+taiki memory add --title "Riesgo en pagos" --content "..." \
+  --kind pitfall --ticket-kinds bug funcionalidad --evidence T-0052
+taiki memory list --ticket-kinds bug
+taiki memory edit M-0001 --ticket-kinds seguridad
+```
+
 ### Estados
 
 | Estado | Significado |
@@ -289,12 +314,20 @@ El conductor decide si aplica el perfil, la variante o los steps.
 
 ### Checklist del reviewer
 
-`memory_checklist(kind, paths, limit)` devuelve hasta 5 pitfalls y
-convenciones `active` que casan con el cambio. `kind` es el **tipo de memoria**
-(`pitfall` o `convention`), no el tipo de ticket; `paths` filtra por rutas y
-cada entrada es compacta, con evidencia y motivo. El reviewer pide el checklist
-antes de revisar, completa con `memory_search` y propone un `pitfall` si
-detecta un fallo recurrente, sin aprobarlo.
+`memory_checklist(kind, memory_kind, paths, limit)` devuelve hasta 5 pitfalls y
+convenciones `active` que casan con el cambio:
+
+- `kind` es el **tipo de ticket** (`bug`, `funcionalidad`, `mantenimiento`…);
+  filtra por la etiqueta `ticket_kinds` de la memoria. Las memorias sin etiqueta
+  son generales y entran siempre.
+- `memory_kind` es opcional y filtra por **tipo de memoria** (`pitfall` o
+  `convention`).
+- `paths` filtra por rutas y cada entrada es compacta, con evidencia y motivo.
+
+El reviewer pide el checklist antes de revisar, completa con `memory_search` y
+propone un `pitfall` si detecta un fallo recurrente, sin aprobarlo. Los hints de
+`claim` aplican la misma compatibilidad: una memoria etiquetada para otro tipo
+de ticket no se sugiere.
 
 ## Presupuesto
 
@@ -426,10 +459,10 @@ borrado destructivo.
 | Herramienta | Uso |
 |---|---|
 | `brief` | Brief operativo; `section`, `budget` y `write`. |
-| `memory_search` | Busca por texto y filtra por `scope`, `kind`, `status`, `paths` o `kinds`; devuelve snippets salvo `include_content=true`. |
-| `memory_write` | Aplica operaciones `add`, `patch`, `remove`, `supersede` o `feedback` con evidencia y la política del workspace; `kind=playbook` acepta `description` y `files [{path, content}]`; devuelve un recibo con presupuesto y avisos. |
+| `memory_search` | Busca por texto y filtra por `scope`, `kind`, `status`, `paths`, `kinds` o `ticket_kinds`; devuelve snippets salvo `include_content=true`. |
+| `memory_write` | Aplica operaciones `add`, `patch`, `remove`, `supersede` o `feedback` con evidencia y la política del workspace; `kind=playbook` acepta `description` y `files [{path, content}]`; `ticket_kinds` etiqueta por tipo de ticket; devuelve un recibo con presupuesto y avisos. |
 | `memory_playbook` | Solo lectura: carga un playbook por `slug` (título, descripción, cuerpo, apoyos y evidencia); `path` carga un apoyo concreto. |
-| `memory_checklist` | Solo lectura: pitfalls y convenciones activos por tipo de memoria y rutas para el reviewer; `limit` de 1 a 20. |
+| `memory_checklist` | Solo lectura: pitfalls y convenciones activos por tipo de ticket (`kind`), tipo de memoria (`memory_kind`) y rutas; `limit` de 1 a 20. |
 | `memory_candidates` | Solo lectura: `mode=list` lista candidatos; `mode=review` devuelve el paquete del curator. Acepta `since`, `kind` y `limit`. |
 
 Recursos: `taiki://brief` (Markdown), `taiki://memory/{code}` (JSON),
@@ -439,10 +472,12 @@ Prompts: `taiki:brief`, que aplica el brief al empezar el trabajo;
 `taiki:curate`, que guía la revisión de candidatos sin aprobar ni editar.
 
 El recibo de `claim` puede incluir `hints`: memorias activas relevantes por
-rutas, tipo o etiquetas, más hasta dos playbooks relevantes con `slug`,
-`title`, `description` y `reason` para cargarlos con `memory_playbook`. El
-recibo de `complete` puede incluir `learning`: una sugerencia para proponer una
-lección tras rework o reapertura. Son ayudas, no órdenes.
+rutas, tipo de ticket o etiquetas, más hasta dos playbooks relevantes con
+`slug`, `title`, `description` y `reason` para cargarlos con `memory_playbook`.
+Las memorias sin `ticket_kinds` son generales; las etiquetadas para otro tipo de
+ticket se omiten. El recibo de `complete` puede incluir `learning`: una
+sugerencia para proponer una lección tras rework o reapertura. Son ayudas, no
+órdenes.
 
 ## Configuración
 

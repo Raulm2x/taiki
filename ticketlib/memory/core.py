@@ -9,7 +9,7 @@ import sqlite3
 from typing import Any, Iterable
 
 from .. import db
-from ..domain import ValidationError
+from ..domain import KINDS, ValidationError
 from ..util import check_enum, now
 from . import budget as budget_lib
 from . import ledger as ledger_lib
@@ -68,6 +68,7 @@ def row_to_memory(
     data["locked"] = bool(data.get("locked"))
     data["paths"] = load_list(data.get("paths"))
     data["kinds"] = load_list(data.get("kinds"))
+    data["ticket_kinds"] = load_list(data.get("ticket_kinds"))
     if details and conn is not None:
         data["evidence"] = [
             dict(item)
@@ -213,6 +214,25 @@ def clean_kinds(kinds: Iterable[object] | None) -> list[str]:
             raise ValidationError(
                 f"kind de memoria inválido: {value!r}. "
                 f"Valores permitidos: {', '.join(MEMORY_KINDS)}"
+            )
+        if value and value not in out:
+            out.append(value)
+    return out
+
+
+def clean_ticket_kinds(kinds: Iterable[object] | None) -> list[str]:
+    """Valida las etiquetas de tipo de ticket (vacío = general)."""
+    if kinds is None:
+        return []
+    if isinstance(kinds, str):
+        kinds = [kinds]
+    out: list[str] = []
+    for item in kinds:
+        value = str(item or "").strip()
+        if value and value not in KINDS:
+            raise ValidationError(
+                f"tipo de ticket inválido: {value!r}. "
+                f"Valores permitidos: {', '.join(KINDS)}"
             )
         if value and value not in out:
             out.append(value)
@@ -451,6 +471,7 @@ __all__ = [
     "clean_project_paths",
     "clean_short",
     "clean_text",
+    "clean_ticket_kinds",
     "config",
     "confidence",
     "decide_status",

@@ -57,11 +57,18 @@ def run(h: Harness) -> None:
             "rama-integracion",
             "--evidence",
             "README.md",
+            "--ticket-kinds",
+            "bug",
             "--json",
         ]
     )
     h.eq(created["scope"], "project", "memory add crea en el scope proyecto")
     h.eq(created["status"], "active", "una memoria de usuario nace activa")
+    h.eq(
+        created["ticket_kinds"],
+        ["bug"],
+        "memory add guarda --ticket-kinds",
+    )
     h.ok(bool(created["evidence"]), "memory add guarda la evidencia indicada")
 
     with h.env(OPENCODE_SESSION_ID="ses_cli_test"):
@@ -80,10 +87,42 @@ def run(h: Harness) -> None:
 
     _, listed = _json(["memory", "list", "--json"])
     h.ok(listed["count"] >= 2, "memory list devuelve las memorias creadas")
+    _, by_ticket = _json(["memory", "list", "--ticket-kinds", "bug", "--json"])
+    _, other_ticket = _json(
+        ["memory", "list", "--ticket-kinds", "funcionalidad", "--json"]
+    )
+    h.ok(
+        any(item["code"] == created["code"] for item in by_ticket["memories"])
+        and all(
+            item["code"] != created["code"] for item in other_ticket["memories"]
+        ),
+        "memory list filtra por tipo de ticket y respeta las generales",
+    )
+    _, edited = _json(
+        [
+            "memory",
+            "edit",
+            created["code"],
+            "--ticket-kinds",
+            "funcionalidad",
+            "--json",
+        ]
+    )
+    h.eq(
+        edited["ticket_kinds"],
+        ["funcionalidad"],
+        "memory edit reemplaza las etiquetas de ticket",
+    )
+    shown_code, shown_out, _ = _run(["memory", "show", created["code"]])
+    h.ok(
+        shown_code == 0 and "Tipos de ticket: funcionalidad" in shown_out,
+        "memory show muestra los tipos de ticket en texto",
+    )
 
     _, shown = _json(["memory", "show", created["code"], "--json"])
     h.ok(
-        "ledger" in shown and shown["ledger"][0]["action"] == "create",
+        "ledger" in shown
+        and any(item["action"] == "create" for item in shown["ledger"]),
         "memory show incluye el historial del ledger",
     )
     h.ok(

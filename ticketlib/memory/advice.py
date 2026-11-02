@@ -150,11 +150,15 @@ def routing_advice(
 
 def _checklist_score(
     memory: dict[str, Any],
-    kind: str | None,
+    ticket_kind: str | None,
+    memory_kind: str | None,
     paths: list[str],
 ) -> tuple[int, list[str]]:
-    """Puntúa un pitfall/convención según tipo de memoria y rutas."""
-    if kind and memory.get("kind") != kind:
+    """Puntúa un pitfall/convención según tipo de ticket, tipo de memoria y rutas."""
+    if memory_kind and memory.get("kind") != memory_kind:
+        return 0, []
+    tagged = [str(item) for item in memory.get("ticket_kinds") or []]
+    if ticket_kind and tagged and ticket_kind not in tagged:
         return 0, []
     memory_paths = [str(item) for item in memory.get("paths") or []]
     matched = [
@@ -169,28 +173,35 @@ def _checklist_score(
     if matched:
         score = 2
         reasons.append(f"ruta {matched[0]}")
-    if kind:
-        reasons.append(f"tipo {kind}")
-    if not kind and not paths:
+    if ticket_kind:
+        reasons.append(f"tipo de ticket {ticket_kind}")
+    if memory_kind:
+        reasons.append(f"memoria {memory_kind}")
+    if not ticket_kind and not memory_kind and not paths:
         reasons.append("general")
     return score, reasons
 
 
 def checklist(
     conn: sqlite3.Connection,
-    kind: str | None = None,
+    ticket_kind: str | None = None,
+    memory_kind: str | None = None,
     paths: Iterable[object] | None = None,
     config: dict[str, Any] | None = None,
     limit: int = CHECKLIST_LIMIT,
 ) -> list[dict[str, Any]]:
-    """Pitfalls y convenciones activos que casan por tipo y rutas.
+    """Pitfalls y convenciones activos que casan por tipo de ticket y rutas.
 
-    ``kind`` filtra por tipo de memoria (``pitfall`` o ``convention``); con
-    ``paths`` solo se devuelven las entradas que tocan alguna ruta. Sin filtros
-    se listan ambos tipos por prioridad.
+    ``ticket_kind`` filtra por el tipo del ticket (``KINDS``) usando la
+    etiqueta ``ticket_kinds`` de la memoria: una memoria sin etiqueta es
+    general y aplica a todos. ``memory_kind`` filtra por tipo de memoria
+    (``pitfall`` o ``convention``); con ``paths`` solo se devuelven las
+    entradas que tocan alguna ruta.
     """
-    if kind:
-        check_enum(kind, CHECKLIST_KINDS, "tipo de checklist")
+    if ticket_kind:
+        check_enum(ticket_kind, KINDS, "tipo de ticket")
+    if memory_kind:
+        check_enum(memory_kind, CHECKLIST_KINDS, "tipo de memoria")
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 20:
         raise ValidationError("El límite del checklist debe estar entre 1 y 20")
     cfg = core.config(config)
@@ -203,7 +214,7 @@ def checklist(
     for memory in rows:
         if memory.get("kind") not in CHECKLIST_KINDS:
             continue
-        score, why = _checklist_score(memory, kind, wanted)
+        score, why = _checklist_score(memory, ticket_kind, memory_kind, wanted)
         if not score:
             continue
         ranked.append(
@@ -226,6 +237,7 @@ def checklist(
             {
                 "code": memory.get("code"),
                 "kind": memory.get("kind"),
+                "ticket_kinds": list(memory.get("ticket_kinds") or []),
                 "title": memory.get("title"),
                 "summary": summary,
                 "paths": list(memory.get("paths") or []),
