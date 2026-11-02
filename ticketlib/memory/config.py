@@ -21,6 +21,9 @@ DEFAULT_MEMORY_CONFIG: dict[str, Any] = {
     "archive_after_days": 120,
     "candidate_min_evidence": 2,
     "candidate_lookback_days": 90,
+    "candidate_routing_min_samples": 5,
+    "candidate_max": 20,
+    "candidate_similarity": 0.8,
     "instructions_sync": True,
     "skills_sync": True,
     "user_scope": "project",
@@ -39,8 +42,12 @@ _POSITIVE_KEYS = (
     "max_playbook_chars",
     "candidate_min_evidence",
     "candidate_lookback_days",
+    "candidate_routing_min_samples",
+    "candidate_max",
 )
 _NON_NEGATIVE_KEYS = ("stale_after_days", "archive_after_days")
+# Umbrales de similitud: proporción abierta por ambos extremos (0 < x <= 1).
+_SIMILARITY_KEYS = ("candidate_similarity",)
 
 
 def _fail(key: str, expected: str, value: object) -> None:
@@ -85,6 +92,16 @@ def validate_memory_config(raw: Any) -> dict[str, Any]:
         value = result[key]
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             _fail(key, "un entero mayor o igual que 0", value)
+
+    for key in _SIMILARITY_KEYS:
+        value = result[key]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not 0 < float(value) <= 1
+        ):
+            _fail(key, "un número mayor que 0 y menor o igual que 1", value)
+        result[key] = float(value)
 
     if result["max_playbook_chars"] < result["max_entry_chars"]:
         _fail(

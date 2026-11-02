@@ -8,10 +8,11 @@
 # P0/P1 (T-0045.01): +2 módulos de memoria (105 comprobaciones) y el esquema v5.
 # Revisión única del techo para la fundación de memoria; a partir de aquí, podar.
 # P1 (T-0045.02): +2 módulos de contrato de CLI y brief (+46 comprobaciones).
-# El techo se sube solo para cubrir el contrato nuevo; podar antes de volver a subir.
+# P2 (T-0046.01): +2 módulos de candidatos y paquete de revisión (+80
+# comprobaciones). El techo se sube solo para cubrir el contrato nuevo; podar
+# antes de volver a subir.
 max_seconds = 6.5
-# Integración P1 (T-0045.06): 1239 checks reales; +12 combinados; podar antes de volver a subir.
-baseline_checks = 1240
+baseline_checks = 1323
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
 
