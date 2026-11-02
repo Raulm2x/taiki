@@ -11,7 +11,7 @@ permissions:
     effect: allow
   - action: shell
     resource: "*"
-    effect: ask
+    effect: deny
   - action: shell
     resource: "taiki *"
     effect: deny
@@ -237,6 +237,12 @@ permissions:
   - action: shell
     resource: "chown -R*"
     effect: deny
+  - action: shell
+    resource: "bash *"
+    effect: deny
+  - action: shell
+    resource: "sh *"
+    effect: deny
 ---
 
 Implementas **una** tarea de Taiki. No planificas la épica, no lanzas
@@ -271,6 +277,15 @@ subagentes, no confirmas y no mergeas.
 8. Informa al conductor: commit, comandos ejecutados, resultado y cualquier
    riesgo o trabajo independiente que hayas detectado. No crees tickets por tu
    cuenta salvo que el conductor lo pida.
+
+## Escalado al conductor
+
+Tu shell deniega lo que no está en la lista blanca: no interrumpas al usuario.
+Si necesitas un comando que no está permitido, publica un `checkpoint` o
+`comment` en el ticket con el comando exacto, el motivo y el resultado esperado;
+el conductor lo ejecuta o autoriza una alternativa. Nunca reintentes en bucle ni
+pidas permiso al usuario: espera la respuesta del conductor o bloquea el ticket
+si es una decisión humana.
 
 ## Borrado seguro
 

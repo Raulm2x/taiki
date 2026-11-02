@@ -1156,10 +1156,34 @@ def run(h: Harness) -> None:
             for name, meta in profiles.items()
             if name != "conductor.md"
         )
+        and _rule(profiles["conductor.md"], "shell", "*") == "allow"
         and all(
-            _rule(meta, "shell", "*") == "ask"
-            for name, meta in profiles.items()
-            if name != "reviewer.md"
+            _rule(profiles[name], "shell", "*") == "deny"
+            for name in (
+                "worker.md",
+                "worker-low.md",
+                "worker-medium.md",
+                "worker-high.md",
+                "reviewer.md",
+            )
+        )
+        and all(
+            _rule(profiles[name], "shell", pattern) == "deny"
+            for name in (
+                "conductor.md",
+                "worker.md",
+                "worker-low.md",
+                "worker-medium.md",
+                "worker-high.md",
+            )
+            for pattern in (
+                "bash *",
+                "sh *",
+                "git reset*",
+                "git clean*",
+                "git stash*",
+                "git checkout -- *",
+            )
         )
         and all(
             _rule(meta, "shell", pattern) == "allow"
@@ -1189,6 +1213,23 @@ def run(h: Harness) -> None:
         )
         and _rule(profiles["reviewer.md"], "shell", "*") == "deny",
         "permisos de shell: inspección sin prompt, denies críticos, borrado y fallback",
+    )
+    h.ok(
+        all(
+            "## Escalado al conductor" in body
+            and "checkpoint" in body
+            and "conductor" in body
+            for body in (
+                _frontmatter(name)[1]
+                for name in (
+                    "worker.md",
+                    "worker-low.md",
+                    "worker-medium.md",
+                    "worker-high.md",
+                )
+            )
+        ),
+        "los workers escalan al conductor en vez de pedir permiso al usuario",
     )
     problems = orchestrator.isolation_problems(
         "T-0001",

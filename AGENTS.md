@@ -37,11 +37,14 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    Los agentes escriben estado por MCP (claim/complete/transition/checkpoint)
    para conservar actor, actor_type y owner_session; el CLI es del usuario.
    Tras claim con worktree, usa `session_move` a la ruta devuelta. El shell
-   de los agentes permite inspección/edición común (`pwd`, `ls`, `cat`,
-   `head`, `tail`, `sed -n`, `grep`, `rg`, `find`, `wc`, `diff`, `file`,
-   `stat`, `mkdir -p docs`, `git show`), lecturas de taiki y `taiki commit`;
-   pide permiso para lo desconocido y deniega push, merge directo, confirm,
-   `rm -rf`, `sudo` y writes de estado por CLI. No es un sandbox: la garantía
+   del conductor tiene los mismos privilegios que el agente `build` de OpenCode
+   (fallback `allow`) con un guardrail de denies explícitos; los workers y el
+   reviewer usan fallback `deny`: solo ejecutan su lista blanca (inspección,
+   edición común, `git show`, lecturas de taiki y `taiki commit`) y, si
+   necesitan algo más, publican `checkpoint`/`comment` con el comando exacto y
+   el conductor lo ejecuta o autoriza. Nunca piden permiso al usuario. Siguen
+   denegados push, merge directo, confirm, `rm -rf`, `sudo`, `bash`/`sh` y los
+   writes de estado por CLI. No es un sandbox: la garantía
    es el guard, la revisión y los gates. `uvx` solo ruff/mypy. El smoke opt-in
    es `python3 tests/live_orchestrator.py`.
    Merge de la épica: .03 → .04 → … → .13. `taiki status`

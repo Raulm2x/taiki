@@ -70,8 +70,9 @@ nuevo → pendiente → en_progreso → completado → verificado → confirmado
 
 Taiki incluye un conductor primario y los subagentes `worker`, `worker-low`,
 `worker-medium`, `worker-high` y `reviewer` en `.opencode/agents/`. El conductor planifica, delega, verifica con
-`python3 tests/run.py --verify` y marca `verificado`; solo el usuario confirma
-y mergea. Las capacidades (tipos, variantes, paralelismo y coste) viven en
+`python3 tests/run.py --verify` y marca `verificado`; el usuario confirma y solo
+después el conductor mergea los confirmados. Las capacidades (tipos, variantes,
+paralelismo y coste) viven en
 `.taiki/config.json` y se consultan con la herramienta MCP `agents`. Los
 agentes escriben el estado con las herramientas MCP (`claim`, `complete`,
 `transition`, `checkpoint`, `comment`) para conservar `actor`,
@@ -84,9 +85,24 @@ hija está en el worktree y que el commit vive en `agent/T-XXXX-*`, no en
 
 ### Permisos de shell
 
-Cada perfil declara sus reglas en `.opencode/agents/*.md`; el objetivo es no
-interrumpir la inspección y la edición normal sin abrir la puerta a lo
-peligroso:
+Cada perfil declara sus reglas en `.opencode/agents/*.md`. La cadena de escalado
+es **usuario → conductor → workers**: el usuario confirma, el conductor ejecuta
+y los workers piden.
+
+- **Conductor**: fallback `allow`, los mismos privilegios que el agente `build`
+  de OpenCode. No pregunta por comandos comunes ni desconocidos no
+  destructivos; ejecuta lo que los workers le escalan, los gates y el merge de
+  worktrees ya confirmados. El guardrail es una lista de denies explícitos que
+  se evalúa después de los allows.
+- **Workers**: fallback `deny`. Lo que no está en su lista blanca no se ejecuta
+  ni genera un prompt al usuario. Si necesitan un comando denegado, publican un
+  `checkpoint` o `comment` con el comando exacto, el motivo y el resultado
+  esperado; el conductor lo ejecuta o autoriza una alternativa. Nunca
+  reintentan en bucle ni piden permiso al usuario.
+- **Reviewer**: fallback `deny` y solo lectura; ejecuta comprobaciones y
+  devuelve hallazgos.
+
+Dentro de la lista blanca de los workers:
 
 - **Permitido sin preguntar**: `pwd`, `ls`, `cat`, `head`, `tail`, `sed -n`,
   `sed`, `echo`, `printf`, `md5sum`, `sha256sum`, `grep`, `rg`, `find`, `wc`,
@@ -99,13 +115,12 @@ peligroso:
   puntual: la edición va por `edit`/`read`, no por shell. No uses `cd` (la
   sesión ya está en el worktree), ni `for`, ni heredocs `python3 - <<EOF`; la
   inspección va por `read`/`grep`/`edit`.
-- **Pide permiso (`ask`)**: comandos no clasificados, red e instalación. Es el
-  fallback del conductor y de los workers.
-- **Denegado**: `git push`, `git merge` directo, `taiki confirm`,
-  `taiki worktree merge` (salvo el conductor), `taiki transition`/writes de
-  estado por CLI, `rm -rf`, `sudo`, `chmod`/`chown` peligrosos y el staging
-  masivo (`git add -A`, `git add .`, `git commit -a`). El reviewer, que es de
-  solo lectura, deniega todo lo no listado.
+- **Denegado en todos los perfiles**: `git push`, `git merge` directo, `taiki
+  confirm`, `taiki worktree merge` (salvo el conductor), `taiki transition` y
+  writes de estado por CLI, `rm -rf`/`rm -r`, `sudo`, `git reset`/`git clean`/
+  `git stash`, `git checkout --`, `chmod`/`chown` peligrosos, `bash`/`sh` y el
+  staging masivo (`git add -A`, `git add .`, `git commit -a`). El conductor
+  conserva la excepción consciente de `git add .opencode/*`.
 
 El límite de confianza es explícito: estas reglas evitan prompts repetidos y
 reducen el daño accidental, **no son un sandbox de seguridad**. La garantía

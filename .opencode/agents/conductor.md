@@ -23,33 +23,6 @@ permissions:
     effect: allow
   - action: shell
     resource: "*"
-    effect: ask
-  - action: shell
-    resource: "taiki *"
-    effect: deny
-  - action: shell
-    resource: "TAIKI_TICKET=* taiki commit *"
-    effect: allow
-  - action: shell
-    resource: "taiki status*"
-    effect: allow
-  - action: shell
-    resource: "taiki show*"
-    effect: allow
-  - action: shell
-    resource: "taiki list*"
-    effect: allow
-  - action: shell
-    resource: "taiki stats*"
-    effect: allow
-  - action: shell
-    resource: "taiki next*"
-    effect: allow
-  - action: shell
-    resource: "taiki servers*"
-    effect: allow
-  - action: shell
-    resource: "taiki worktree list*"
     effect: allow
   - action: shell
     resource: "pwd*"
@@ -115,12 +88,6 @@ permissions:
     resource: "timeout * python3 tests/*"
     effect: allow
   - action: shell
-    resource: "python3 -c*"
-    effect: deny
-  - action: shell
-    resource: "uvx *"
-    effect: deny
-  - action: shell
     resource: "uvx ruff *"
     effect: allow
   - action: shell
@@ -154,10 +121,46 @@ permissions:
     resource: "git -C * rev-parse*"
     effect: allow
   - action: shell
-    resource: "git add -A*"
+    resource: "taiki *"
     effect: deny
   - action: shell
-    resource: "git commit -a*"
+    resource: "TAIKI_TICKET=* taiki commit *"
+    effect: allow
+  - action: shell
+    resource: "taiki status*"
+    effect: allow
+  - action: shell
+    resource: "taiki show*"
+    effect: allow
+  - action: shell
+    resource: "taiki list*"
+    effect: allow
+  - action: shell
+    resource: "taiki stats*"
+    effect: allow
+  - action: shell
+    resource: "taiki next*"
+    effect: allow
+  - action: shell
+    resource: "taiki servers*"
+    effect: allow
+  - action: shell
+    resource: "taiki worktree list*"
+    effect: allow
+  - action: shell
+    resource: "taiki worktree merge*"
+    effect: allow
+  - action: shell
+    resource: "taiki confirm*"
+    effect: deny
+  - action: shell
+    resource: "taiki transition*"
+    effect: deny
+  - action: shell
+    resource: "python3 -c*"
+    effect: deny
+  - action: shell
+    resource: "uvx *"
     effect: deny
   - action: shell
     resource: "git push*"
@@ -165,12 +168,6 @@ permissions:
   - action: shell
     resource: "git merge*"
     effect: deny
-  - action: shell
-    resource: "taiki confirm*"
-    effect: deny
-  - action: shell
-    resource: "taiki worktree merge*"
-    effect: allow
   - action: shell
     resource: "git add -A*"
     effect: deny
@@ -194,9 +191,6 @@ permissions:
     effect: deny
   - action: shell
     resource: "git checkout -- *"
-    effect: deny
-  - action: shell
-    resource: "taiki transition*"
     effect: deny
   - action: shell
     resource: "rm -rf*"
@@ -224,6 +218,12 @@ permissions:
     effect: deny
   - action: shell
     resource: "chown -R*"
+    effect: deny
+  - action: shell
+    resource: "bash *"
+    effect: deny
+  - action: shell
+    resource: "sh *"
     effect: deny
 ---
 
@@ -274,6 +274,18 @@ confirmas tickets**: la confirmación es exclusiva del usuario.
    `taiki worktree merge T-XXXX --delete`; el guard rechaza los no confirmados,
    así que un error de estado no salta la revisión. **Nunca ejecutes
    `taiki confirm`**: sigue siendo exclusivo del usuario.
+
+## Permisos y escalado
+
+Tu shell tiene el mismo fallback que el agente `build` de OpenCode: lo que no
+esté denegado se ejecuta sin preguntar. Por eso **ejecutas los comandos que los
+workers te piden** cuando su perfil los deniega (instalaciones, red, comandos
+nuevos): ellos publican el comando exacto y su motivo en un
+`checkpoint`/`comment`, y tú lo ejecutas o autorizas una alternativa con
+`comment`. El guard de tickets sigue siendo la frontera: sin ticket activo y sin
+worktree no se escribe, y los denies destructivos (`rm -rf`, `sudo`, `git push`,
+`git reset`, `git clean`, `git checkout --`, `bash`/`sh`, staging masivo) se
+mantienen.
 
 ## Reglas
 
