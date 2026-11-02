@@ -424,6 +424,61 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--json", action="store_true")
     m.set_defaults(func=cmd_memory)
 
+    p = memory_sub.add_parser(
+        "playbook", help="Playbooks: procedimientos exportables como skills"
+    )
+    playbook_sub = p.add_subparsers(dest="playbook_action", required=True)
+    p.set_defaults(func=cmd_memory)
+
+    m = playbook_sub.add_parser("add", help="Crea un playbook")
+    m.add_argument("--slug", required=True)
+    m.add_argument("--title", required=True)
+    m.add_argument("--description", required=True)
+    source = m.add_mutually_exclusive_group(required=True)
+    source.add_argument("--content", "--body", dest="content")
+    source.add_argument("--file", help="Lee el cuerpo de un fichero")
+    m.add_argument(
+        "--support",
+        action="append",
+        default=[],
+        metavar="RUTA",
+        help="Fichero de apoyo; se clasifica por extensión",
+    )
+    m.add_argument("--evidence", action="append", default=[])
+    m.add_argument("--confidence", type=float, default=0.5)
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = playbook_sub.add_parser("list", help="Lista playbooks")
+    m.add_argument("--status", choices=MEMORY_STATUSES)
+    m.add_argument(
+        "--all", action="store_true", help="Incluye archivados y sustituidos"
+    )
+    m.add_argument("--limit", type=int, default=50)
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = playbook_sub.add_parser("show", help="Detalle de un playbook")
+    m.add_argument("ref", help="Slug o código M-####")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = playbook_sub.add_parser(
+        "export", help="Exporta skills a .taiki/generated/skills"
+    )
+    m.add_argument("ref", nargs="?", help="Slug o código M-####")
+    m.add_argument("--all", action="store_true", help="Exporta todos los activos")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = playbook_sub.add_parser(
+        "archive", help="Archiva un playbook (nunca lo borra)"
+    )
+    m.add_argument("ref", help="Slug o código M-####")
+    m.add_argument("--why", required=True)
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
     p = sub.add_parser(
         "remember", help="Atajo: guarda una preferencia activa del usuario"
     )

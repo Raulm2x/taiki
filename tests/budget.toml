@@ -14,8 +14,10 @@
 # P3 núcleo (T-0047.01): +68 comprobaciones del nuevo test_memory_playbooks
 # (slug, validación, apoyos, export/idempotencia, brief_index y presupuesto).
 # Revisión única del techo por el módulo nuevo; a partir de aquí, podar.
-max_seconds = 7.5
-baseline_checks = 1479
+# P3 CLI (T-0047.02): +32 comprobaciones de contrato del CLI de playbooks y
+# +0.07s de suite por el nuevo módulo (medido 7.57s; CI conserva 8.0s).
+max_seconds = 7.8
+baseline_checks = 1511
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
 
