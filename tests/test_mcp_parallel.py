@@ -30,6 +30,8 @@ def run(h: Harness) -> None:
     _git(root, "commit", "-m", "init")
     info = workspace.init_workspace(root, name="Proyecto")
     db_path = str(info["db"])
+    # Repositorio donde corre la suite: ningún worktree debe nacer aquí.
+    real = workspace.project_root()
 
     with h.env(TAIKI_DB=db_path):
         conn = db.connect()
@@ -103,6 +105,11 @@ def run(h: Harness) -> None:
             and str(tree["branch"]).startswith("agent/"),
             "worktree_create crea el worktree y la rama",
         )
+        h.eq(
+            Path(tree["path"]),
+            (root / ".worktrees" / ticket["code"]).resolve(),
+            "worktree_create usa la raíz del proyecto de TAIKI_DB",
+        )
         listed = handlers.call_tool(
             "worktree_list", {"code": ticket["code"]}, meta=meta
         )
@@ -125,6 +132,14 @@ def run(h: Harness) -> None:
         h.ok(
             Path(tree_claim["worktree"]).is_dir(),
             "claim con worktree crea y enlaza el árbol",
+        )
+        leaked_branches = _git(
+            real, "branch", "--list", "agent/T-0001*", "agent/T-0002*"
+        )
+        leaked_trees = [path.name for path in (real / ".worktrees").glob("T-000[12]*")]
+        h.ok(
+            not leaked_branches and not leaked_trees,
+            f"worktree_create no deja ramas ni worktrees en {real}",
         )
         lease_claim = handlers.call_tool(
             "claim",

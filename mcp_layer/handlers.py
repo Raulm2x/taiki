@@ -174,8 +174,19 @@ def _receipt(
 
 
 def _project_root() -> Path:
-    """Raíz del proyecto de la DB activa, no la del cwd del servidor."""
+    """Raíz del proyecto de la DB activa, no la del cwd del servidor.
+
+    Con ``TAIKI_DB``/``TICKETS_DB`` apuntando a ``<proyecto>/.taiki/taiki.db``
+    la raíz es ese proyecto, no el del directorio de trabajo: si no, un
+    ``worktree_create`` sobre otra base crearía worktrees y ramas en el
+    repositorio real.
+    """
     info = workspace.resolve()
+    db_file = info.get("db")
+    if info.get("source") == "override" and db_file is not None:
+        folder = Path(db_file).expanduser()
+        if folder.parent.name == workspace.MARKER:
+            return folder.parent.parent
     if info.get("workspace"):
         return Path(info["workspace"]).parent
     return workspace.project_root()
