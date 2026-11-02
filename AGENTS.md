@@ -66,7 +66,8 @@ Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
   Durante comandos largos, `taiki heartbeat T-XXXX` renueva el lease.
 - **Al terminar**: commitea en el worktree, marca el ticket `completado` y
   espera la confirmación del usuario. Solo después, `taiki worktree merge
-  T-XXXX --delete` hace rebase, tests, `merge --ff-only` y limpia. El conductor
+  T-XXXX --delete` hace rebase sobre la rama de integración (`develop`), tests,
+  `merge --ff-only` y limpia. El conductor
   mergea solo tickets `confirmado`, en orden de dependencias; el guard rechaza
   los no confirmados y `--force` es el bypass consciente. La confirmación sigue
   siendo del usuario: `taiki confirm` retira solo los worktrees limpios y

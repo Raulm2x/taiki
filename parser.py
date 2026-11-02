@@ -440,8 +440,9 @@ def build_parser() -> argparse.ArgumentParser:
     wt_merge = wt_sub.add_parser(
         "merge",
         help="rebase, tests y merge ff-only del worktree",
-        description="Integra el worktree en la rama principal. Exige que el "
-        "ticket esté 'confirmado'; usa --force para el bypass consciente.",
+        description="Integra el worktree en la rama de integración (develop "
+        "por defecto). Exige que el ticket esté 'confirmado'; usa --force "
+        "para el bypass consciente.",
     )
     wt_merge.add_argument("code", nargs="?")
     wt_merge.add_argument("--path", help="ruta concreta del worktree")

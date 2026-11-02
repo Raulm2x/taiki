@@ -252,12 +252,14 @@ Varias sesiones pueden trabajar a la vez sin pisarse:
   otro ticket activo; el hook `pre-commit` (`taiki hook-check-index`) aplica la
   misma regla y exige `TAIKI_TICKET` si hay varios tickets activos.
 - **Merge asistido**: el usuario confirma; solo después el conductor mergea en
-  orden de dependencias. `taiki worktree merge T-XXXX` hace rebase sobre la rama
-  principal, ejecuta `tests/run.py` si existe (`--no-tests` para omitir),
-  `merge --ff-only` y limpia con `--delete`. Nunca mergea si algo falla.
-  Exige que el ticket esté `confirmado`: el commit vive en el worktree, pero
-  `main` solo recibe lo que el usuario ya revisó. `--force` es el bypass
-  consciente.
+  orden de dependencias. `taiki worktree merge T-XXXX` hace rebase sobre
+  `orchestrator.integration_branch` (`develop` por defecto), ejecuta
+  `tests/run.py` si existe (`--no-tests` para omitir), `merge --ff-only` y
+  limpia con `--delete`. Nunca mergea si algo falla. Si `develop` no existe,
+  avisa y usa la rama actual sin romper. Exige que el ticket esté
+  `confirmado`: el commit vive en el worktree, pero la rama de integración solo
+  recibe lo que el usuario ya revisó. `main` no se toca aquí: solo la release
+  (`taiki release`) escribe en ella. `--force` es el bypass consciente.
 - **Estado**: `taiki status` (o la tecla `S` en la TUI) muestra sesiones,
   leases, ramas, worktrees y solapamientos. El plugin de recarga del MCP se
   aplaza si hay otra sesión con actividad reciente.
@@ -272,8 +274,10 @@ taiki commit -m "cambio acotado"
 taiki complete T-0001 -r "Qué se hizo y cómo se verificó"
 # el usuario revisa y confirma
 taiki confirm T-0001
-# solo ahora se fusiona la rama en main
+# solo ahora se fusiona la rama en develop (o en la rama de integración)
 taiki worktree merge T-0001 --delete
+# main no se toca aquí: solo cambia con una release
+taiki release
 ```
 
 

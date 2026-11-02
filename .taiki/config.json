@@ -41,7 +41,8 @@
     }
   },
   "orchestrator": {
-    "max_parallel": 3
+    "max_parallel": 3,
+    "integration_branch": "develop"
   },
   "models": {
     "opencode-go/deepseek-v4.1-flash": [

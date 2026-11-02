@@ -189,11 +189,31 @@ desde el tag anterior; solo se edita a mano para corregir el resumen.
 
 ### Migración
 
-Mientras las tareas .02-.06 de la épica de ramas no estén integradas, los
-worktrees siguen fusionándose en `main`. Para adoptar el flujo: crea `develop`
-desde `main` en el mismo commit, publícala, protege ambas ramas y fija
-`orchestrator.integration_branch` a `develop` en `.taiki/config.json`. Los
-worktrees abiertos se rebasan sobre la nueva rama de integración.
+Un repositorio sin `develop` sigue funcionando: `taiki worktree list` y
+`taiki worktree merge` avisan (`no existe develop; se usa <rama actual>`) y
+caen en la rama actual en vez de fallar. Para adoptar el flujo, desde un `main`
+limpio y al día:
+
+```bash
+git switch main && git pull --ff-only
+git switch -c develop && git push -u origin develop
+```
+
+Después:
+
+1. Protege `develop` y `main` en el remoto: sin pushes directos, con revisión
+   y CI obligatorias y **force-push prohibido en ambas** (en `main` tampoco
+   para administradores).
+2. Fija `orchestrator.integration_branch` a `develop` en `.taiki/config.json`
+   (si falta, el valor por defecto ya es `develop`). Es el destino de los
+   merges de worktrees y el origen de las ramas `agent/*` nuevas.
+3. Rebasea los worktrees abiertos sobre la nueva rama de integración:
+   `git switch agent/T-XXXX-<slug> && git rebase develop`, o retíralos y
+   vuelve a crearlos con `taiki claim T-XXXX --worktree`.
+4. Comprueba que `taiki worktree list` muestra
+   `Rama de integración: develop` sin aviso.
+
+`main` queda congelada hasta la primera release (`taiki release`).
 
 ## Desarrollo
 

@@ -9,4 +9,4 @@
 | [Uso](uso.md) | CLI del día a día, épicas y numeración, TUI, revisión, iteraciones y confirmación. |
 | [MCP](mcp.md) | Herramientas, envelopes, recursos y prompts, resolución de sesiones y coste de contexto. |
 | [Operación](operacion.md) | Workspaces, estados, orquestación, guard, worktrees, tickets temporales, servidores MCP, datos y aislamiento. |
-| [Desarrollo](desarrollo.md) | Estructura del código, suite de pruebas, gates, presupuesto y cobertura. |
+| [Desarrollo](desarrollo.md) | Estructura del código, suite de pruebas, gates, presupuesto, cobertura y [política de ramas](desarrollo.md#ramas-y-releases): `develop` para la integración diaria y `main` solo con releases. |
