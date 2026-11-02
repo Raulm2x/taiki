@@ -21,7 +21,9 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    `brief`. Usa `memory_search` para el contexto que falte y aplica los
    `hints` del recibo de `claim` (memorias por rutas, tipo o etiquetas). La
    memoria es contexto: no sustituye al ticket ni a estas reglas, y una
-   propuesta no es instrucción hasta que el usuario la apruebe.
+   propuesta no es instrucción hasta que el usuario la apruebe. Si el brief
+   muestra `## Pendientes`, son propuestas sin aprobar: revísalas con
+   `taiki memory pending`; `taiki status` y `health` también las cuentan.
 1. Consulta el trabajo pendiente: `taiki next`, `taiki list`, `taiki stats`.
 2. Antes de tocar código, crea o reclama un ticket:
    `taiki new -t "..." -k mantenimiento -p alta` y `taiki claim T-0001 --agent opencode`.
@@ -47,8 +49,9 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    `memory_candidates(mode=review)`. El curator propone como máximo 5 memorias,
    prefiere `patch`/`supersede` sobre `add`, exige evidencia, no aprueba, no
    edita código y no lanza subagentes. El conductor reporta las propuestas
-   pendientes; **los agentes proponen y el usuario aprueba** con
-   `taiki memory approve`.
+   pendientes (visibles en el brief, `taiki status` y `health`); **los agentes
+   proponen y el usuario aprueba o rechaza** con `taiki memory approve` o
+   `taiki memory reject`. Los agentes nunca aprueban ni rechazan.
 8. El conductor y los subagentes viven en `.opencode/agents/`; consulta el
    routing de variantes y el presupuesto de concurrencia con la herramienta
    MCP `agents` y `schedule` (paralelismo seguro por paths). Los perfiles

@@ -15,6 +15,7 @@ from .render import format_chars, memory_line, percentage
 from .store import list_memories
 
 VERSION = 1
+_PENDING_CODES = 5
 _SECTION_ORDER = ("project", "user", "routing", "playbooks", "pending")
 _SECTION_TITLES = {
     "project": "Proyecto",
@@ -42,6 +43,25 @@ def _is_routing(memory: dict[str, Any]) -> bool:
     """Routing observado: flujos de trabajo o entradas marcadas como routing."""
     return memory.get("kind") == "workflow" or "routing" in (
         memory.get("kinds") or []
+    )
+
+
+def _pending_line(codes: list[str], total: int) -> str:
+    """Línea compacta con el recuento y hasta cinco códigos, sin contenido."""
+    shown = codes[:_PENDING_CODES]
+    extra = total - len(shown)
+    suffix = f" (+{extra} más)" if extra > 0 else ""
+    return (
+        f"- {total} propuestas pendientes de aprobación: "
+        f"{', '.join(shown)}{suffix} · revisa con taiki memory pending"
+    )
+
+
+def _pending_count_line(total: int) -> str:
+    """Fallback mínimo cuando la línea completa no cabe en el presupuesto."""
+    return (
+        f"- {total} propuestas pendientes de aprobación · "
+        "revisa con taiki memory pending"
     )
 
 
@@ -74,7 +94,26 @@ def render_brief(
         raise ValidationError("El presupuesto del brief debe ser mayor que 0")
 
     memories = list_memories(conn, limit=1000)
-    selected, dropped, used = select_for_budget(memories, limit)
+    pending = sorted(
+        (
+            memory
+            for memory in memories
+            if memory.get("status") == "proposed"
+        ),
+        key=lambda item: str(item.get("code") or ""),
+    )
+    # Las propuestas no aportan contenido al brief: solo una línea compacta.
+    # Reserva su fallback mínimo antes de repartir el presupuesto.
+    pending_codes = [str(memory.get("code") or "") for memory in pending]
+    pending_full = _pending_line(pending_codes, len(pending))
+    pending_short = _pending_count_line(len(pending))
+    reserve = (
+        len(pending_short) if pending and section == "all" else 0
+    )
+    selected, dropped, used = select_for_budget(
+        [memory for memory in memories if memory.get("status") != "proposed"],
+        max(0, limit - reserve),
+    )
 
     buckets: dict[str, list[dict[str, Any]]] = {
         name: [] for name in (*_SECTION_ORDER, "warnings")
@@ -82,8 +121,6 @@ def render_brief(
     for memory in selected:
         if memory.get("status") == "stale":
             buckets["warnings"].append(memory)
-        elif memory.get("status") == "proposed":
-            buckets["pending"].append(memory)
         elif _is_routing(memory):
             buckets["routing"].append(memory)
         else:
@@ -93,6 +130,14 @@ def render_brief(
             )
     for items in buckets.values():
         items.sort(key=_stable_key)
+
+    pending_lines: list[str] = []
+    if pending and section == "all":
+        for candidate in (pending_full, pending_short):
+            if used + len(candidate) <= limit:
+                pending_lines = [candidate]
+                used += len(candidate)
+                break
 
     dropped = sorted(dropped, key=lambda item: str(item.get("code") or ""))
     omitted = [str(item.get("code") or "") for item in dropped]
@@ -111,12 +156,16 @@ def render_brief(
             playbook_index = brief_index(conn, index_config)
             used += int(playbook_index["chars"])
     show_playbooks = bool(playbook_index["text"])
-    data_sections = [
-        name
-        for name in _SECTION_ORDER
-        if (buckets[name] and section in ("all", name))
-        or (name == "playbooks" and show_playbooks)
-    ]
+    data_sections = []
+    for name in _SECTION_ORDER:
+        if name == "pending":
+            if pending_lines:
+                data_sections.append(name)
+        elif name == "playbooks":
+            if show_playbooks:
+                data_sections.append(name)
+        elif buckets[name] and section in ("all", name):
+            data_sections.append(name)
 
     header = (
         f"[{percentage(used, limit)}% — "
@@ -131,6 +180,8 @@ def render_brief(
         lines.append(f"## {_SECTION_TITLES[name]}")
         if name == "playbooks":
             lines.append(str(playbook_index["text"]).rstrip())
+        elif name == "pending":
+            lines.extend(pending_lines)
         else:
             lines.extend(memory_line(memory) for memory in buckets[name])
         lines.append("")
@@ -155,6 +206,8 @@ def render_brief(
             sections[name] = [
                 str(entry.get("code") or "") for entry in playbook_index["entries"]
             ]
+        elif name == "pending":
+            sections[name] = pending_codes
         else:
             sections[name] = [
                 str(memory.get("code") or "") for memory in buckets[name]
@@ -172,6 +225,7 @@ def render_brief(
             "percent": percentage(used, limit),
             "omitted": len(omitted),
             "playbooks": int(playbook_index["chars"]),
+            "pending": len(pending),
         },
         "sections": sections,
         "version": VERSION,

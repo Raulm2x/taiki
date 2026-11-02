@@ -24,10 +24,13 @@
 # checklist por tipo de ticket y hints). Revisión única del techo; a partir de
 # aquí, podar antes de volver a subir.
 # T-0051 poda de candidates: +1 check de API pública tras partir el módulo.
+# T-0053 propuestas visibles: +13 checks (brief 0/1/varias y presupuesto,
+# status JSON/humano y health con aviso de más de 7 días). Revisión única del
+# techo; a partir de aquí, podar antes de volver a subir.
 # Medido 8.03-8.28s con la suite en 1594 checks; se sube el margen local (CI
 # conserva 8.8s) para no fallar por ruido de carga del host.
 max_seconds = 8.5
-baseline_checks = 1594
+baseline_checks = 1607
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
 

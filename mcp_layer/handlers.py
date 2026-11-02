@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from dataclasses import replace
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import unquote
@@ -28,7 +29,8 @@ from ticketlib import (
 )
 from ticketlib.guard.context import find_active, session_chain
 from ticketlib.memory.advice import routing_advice
-from ticketlib.util import normalize_agent, resolve_scope
+from ticketlib.memory.store import list_memories
+from ticketlib.util import normalize_agent, parse_datetime, resolve_scope
 
 from . import memory as memory_handlers
 from . import schemas, validation
@@ -969,6 +971,24 @@ def _handle_health(
     overlaps = audit_lib.overlaps(conn)
     unresolved = audit_lib.unresolved(conn)
     dirty_files = audit_lib.dirty(root)
+    proposed = sorted(
+        list_memories(conn, status="proposed", limit=1000),
+        key=lambda item: str(item.get("code") or ""),
+    )
+    cutoff = datetime.now().astimezone() - timedelta(days=7)
+    old: list[str] = []
+    for memory in proposed:
+        created = parse_datetime(
+            memory.get("created_at") or memory.get("updated_at")
+        )
+        if created is not None and created <= cutoff:
+            old.append(str(memory.get("code") or ""))
+    memory_warnings: list[str] = []
+    if old:
+        memory_warnings.append(
+            f"{len(old)} propuestas de memoria llevan más de 7 días sin "
+            f"aprobar: {', '.join(old[:5])}; revisa con taiki memory pending"
+        )
     data: dict[str, Any] = {
         "ok": not stale and not overlaps and not unresolved and not dirty_files,
         "mcp": runtime.status(conn),
@@ -980,7 +1000,18 @@ def _handle_health(
         "gaps": audit_lib.code_gaps(conn)[:20],
         "stalled": audit_lib.stalled(conn, days=days)[:20],
         "worktrees": audit_lib.worktrees(conn, root)[:20],
+        "memory_pending": {
+            "count": len(proposed),
+            "proposed_codes": [
+                str(memory.get("code") or "") for memory in proposed
+            ],
+            "stale_days": 7,
+            "old": old,
+            "warnings": memory_warnings,
+        },
     }
+    if memory_warnings:
+        data["warnings"] = memory_warnings
     if args.get("servers", True):
         registry = db.connect(workspace.registry_path())
         try:

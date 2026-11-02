@@ -97,11 +97,22 @@ def _brief(h: Harness) -> None:
         [playbook["code"]],
         "la sección playbooks expone los códigos indexados",
     )
+    pending_line = next(
+        line for line in text.splitlines() if "taiki memory pending" in line
+    )
     h.ok(
         result["usage"]["playbooks"] > 0
         and result["usage"]["used"]
-        == len("Contenido destilado.") + result["usage"]["playbooks"],
-        "el índice consume presupuesto y las memorias siguen contando",
+        == len("Contenido destilado.")
+        + result["usage"]["playbooks"]
+        + len(pending_line),
+        "el índice y la línea de pendientes consumen presupuesto",
+    )
+    h.ok(
+        proposed["code"] in pending_line
+        and "Propuesta." not in text
+        and "Todavía no aprobado." not in text,
+        "las propuestas solo muestran código y comando, sin contenido",
     )
     h.ok(
         proposed["code"] not in result["sections"]["playbooks"]

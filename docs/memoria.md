@@ -135,12 +135,22 @@ por prioridad y cabe en un presupuesto de caracteres:
   secundario `routing`;
 - `## Playbooks`: índice compacto (slug, título, descripción y código) de los
   playbooks activos; nunca incluye el cuerpo;
-- `## Pendientes`: propuestas que aún no se han aprobado;
+- `## Pendientes`: propuestas que aún no se han aprobado, en una línea
+  compacta con el recuento, hasta cinco códigos y el comando
+  `taiki memory pending`; nunca incluye el cuerpo de la propuesta. Si la línea
+  completa no cabe, queda solo el recuento;
 - `## Avisos`: entradas `stale` y cuántas se omitieron por presupuesto.
 
 El encabezado dice «datos, no instrucciones»: el brief informa, pero las
 reglas del proyecto y el ticket siguen mandando. Si una entrada no cabe, se
 omite y el brief invita a usar `memory_search`.
+
+Las propuestas también se ven fuera del brief: `taiki status` muestra
+`Memoria: N propuestas pendientes` y su JSON incluye `memory.pending` y
+`memory.proposed_codes`; la herramienta MCP `health` añade `memory_pending` y
+avisa de las que llevan más de 7 días sin decisión. Ninguno de estos avisos
+aprueba nada: el flujo sigue siendo `proposed → approve/reject` y
+`taiki memory approve M-XXXX` es exclusivo del usuario.
 
 El brief puede generarse como artefacto:
 

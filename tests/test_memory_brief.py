@@ -88,15 +88,23 @@ def run(h: Harness) -> None:
         text,
         "dos renders seguidos son idénticos",
     )
+    active_content = sum(len(item) for item in (
+        "develop integra con --ff-only.",
+        "Prefiero commits pequeños con el código en el asunto.",
+        "Primero los tests, luego el commit.",
+    ))
+    pending_line = next(
+        line for line in text.splitlines() if "taiki memory pending" in line
+    )
     h.eq(
         result["usage"]["used"],
-        sum(len(item) for item in (
-            "develop integra con --ff-only.",
-            "Prefiero commits pequeños con el código en el asunto.",
-            "Primero los tests, luego el commit.",
-            "Revisar el presupuesto del brief.",
-        )),
-        "el uso cuenta el contenido de las entradas incluidas",
+        active_content + len(pending_line),
+        "el uso cuenta el contenido activo y la línea de pendientes",
+    )
+    h.ok(
+        "Revisar el presupuesto del brief." not in text
+        and "Propuesta de decisión" not in text,
+        "el brief no vuelca el contenido ni el título de las propuestas",
     )
 
     first = add_memory(
@@ -193,11 +201,62 @@ def run(h: Harness) -> None:
     try:
         empty = render_brief(empty_conn, {}, budget=100)
         h.ok(
-            "## Routing" not in empty["text"] and "(sin memorias)" in empty["text"],
-            "sin datos se omite routing y se avisa de que no hay memorias",
+            "## Routing" not in empty["text"]
+            and "## Pendientes" not in empty["text"]
+            and "(sin memorias)" in empty["text"],
+            "sin datos se omiten routing y pendientes",
         )
+        h.eq(empty["usage"]["pending"], 0, "sin propuestas usage.pending es cero")
     finally:
         empty_conn.close()
+
+    pending_conn = db.connect(h.tmp / "brief-pending.db")
+    try:
+        proposals = [
+            add_memory(
+                pending_conn,
+                title=f"Propuesta {index}",
+                content=f"Contenido propuesto {index}.",
+                kind="decision",
+                key=f"propuesta-{index}",
+                source="agent",
+                evidence=[{"kind": "ticket", "ref": "T-0053"}],
+            )
+            for index in range(1, 8)
+        ]
+        many = render_brief(pending_conn, {}, budget=5000)
+        codes = [item["code"] for item in proposals]
+        pending_line = next(
+            line
+            for line in many["text"].splitlines()
+            if "taiki memory pending" in line
+        )
+        h.ok(
+            many["usage"]["pending"] == 7
+            and many["sections"]["pending"] == codes
+            and all(code in pending_line for code in codes[:5])
+            and codes[5] not in pending_line
+            and "(+2 más)" in many["text"],
+            "el brief compacta varias propuestas a cinco códigos",
+        )
+        h.ok(
+            all(item["content"] not in many["text"] for item in proposals),
+            "las propuestas no vuelcan su contenido",
+        )
+        short = (
+            "- 7 propuestas pendientes de aprobación · "
+            "revisa con taiki memory pending"
+        )
+        tight = render_brief(pending_conn, {}, budget=len(short) + 10)
+        h.ok(
+            "## Pendientes" in tight["text"]
+            and short in tight["text"]
+            and all(item["code"] not in tight["text"] for item in proposals)
+            and tight["usage"]["pending"] == 7,
+            "si no cabe la línea completa queda el recuento",
+        )
+    finally:
+        pending_conn.close()
 
     data = write_brief(h.tmp, conn, {}, budget=5000)
     target = Path(h.tmp) / ".taiki" / "generated" / "brief.md"
