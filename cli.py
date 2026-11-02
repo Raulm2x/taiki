@@ -44,6 +44,7 @@ from commands import (  # noqa: F401
     cmd_open,
     cmd_overview,
     cmd_reject,
+    cmd_release,
     cmd_renumber,
     cmd_repair_gaps,
     cmd_reopen,

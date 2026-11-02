@@ -40,6 +40,7 @@ from commands import (
     cmd_renumber,
     cmd_repair_gaps,
     cmd_reject,
+    cmd_release,
     cmd_reopen,
     cmd_scheme_install,
     cmd_servers,
@@ -370,6 +371,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="también de Antigravity (su configuración es global)",
     )
     mcp_rm.set_defaults(func=cmd_mcp_uninstall)
+
+    p = sub.add_parser(
+        "release",
+        help="Publica la integración en main: squash, tag y CHANGELOG",
+        description="Aplana la rama de integración (develop por defecto) sobre "
+        "main en un único commit verificado y etiquetado. Solo lo ejecuta el "
+        "usuario: los perfiles de agente deniegan `taiki *`.",
+    )
+    p.add_argument("--repo", help="Repositorio (por defecto, el proyecto actual)")
+    p.add_argument(
+        "--integration",
+        help="Rama de integración (por defecto orchestrator.integration_branch)",
+    )
+    p.add_argument(
+        "--bump",
+        choices=("major", "minor", "patch"),
+        help="Fuerza el incremento de versión",
+    )
+    p.add_argument("--dry-run", action="store_true", help="Solo muestra el release")
+    p.add_argument(
+        "--no-verify",
+        action="store_true",
+        help="No ejecuta los gates (solo si ya se verificaron)",
+    )
+    p.add_argument(
+        "--verify-cmd",
+        help="Comando de gates (por defecto tests/run.py --verify; "
+        "también TAIKI_RELEASE_VERIFY)",
+    )
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_release)
 
     p = sub.add_parser("worktree", help="Worktrees por tarea (aislamiento)")
     wt_sub = p.add_subparsers(dest="worktree_action", required=True)

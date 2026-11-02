@@ -40,6 +40,7 @@ from .mcp import cmd_mcp_install, cmd_mcp_uninstall
 from .servers import cmd_servers
 from .commit import cmd_commit, cmd_hook_check_index
 from .heartbeat import cmd_heartbeat
+from .release import cmd_release
 from .status import cmd_status
 from .worktree import (
     cmd_worktree_adopt,
@@ -90,6 +91,7 @@ __all__ = [
     "cmd_commit",
     "cmd_hook_check_index",
     "cmd_heartbeat",
+    "cmd_release",
     "cmd_status",
     "cmd_worktree_adopt",
     "cmd_worktree_create",
