@@ -72,7 +72,7 @@ taiki tui                      # TUI con toggles para confirmar
 ```
 
 `--json` está disponible en `list`, `show`, `stats`, `next`, `guard`, `audit`,
-`memory`, `remember` y `brief`.
+`memory`, `remember`, `brief` y `skills`.
 En `list` y `show`, `--compact` y `--json-summary` implican `--json`: no hay
 combinaciones que se ignoren en silencio.
 
@@ -142,6 +142,13 @@ taiki memory playbook list --all       # incluye archivados
 taiki memory playbook show revisar-pr
 taiki memory playbook export --all     # .taiki/generated/skills/<slug>/
 taiki memory playbook archive revisar-pr --why "Ya no aplica"
+
+taiki skills suggest                   # skills curadas para el stack detectado
+taiki skills suggest --limit 10 --json
+taiki skills install fastapi --yes     # playbook propuesto, pendiente de aprobar
+taiki skills list                      # instaladas, estado y origen
+taiki skills remove fastapi --why "Ya no uso FastAPI"  # archiva
+taiki skills sync                      # exporta activos y retira obsoletos
 ```
 
 `memory candidates` agrupa rework, rechazos, bloqueos, cierres costosos,
@@ -190,6 +197,26 @@ se carga bajo demanda con `memory_playbook(slug)` o el recurso
 `taiki://playbook/{slug}`. `taiki mcp install` sincroniza
 `.taiki/generated/skills` con la lista `skills` de OpenCode y `uninstall` la
 retira.
+
+### Skills curadas de AutoSkills
+
+`taiki skills` integra el catálogo de [AutoSkills](https://www.autoskills.sh/)
+como fuente opcional de playbooks. La detección de stack es local (manifiestos,
+lockfiles y configuración) y no usa Node. `suggest` cruza ese stack con el
+registro y muestra fuente, commit, hash, revisión y comprobación de seguridad.
+
+`install` es exclusivo del usuario/CLI y descarga el bundle verificado con
+SHA-256 y `bundleHash`; el resultado nace como playbook `proposed` (`M-####`) y
+solo se activa con `taiki memory approve`. No existe tool MCP de instalación:
+`skills_suggest` solo lee. `list` muestra las instaladas, `remove` archiva (no
+borra) y `sync` exporta los playbooks activos y retira los obsoletos. El
+registro se cachea 24 h en `.taiki/generated/skills/.cache/registry.json` y
+`TAIKI_SKILLS_REGISTRY` permite usar un registro local o un espejo.
+
+Los scripts de una skill se guardan como texto y nunca se ejecutan. La
+desinstalación es `taiki skills remove <nombre>` seguida de `taiki skills sync`;
+`taiki mcp uninstall` retira el MCP, el brief y la ruta de skills de
+`opencode.json`. Detalle y límites: [Memoria](memoria.md#skills-curadas-de-autoskills).
 
 ### Routing advice y checklist
 

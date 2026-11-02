@@ -88,6 +88,11 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
   `.taiki/generated/skills/<slug>/SKILL.md` y se cargan bajo demanda con
   `memory_playbook(slug)` o `taiki://playbook/{slug}`. El brief solo muestra
   su índice. No ejecutes los scripts de apoyo.
+- **Skills curadas (AutoSkills)**: `taiki skills suggest|list` son de lectura;
+  `install` y `remove` son **solo del usuario/CLI** y no se exponen por MCP
+  (allí solo existe `skills_suggest`, read-only). `install` descarga con
+  SHA-256 y deja un playbook `proposed`: no lo apruebes tú. `remove` archiva y
+  `sync` exporta activos. No hay Node en el núcleo ni ejecución de scripts.
 - **Routing advice**: `schedule` y `agents(kind=...)` incluyen `advice` con el
   perfil observado, variante, steps, muestra, first-pass, Wilson e intentos
   medios (mínimo 5 muestras). Es una sugerencia: nunca cambia la configuración
@@ -197,6 +202,9 @@ taiki memory rollback ID    # revierte un asiento; --snapshot para un archivo
 taiki memory approve M-0001 # solo el usuario
 taiki memory playbook list  # playbooks y su export
 taiki memory playbook export --all  # .taiki/generated/skills
+taiki skills suggest                # skills curadas para el stack
+taiki skills install <nombre>       # solo usuario; deja un playbook propuesto
+taiki skills list / remove / sync   # gestión y exportación
 taiki tui                   # dashboard del proyecto
 taiki mcp install           # MCP de OpenCode solo para este proyecto
 taiki mcp uninstall         # lo retira y desactiva el guard

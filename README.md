@@ -54,6 +54,10 @@ taiki memory pending --diff    # cambio frente a la memoria sustituida
 taiki memory approve M-0001    # solo el usuario
 taiki memory playbook list     # playbooks exportables como skills
 taiki memory playbook export --all   # .taiki/generated/skills
+taiki skills suggest           # skills curadas para el stack del proyecto
+taiki skills install <nombre>  # playbook propuesto, requiere tu aprobación
+taiki skills list              # instaladas, estado y origen
+taiki skills remove <nombre>   # archiva; nunca borra
 taiki memory curate            # caduca, archiva y deduplica sin borrar
 taiki memory stats             # estado, presupuesto, uso y routing
 taiki memory impact            # tendencias, sin afirmar causalidad
@@ -74,9 +78,13 @@ opt-in mantienen la memoria sana con ledger y sin borrar; `export`/`import` y
 
 Los **playbooks** guardan procedimientos completos con evidencia y ficheros de
 apoyo, se exportan como skills de OpenCode (`.taiki/generated/skills`) y se
-cargan bajo demanda; el brief solo muestra su índice. `schedule` y `agents`
-incluyen un routing advice con muestra y confianza que nunca cambia la
-configuración solo. Detalle: [Memoria](docs/memoria.md).
+cargan bajo demanda; el brief solo muestra su índice. `taiki skills` sugiere e
+instala skills curadas de [AutoSkills](https://www.autoskills.sh/) para el stack
+real: verifica SHA-256, las deja como playbooks propuestos y exige tu
+aprobación; no ejecuta scripts ni necesita Node. `schedule` y `agents` incluyen
+un routing advice con muestra y confianza que nunca cambia la configuración
+solo. Detalle: [Memoria](docs/memoria.md) y
+[Uso](docs/uso.md#skills-curadas-de-autoskills).
 
 ## Estados
 

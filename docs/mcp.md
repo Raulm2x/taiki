@@ -4,7 +4,7 @@ Volver a [README](../README.md) · [Índice de documentación](README.md)
 
 ## Herramientas MCP
 
-El servidor expone 31 herramientas. El nombre real no lleva prefijo (`list`,
+El servidor expone 32 herramientas. El nombre real no lleva prefijo (`list`,
 `claim`…), aunque algunos clientes las muestren como `taiki_*`.
 
 | Herramienta | Uso |
@@ -27,6 +27,7 @@ El servidor expone 31 herramientas. El nombre real no lleva prefijo (`list`,
 | `memory_checklist` | Solo lectura: checklist de pitfalls y convenciones por tipo de memoria (`pitfall`/`convention`) y rutas |
 | `memory_candidates` | Solo lectura: `mode=list` lista candidatos; `mode=review` devuelve el paquete del curator. Acepta `since`, `kind` y `limit` |
 | `memory_stats` | Solo lectura: `mode=stats`, `mode=impact` o `mode=all`; `days` ajusta la ventana de tendencias |
+| `skills_suggest` | Solo lectura: sugiere skills curadas de AutoSkills para el stack o `techs`; `limit` acota. Nunca instala |
 
 Los errores llegan como `{code, message, hint, retryable}` y las herramientas
 de lectura llevan `readOnlyHint`. Si el código del MCP cambia, las escrituras
@@ -44,7 +45,7 @@ cualquier worktree; no se crea una DB vacía dentro de `.worktrees/`.
 
 ## Recursos y prompts MCP
 
-El catálogo de 31 herramientas está en [Herramientas MCP](#herramientas-mcp) y
+El catálogo de 32 herramientas está en [Herramientas MCP](#herramientas-mcp) y
 se genera desde `mcp_layer/schemas.py`. Aquí solo quedan los recursos y prompts:
 
 Recursos: `taiki://inbox`, `taiki://stats`, `taiki://ticket/{code}`,

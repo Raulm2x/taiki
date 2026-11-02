@@ -216,6 +216,112 @@ taiki memory playbook archive revisar-pr --why "Ya no aplica"
 Un playbook archivado deja de exportarse y sale del índice del brief; el
 histórico sigue en el ledger. `memory playbook archive` nunca borra.
 
+## Skills curadas de AutoSkills
+
+Taiki puede proponer e instalar skills del catálogo de
+[AutoSkills](https://www.autoskills.sh/) (repositorio `midudev/autoskills`) que
+encajen con el stack real del proyecto. Es una fuente opcional de
+conocimiento: **no ejecuta código ajeno, no necesita Node y nunca activa una
+skill sin aprobación**.
+
+### Detección de stack
+
+La detección es local, sin red ni procesos externos. Lee `pyproject.toml`,
+`requirements*.txt`, `setup.py`, `setup.cfg`, `Pipfile`, `manage.py` y
+`package.json` (`dependencies`, `devDependencies` y `peerDependencies`), además
+de lockfiles (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`,
+`bun.lockb`) y configuración habitual (`tsconfig.json`, `angular.json`,
+`svelte.config.js`, `components.json`, `bunfig.toml`, `next.config.*`,
+`vue`/`nuxt`/`astro`/`vite`/`vitest`/`playwright`/`tailwind`). Devuelve
+identificadores canónicos ordenados (`python`, `pytest`, `fastapi`, `django`,
+`react`, `nextjs`, `tailwind`…). `npx autoskills` no forma parte del núcleo.
+
+### Registro y caché
+
+El registro oficial es el `index.json` publicado por AutoSkills. Cada entrada
+declara `source`, `skillPath`, `commitSha`, `files`, `sha256` por fichero y un
+`bundleHash` (SHA-256 de las líneas `fichero:sha256` ordenadas). Antes de usarlo
+se valida: versión entera, nombres `[a-z0-9][a-z0-9._-]*`, rutas relativas sin
+`..`, sin `.zip`, hashes de 64 hex y un bundle coherente. Cualquier entrada
+inválida aborta la carga entera.
+
+La copia se guarda en `.taiki/generated/skills/.cache/registry.json` (derivado,
+ignorado por Git), caduca a las 24 h y se reutiliza si la descarga falla.
+`TAIKI_SKILLS_REGISTRY` permite apuntar a un registro local o a un espejo, útil
+en tests y entornos sin red. La descarga usa timeout de 20 s y un tope de 2 MiB
+por fichero.
+
+### Sugerencias
+
+`taiki skills suggest [--limit N] [--json]` cruza las tecnologías detectadas con
+el registro y devuelve nombre, tecnologías, fuente, commit, `bundleHash`,
+`review` y `securityCheck`. No filtra por estado de revisión: expone los flags
+para que decidas. La herramienta MCP `skills_suggest` hace la misma consulta en
+solo lectura y acepta `techs` para preguntar por tecnologías concretas sin
+depender del directorio actual.
+
+### Instalación verificada
+
+`taiki skills install <nombre>` es **exclusivo del usuario/CLI**: no existe
+ninguna tool MCP de instalación o retirada. Pide confirmación salvo `--yes`
+(obligatorio cuando no hay TTY). Después:
+
+1. descarga cada fichero del bundle desde `raw.githubusercontent.com`;
+2. verifica el SHA-256 de cada fichero y recalcula el `bundleHash`;
+3. exige un `SKILL.md` UTF-8 no vacío y escanea cuerpo y apoyos con el mismo
+   filtro de secretos e inyección que la memoria;
+4. guarda el resultado como **playbook propuesto** (`source=import`,
+   `status=proposed`, código `M-####`) con evidencia de URL y commit.
+
+Nada se ejecuta ni se activa. La activación es
+`taiki memory approve M-####` (o `taiki memory reject M-#### --why "..."`). Los
+scripts del bundle se guardan como texto de referencia; los apoyos van a
+`references/`, `scripts/`, `assets/` o `templates/` según su ruta. La
+instalación **no sobrescribe** un playbook vigente: retíralo antes o instala
+otra versión con el flujo de aprobación.
+
+### Listado, retirada y sincronización
+
+```bash
+taiki skills list [--json]                 # instaladas, estado y origen
+taiki skills remove <nombre> --why "..."   # archiva, no borra
+taiki skills sync [--json]                 # exporta activos y retira obsoletos
+```
+
+`list` oculta archivados y sustituidos y distingue el origen (`autoskills` o
+`local`) por la URL de evidencia. `remove` archiva el playbook; el histórico
+queda en el ledger. `sync` equivale a `memory playbook export --all`: escribe
+`.taiki/generated/skills/<slug>/SKILL.md` con sus apoyos y retira del
+directorio los skills de playbooks archivados o sustituidos. Solo exporta
+playbooks `active`: un skill recién instalado no aparece hasta aprobarse.
+
+### Seguridad y límites
+
+- No se ejecuta ningún script: los apoyos se guardan como texto y los carga el
+  agente solo bajo demanda.
+- No hay Node ni `npx` en el núcleo; la red se limita al registro y al bundle.
+- Rutas validadas (relativas, sin `..`, sin absolutos ni `.zip`) y escaneo de
+  secretos/inyección en cada fichero, con el límite `max_playbook_chars`
+  (12000 por defecto).
+- El registro y los hashes son la fuente de verdad: si un SHA-256 o el
+  `bundleHash` no coinciden, se aborta la instalación completa.
+- `skills_suggest` es solo lectura; `install` y `remove` nunca se exponen por
+  MCP. `skills remove` archiva y no borra.
+
+### Desinstalación
+
+```bash
+taiki skills remove <nombre> --why "..."   # archiva el playbook
+taiki skills sync                          # retira el skill exportado
+taiki mcp uninstall                        # quita MCP, brief y ruta de skills
+```
+
+`taiki mcp uninstall` retira el MCP de Taiki, el brief de `instructions` y la
+entrada `.taiki/generated/skills` de `opencode.json`, y desactiva el guard. No
+borra el directorio generado ni la DB: `.taiki/generated/skills/` es derivado y
+puedes eliminarlo sin perder playbooks. Los playbooks archivados y su ledger se
+conservan; no edites la DB a mano.
+
 ## Candidatos y revisión
 
 El motor de candidatos es **determinista**: lee tickets, eventos, comentarios,
