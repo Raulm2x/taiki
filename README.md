@@ -47,13 +47,19 @@ aprueba.
 ```bash
 taiki brief                    # brief operativo (datos, no instrucciones)
 taiki remember "Prefiero commits en español"
+taiki memory candidates        # qué merece revisión (rework, rechazos, hotspots…)
+taiki memory review --write    # paquete para el subagente curator
 taiki memory pending           # propuestas de los agentes
+taiki memory pending --diff    # cambio frente a la memoria sustituida
 taiki memory approve M-0001    # solo el usuario
 ```
 
 Las memorias llevan evidencia (ticket, commit, archivo…), respetan un
-presupuesto de caracteres y se archivan en vez de borrarse. Detalle:
-[Memoria](docs/memoria.md).
+presupuesto de caracteres y se archivan en vez de borrarse. El motor de
+candidatos es determinista: no usa LLM ni escribe memoria. El subagente
+**curator** lee el paquete de revisión y propone como máximo 5 memorias; el
+conductor lo lanza cada 5 tickets cerrados o con 3+ candidatos. Los agentes
+proponen y **solo el usuario aprueba**. Detalle: [Memoria](docs/memoria.md).
 
 ## Estados
 

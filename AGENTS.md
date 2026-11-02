@@ -41,7 +41,15 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    transitorios, credenciales, narrativas ni prohibiciones amplias. La
    aprobación es del usuario con `taiki memory approve`; los agentes no
    aprueban propuestas.
-7. El conductor y los subagentes viven en `.opencode/agents/`; consulta el
+7. **Revisión periódica con curator.** Cada 5 tickets verificados/cerrados o
+   cuando `memory_candidates(mode=list)` acumule 3 o más candidatos, el
+   conductor lanza el subagente `curator` en background con el paquete
+   `memory_candidates(mode=review)`. El curator propone como máximo 5 memorias,
+   prefiere `patch`/`supersede` sobre `add`, exige evidencia, no aprueba, no
+   edita código y no lanza subagentes. El conductor reporta las propuestas
+   pendientes; **los agentes proponen y el usuario aprueba** con
+   `taiki memory approve`.
+8. El conductor y los subagentes viven en `.opencode/agents/`; consulta el
    routing de variantes y el presupuesto de concurrencia con la herramienta
    MCP `agents` y `schedule` (paralelismo seguro por paths). Los perfiles
    worker usan deepseek-v4.1-flash; `worker-medium` va sin variante. La
@@ -148,6 +156,9 @@ taiki stats                 # resumen
 taiki brief                 # brief operativo de la memoria
 taiki remember "texto"      # preferencia activa del usuario
 taiki memory pending        # propuestas pendientes de aprobación
+taiki memory pending --diff # diff frente a la memoria sustituida
+taiki memory candidates     # candidatos deterministas del histórico
+taiki memory review --write # paquete para el curator
 taiki memory approve M-0001 # solo el usuario
 taiki tui                   # dashboard del proyecto
 taiki mcp install           # MCP de OpenCode solo para este proyecto

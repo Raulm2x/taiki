@@ -4,7 +4,7 @@ Volver a [README](../README.md) · [Índice de documentación](README.md)
 
 ## Herramientas MCP
 
-El servidor expone 22 herramientas. El nombre real no lleva prefijo (`list`,
+El servidor expone 28 herramientas. El nombre real no lleva prefijo (`list`,
 `claim`…), aunque algunos clientes las muestren como `taiki_*`.
 
 | Herramienta | Uso |
@@ -23,6 +23,7 @@ El servidor expone 22 herramientas. El nombre real no lleva prefijo (`list`,
 | `brief` | Brief operativo de memoria; `section`, `budget` y `write` |
 | `memory_search` | Busca memorias por texto, scope, tipo, estado, rutas o kinds; snippets salvo `include_content=true` |
 | `memory_write` | Operaciones `add`, `patch`, `remove`, `supersede` y `feedback` con evidencia y aprobación humana |
+| `memory_candidates` | Solo lectura: `mode=list` lista candidatos; `mode=review` devuelve el paquete del curator. Acepta `since`, `kind` y `limit` |
 
 Los errores llegan como `{code, message, hint, retryable}` y las herramientas
 de lectura llevan `readOnlyHint`. Si el código del MCP cambia, las escrituras
@@ -40,12 +41,12 @@ cualquier worktree; no se crea una DB vacía dentro de `.worktrees/`.
 
 ## Recursos y prompts MCP
 
-El catálogo de 22 herramientas está en [Herramientas MCP](#herramientas-mcp) y
+El catálogo de 28 herramientas está en [Herramientas MCP](#herramientas-mcp) y
 se genera desde `mcp_layer/schemas.py`. Aquí solo quedan los recursos y prompts:
 
 Recursos: `taiki://inbox`, `taiki://stats`, `taiki://ticket/{code}`,
-`taiki://brief` y `taiki://memory/{code}`.
-Prompts: `taiki:next`, `taiki:review`, `taiki:brief`.
+`taiki://brief`, `taiki://memory/{code}` y `taiki://memory/candidates`.
+Prompts: `taiki:next`, `taiki:review`, `taiki:brief` y `taiki:curate`.
 
 Resolución de sesiones automática compatible con `sessionId`, `session_id`, `AGY_SESSION_ID` y `ai.opencode/sessionID`.
 
@@ -65,6 +66,11 @@ Resolución de sesiones automática compatible con `sessionId`, `session_id`, `A
    el recibo puede traer `learning`.
 5. Nunca `confirmado`: eso lo hace el usuario con `taiki confirm`. Tampoco
    apruebes propuestas: `taiki memory approve` es del usuario.
+6. Cada 5 tickets verificados/cerrados o al acumular 3+ candidatos, usa
+   `memory_candidates(mode=review)` y el prompt `taiki:curate`. El curator
+   propone como máximo 5 memorias, prefiere `patch`/`supersede`, exige
+   evidencia y no aprueba ni edita código. El conductor lo lanza en background
+   y publica las propuestas para el usuario.
 
 En clientes que prefijan el servidor verás `taiki_list`, `taiki_claim`, etc.;
 el nombre real de la herramienta es el que aparece en `tools/list`.

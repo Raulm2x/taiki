@@ -6,10 +6,11 @@ Taiki puede destilar lo aprendido en un proyecto en **memorias pequeñas y
 revisables**. El objetivo no es guardar conversaciones: es recuperar contexto
 operativo al empezar una tarea sin arrastrar todo el historial.
 
-- **CLI**: `taiki memory`, `taiki remember` y `taiki brief`.
-- **MCP**: `brief`, `memory_search`, `memory_write`, el recurso
-  `taiki://brief`, la plantilla `taiki://memory/{code}` y el prompt
-  `taiki:brief`.
+- **CLI**: `taiki memory`, `taiki remember`, `taiki brief`,
+  `taiki memory candidates` y `taiki memory review`.
+- **MCP**: `brief`, `memory_search`, `memory_write`, `memory_candidates`, el
+  recurso `taiki://brief`, la plantilla `taiki://memory/{code}`, el recurso
+  `taiki://memory/candidates` y los prompts `taiki:brief` y `taiki:curate`.
 - **Datos**: viven en la misma base SQLite del proyecto. No hay memoria global.
 
 ## Qué es y qué no es
@@ -124,6 +125,91 @@ OpenCode, así que el agente lo recibe al empezar. `.taiki/generated/` está
 ignorado por Git; es un derivado, no una fuente de verdad. Tras aprobar
 memorias, refresca el artefacto con `taiki brief --write`.
 
+## Candidatos y revisión
+
+El motor de candidatos es **determinista**: lee tickets, eventos, comentarios,
+enlaces, rutas, intentos y asignaciones, y propone qué merece una revisión. No
+usa un LLM, no hace red y **no escribe memoria**: solo prepara candidatos con
+evidencia.
+
+### Reglas
+
+| Regla | Señal | Qué propone |
+|---|---|---|
+| `rework` | `iterations >= 2` o reapertura desde `completado`/`verificado` | Revisar la corrección que se repitió. |
+| `rejection` | Transición a `en_progreso` con comentario `Rechazado en revisión: …` | Recordar el criterio que faltó. |
+| `blocked` | Paso por `bloqueado` o ticket bloqueado | Anticipar la decisión o dependencia. |
+| `expensive_close` | `iterations >= 3` | Atajar un flujo que cuesta demasiados intentos. |
+| `routing` | Par `(kind, assigned_to)` con muestra suficiente | Observar qué perfil resuelve mejor ese tipo. |
+| `hotspot` | Varios tickets con incidencias bajo el mismo prefijo de ruta | Revisar una zona del proyecto. |
+| `directive` | Comentario explícito del usuario (`usa`, `prefiere`, `siempre`, `nunca`…) | Persistir una instrucción durable. |
+
+El routing exige al menos **5 muestras** (`candidate_routing_min_samples`),
+calcula la **cota inferior de Wilson** (mínimo 0.5) y solo propone cuando la
+tasa de éxito supera la media en al menos 0.15. Los hotspots necesitan al menos
+2 tickets con incidencias en el mismo prefijo. Una prohibición amplia del
+usuario exige 2 evidencias; una directiva explícita no prohibitoria basta con
+una.
+
+Cada candidato se agrupa por `(regla, tipo sugerido, prefijo de ruta, motivo
+normalizado)` y se deduplica. Incluye `rule`, `title`, `summary`, `evidence`
+(ticket/commit), `sample_size`, `confidence`, `paths`, `suggested_key` y
+`details`. El motor descarta fallos transitorios (timeout, flaky, reintentos de
+infraestructura), secretos, narrativas de una sola tarea y prohibiciones
+amplias sin evidencia suficiente.
+
+### Umbrales
+
+| Clave | Defecto | Uso |
+|---|---:|---|
+| `candidate_min_evidence` | 2 | Evidencia mínima para prohibiciones y hotspots. |
+| `candidate_lookback_days` | 90 | Ventana de histórico que se analiza. |
+| `candidate_routing_min_samples` | 5 | Muestras mínimas por par `(kind, perfil)`. |
+| `candidate_max` | 20 | Máximo de candidatos por consulta. |
+| `candidate_similarity` | 0.8 | Umbral de similitud validado (0 < x ≤ 1). |
+
+### CLI
+
+```bash
+taiki memory candidates                 # lista acotada por candidate_max
+taiki memory candidates --since 30d --kind pitfall --limit 5
+taiki memory candidates --json          # contrato estable para agentes
+taiki memory candidates --all           # ignora candidate_max
+
+taiki memory review                     # paquete para el curator
+taiki memory review --json
+taiki memory review --write             # .taiki/generated/memory-review.json
+
+taiki memory pending --diff             # propuestas con diff resumido
+```
+
+`--since` acepta una ventana en días (`90d`) o una fecha ISO. `--kind` filtra
+por el tipo de memoria sugerida. `review --write` escribe el paquete de forma
+atómica y `.taiki/generated/` está ignorado por Git. `pending --diff` compara
+la propuesta con la memoria que sustituye y resume los campos cambiados.
+
+### MCP y curator
+
+La herramienta `memory_candidates` es de solo lectura:
+
+- `mode=list` devuelve `{count, candidates}` con los candidatos compactos;
+- `mode=review` devuelve el paquete completo (`generated_at`, `candidates`,
+  `current_memories`, `recent_tickets`, `thresholds`, `rules` e
+  `instructions`);
+- acepta `since`, `kind` y `limit` (20 por defecto).
+
+También están el recurso `taiki://memory/candidates` y el prompt
+`taiki:curate`. El prompt guía al subagente **curator**: lee el paquete, propone
+como máximo **5 memorias**, prefiere `patch`/`supersede` sobre `add`, exige
+evidencia, no aprueba, no edita código, no lanza subagentes y no aprende de
+fallos transitorios, secretos ni prohibiciones amplias.
+
+El conductor lanza el curator en background **cada 5 tickets verificados o
+cerrados**, o antes si `memory_candidates(mode=list)` acumula **3 o más
+candidatos**. Después publica las propuestas pendientes; la aprobación sigue
+siendo exclusiva del usuario. P2 no incluye curado automático, playbooks ni
+métricas de impacto: el curator solo propone y el usuario decide.
+
 ## Presupuesto
 
 El presupuesto es un techo por scope, no un objetivo. Las entradas `active`,
@@ -211,8 +297,15 @@ taiki memory show M-0001
 
 # Revisión
 taiki memory pending
+taiki memory pending --diff            # cambios frente a la memoria sustituida
 taiki memory approve M-0002
 taiki memory reject M-0003 --why "Es un fallo transitorio"
+
+# Candidatos y paquete de revisión
+taiki memory candidates
+taiki memory candidates --since 30d --kind pitfall --limit 5 --json
+taiki memory review
+taiki memory review --write            # .taiki/generated/memory-review.json
 
 # Mantenimiento
 taiki memory edit M-0001 --content "Texto corregido"
@@ -232,9 +325,12 @@ borrado destructivo.
 | `brief` | Brief operativo; `section`, `budget` y `write`. |
 | `memory_search` | Busca por texto y filtra por `scope`, `kind`, `status`, `paths` o `kinds`; devuelve snippets salvo `include_content=true`. |
 | `memory_write` | Aplica operaciones `add`, `patch`, `remove`, `supersede` o `feedback` con evidencia y la política del workspace; devuelve un recibo con presupuesto y avisos. |
+| `memory_candidates` | Solo lectura: `mode=list` lista candidatos; `mode=review` devuelve el paquete del curator. Acepta `since`, `kind` y `limit`. |
 
-Recursos: `taiki://brief` (Markdown) y `taiki://memory/{code}` (JSON).
-Prompt: `taiki:brief`, que aplica el brief al empezar el trabajo.
+Recursos: `taiki://brief` (Markdown), `taiki://memory/{code}` (JSON) y
+`taiki://memory/candidates` (JSON).
+Prompts: `taiki:brief`, que aplica el brief al empezar el trabajo, y
+`taiki:curate`, que guía la revisión de candidatos sin aprobar ni editar.
 
 El recibo de `claim` puede incluir `hints`: memorias activas relevantes por
 rutas, tipo o etiquetas. El recibo de `complete` puede incluir `learning`: una
@@ -260,6 +356,9 @@ al arrancar para que una errata no se ignore en silencio.
     "archive_after_days": 120,
     "candidate_min_evidence": 2,
     "candidate_lookback_days": 90,
+    "candidate_routing_min_samples": 5,
+    "candidate_max": 20,
+    "candidate_similarity": 0.8,
     "instructions_sync": true,
     "skills_sync": true,
     "user_scope": "project"
@@ -275,8 +374,10 @@ al arrancar para que una errata no se ignore en silencio.
   P1 no ejecuta una caducidad automática.
 - `max_playbook_chars`: límite de los ficheros de referencia internos; P1 no
   los expone por CLI ni MCP.
-- `candidate_*`, `instructions_sync` y `skills_sync` se validan como parte del
-  bloque, pero no activan comportamiento adicional en P1.
+- `candidate_*`: controlan el motor de candidatos (evidencia mínima, ventana,
+  muestras de routing, máximo y similitud); se validan al arrancar y se aplican
+  en `memory candidates` y `memory_candidates`.
+- `instructions_sync` y `skills_sync` se validan como parte del bloque.
 
 ## Flujo recomendado
 
@@ -286,8 +387,12 @@ al arrancar para que una errata no se ignore en silencio.
 3. Si hubo corrección, rework o un workaround no obvio, propón una lección con
    evidencia. No guardes fallos transitorios, credenciales, narrativas ni
    prohibiciones amplias.
-4. El usuario revisa con `taiki memory pending` y aprueba o rechaza.
-5. Refresca el brief con `taiki brief --write` si quieres actualizar el
+4. Cada 5 tickets verificados/cerrados o con 3 o más candidatos, revisa
+   `taiki memory candidates` y lanza el curator con
+   `taiki memory review --write` (o `memory_candidates(mode=review)` por MCP).
+   El curator propone como máximo 5 memorias; no aprueba ni edita código.
+5. El usuario revisa con `taiki memory pending --diff` y aprueba o rechaza.
+6. Refresca el brief con `taiki brief --write` si quieres actualizar el
    artefacto inyectado.
 
 ## FAQ
@@ -313,6 +418,12 @@ una entrada nueva con la misma clave o usa `supersede`; la anterior queda
 **¿Quién aprueba?**
 El usuario, con `taiki memory approve`. Los agentes pueden proponer, editar,
 archivar o dar feedback, pero no aprobar ni rechazar.
+
+**¿Cómo sé qué merece una lección?**
+`taiki memory candidates` o `memory_candidates(mode=list)` agrupan rework,
+rechazos, bloqueos, cierres costosos, routing, hotspots y directivas con
+evidencia. No es una verdad automática: el curator propone y el usuario decide.
+El motor no escribe memoria ni aprueba nada.
 
 **¿La memoria sustituye al ticket?**
 No. El ticket guarda la decisión, el estado, la evidencia y el historial. La

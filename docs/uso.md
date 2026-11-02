@@ -96,6 +96,7 @@ taiki memory list                      # vigentes y propuestas
 taiki memory list --kind pitfall
 taiki memory show M-0001               # detalle, uso y ledger
 taiki memory pending                   # propuestas pendientes
+taiki memory pending --diff            # diff frente a la memoria sustituida
 taiki memory approve M-0002            # solo el usuario
 taiki memory reject M-0003 --why "Fallo transitorio"
 taiki memory edit M-0001 --content "Texto corregido"
@@ -103,10 +104,27 @@ taiki memory pin M-0001                # fijar en el brief
 taiki memory unpin M-0001
 taiki memory rm M-0001 --why "Ya no aplica"  # archiva, no borra
 
+taiki memory candidates                # candidatos deterministas del histórico
+taiki memory candidates --since 30d --kind pitfall --limit 5
+taiki memory review                    # paquete para el curator
+taiki memory review --write            # .taiki/generated/memory-review.json
+
 taiki brief                            # brief operativo
 taiki brief --write                    # .taiki/generated/brief.md
 taiki brief --section project --budget 2000
 ```
+
+`memory candidates` agrupa rework, rechazos, bloqueos, cierres costosos,
+routing, hotspots y directivas del usuario. Cada candidato lleva evidencia,
+muestra y confianza; el motor no escribe memoria. `memory review` reúne
+candidatos, memorias vigentes, tickets recientes, umbrales e instrucciones, y
+`--write` lo guarda de forma atómica para que lo lea el curator.
+
+El **curator** es un subagente que lee el paquete de revisión, propone como
+máximo 5 memorias y prefiere `patch`/`supersede` sobre altas nuevas. No aprueba,
+no edita código y no lanza subagentes. El conductor lo ejecuta en background
+cada 5 tickets verificados/cerrados o cuando hay 3 o más candidatos, y publica
+las propuestas pendientes. La aprobación sigue siendo del usuario.
 
 `taiki mcp install` regenera el brief y lo añade a las instrucciones del
 proyecto para que el agente lo reciba al empezar. Una memoria de origen agente
