@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ticketlib import domain
+from ticketlib.memory import BudgetError
 
 
 def payload(exc: BaseException, tool: str | None = None) -> dict[str, Any]:
@@ -33,6 +34,12 @@ def payload(exc: BaseException, tool: str | None = None) -> dict[str, Any]:
             "conflict",
             "Consulta el estado con get; si el lease caducó usa steal=true, "
             "o force=true si corresponde.",
+            True,
+        )
+    elif isinstance(exc, BudgetError):
+        code, hint, retryable = (
+            "memory_budget",
+            "Archiva o sustituye memorias del scope y reintenta la escritura.",
             True,
         )
     elif isinstance(exc, domain.ValidationError):

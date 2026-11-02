@@ -88,6 +88,26 @@ def _check_value(name: str, value: Any, spec: dict[str, Any]) -> None:
     if isinstance(value, list) and isinstance(spec.get("items"), dict):
         for index, item in enumerate(value):
             _check_value(f"{name}[{index}]", item, spec["items"])
+    if isinstance(value, dict):
+        properties = spec.get("properties")
+        if isinstance(properties, dict):
+            if spec.get("additionalProperties") is False:
+                unknown = sorted(set(value) - set(properties))
+                if unknown:
+                    raise ValidationError(
+                        f"Campo(s) desconocido(s) en '{name}': "
+                        + ", ".join(unknown)
+                        + ". Válidos: "
+                        + ", ".join(sorted(properties))
+                    )
+            for key in spec.get("required") or ():
+                if key not in value or value[key] is None:
+                    raise ValidationError(
+                        f"Falta el campo obligatorio '{name}.{key}'"
+                    )
+            for key, item in value.items():
+                if key in properties:
+                    _check_value(f"{name}.{key}", item, properties[key])
 
 
 def validate_arguments(name: str, args: Any) -> None:

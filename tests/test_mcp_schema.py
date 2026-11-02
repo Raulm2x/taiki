@@ -17,7 +17,7 @@ def run(h: Harness) -> None:
         "comment", "link", "stats", "next", "agents", "status", "whoami",
         "heartbeat", "checkpoint", "retry", "reassign", "schedule",
         "worktree_create", "worktree_list", "promote", "scratch_drop",
-        "health",
+        "health", "brief", "memory_search", "memory_write",
     }
     catalog_names = {tool["name"] for tool in schemas.TOOLS}
     h.eq(
@@ -34,7 +34,8 @@ def run(h: Harness) -> None:
         read_only,
         {
             "list", "get", "stats", "next", "agents", "schedule",
-            "status", "whoami", "worktree_list", "health",
+            "status", "whoami", "worktree_list", "health", "brief",
+            "memory_search",
         },
         "readOnlyHint solo se anota en las herramientas de lectura",
     )

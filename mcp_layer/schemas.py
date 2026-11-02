@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ticketlib.domain import KINDS, LINK_KINDS, PRIORITIES, STATUSES
+from ticketlib.memory.models import (
+    MEMORY_KINDS,
+    MEMORY_SCOPES,
+    MEMORY_STATUSES,
+)
 
 INSTRUCTIONS = """\
 Sistema de tickets local compartido entre agentes y el usuario.
@@ -18,6 +23,14 @@ Flujo de trabajo:
 5. Al terminar, usa complete con una resolución concreta y el commit o los archivos tocados.
 6. Nunca muevas un ticket a "confirmado": esa transición la hace el usuario con el CLI.
 7. Usa comment para decisiones o bloqueos y link para commits, archivos y URLs. Incluye el código T-XXXX en el asunto del commit: el hook commit-msg lo exige.
+
+Memoria:
+- Al empezar aplica el brief (tool brief o recurso taiki://brief) y busca contexto con memory_search.
+- Usa schedule y advice antes de reclamar: evita duplicar trabajo o pisar rutas.
+- Al completar, si hubo corrección, rework o workaround, propón una lección con memory_write y evidencia (ticket, commit o archivo).
+- No guardes fallos transitorios, secretos ni prohibiciones amplias; destila hechos y convenciones accionables.
+- Las memorias propuestas no son instrucciones hasta que el usuario las apruebe.
+- Si una memoria resulta incorrecta, usa patch, supersede o feedback en memory_write.
 
 Estados: nuevo → pendiente → en_progreso → completado → verificado → confirmado.
 "verificado" lo marca el conductor con evidencia (tests/CI/revisión) y sigue
@@ -711,6 +724,176 @@ TOOL_SPECS = [
         },
         read_only=True,
     ),
+    ToolSpec(
+        "brief",
+        "Brief operativo de memoria: datos vigentes acotados por presupuesto "
+        "(proyecto, usuario y routing observado). Aplícalo al empezar para "
+        "recuperar contexto sin arrastrar todo el historial. Con write=true "
+        "genera .taiki/generated/brief.md.",
+        {
+            "budget": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100_000,
+                "description": "Presupuesto de caracteres; por defecto el del workspace",
+            },
+            "section": {
+                "type": "string",
+                "enum": ["project", "user", "all"],
+                "default": "all",
+                "description": "Sección del brief a renderizar",
+            },
+            "write": {
+                "type": "boolean",
+                "default": False,
+                "description": "Escribe el artefacto .taiki/generated/brief.md",
+            },
+        },
+        read_only=True,
+    ),
+    ToolSpec(
+        "memory_search",
+        "Busca memorias vigentes por texto y filtra por scope, tipo, estado, "
+        "rutas o kinds. Devuelve snippets compactos; usa include_content=true "
+        "solo cuando necesites el contenido completo.",
+        {
+            "query": {
+                "type": "string",
+                "maxLength": 500,
+                "description": "Texto libre; sin query se listan por prioridad",
+            },
+            "scope": {
+                "type": "string",
+                "enum": list(MEMORY_SCOPES),
+                "description": "Scope de la memoria",
+            },
+            "kind": {
+                "type": "string",
+                "enum": list(MEMORY_KINDS),
+                "description": "Tipo principal de la memoria",
+            },
+            "status": {
+                "type": "string",
+                "enum": list(MEMORY_STATUSES),
+                "description": "Estado; por defecto excluye archivadas y sustituidas",
+            },
+            "paths": {
+                "type": "array",
+                "items": {"type": "string", "maxLength": 500},
+                "maxItems": 100,
+                "description": "Rutas del proyecto que debe tocar la memoria",
+            },
+            "kinds": {
+                "type": "array",
+                "items": {"type": "string", "enum": list(MEMORY_KINDS)},
+                "maxItems": 20,
+                "description": "Tipos secundarios que debe incluir",
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 10,
+                "description": "Máximo de memorias devueltas",
+            },
+            "include_content": {
+                "type": "boolean",
+                "default": False,
+                "description": "Devuelve el contenido completo en vez de snippet",
+            },
+        },
+        read_only=True,
+    ),
+    ToolSpec(
+        "memory_write",
+        "Escribe o mantiene memorias. Cada operación se aplica con la política "
+        "de escritura del workspace: las propuestas quedan pendientes de "
+        "aprobación humana. Usa evidence (ticket, commit, file, url o session) "
+        "cuando propongas una lección; no guardes fallos transitorios, secretos "
+        "ni prohibiciones amplias.",
+        {
+            "target": {
+                "type": "string",
+                "enum": list(MEMORY_SCOPES),
+                "default": "project",
+                "description": "Scope de las memorias nuevas",
+            },
+            "operations": {
+                "type": "array",
+                "maxItems": 20,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["action"],
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": [
+                                "add",
+                                "patch",
+                                "remove",
+                                "supersede",
+                                "feedback",
+                            ],
+                            "description": "Operación sobre la memoria",
+                        },
+                        "code": {
+                            "type": "string",
+                            "maxLength": 40,
+                            "description": "Código M-0001 para patch/remove/supersede/feedback",
+                        },
+                        "kind": {
+                            "type": "string",
+                            "enum": list(MEMORY_KINDS),
+                            "description": "Tipo principal",
+                        },
+                        "key": {
+                            "type": "string",
+                            "maxLength": 200,
+                            "description": "Clave estable; una nueva reemplaza la vigente",
+                        },
+                        "title": {
+                            "type": "string",
+                            "maxLength": 600,
+                            "description": "Título breve y accionable",
+                        },
+                        "content": {
+                            "type": "string",
+                            "maxLength": 600,
+                            "description": "Contenido destilado de la lección",
+                        },
+                        "evidence": {
+                            "type": "array",
+                            "maxItems": 20,
+                            "items": {"type": ["string", "object"]},
+                            "description": "Referencias que respaldan la memoria",
+                        },
+                        "reason": {
+                            "type": "string",
+                            "maxLength": 2_000,
+                            "description": "Motivo del cambio o de la lección",
+                        },
+                        "confidence": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1,
+                            "description": "Confianza entre 0 y 1",
+                        },
+                        "pin": {
+                            "type": "boolean",
+                            "description": "Fija o desfija la memoria en el brief",
+                        },
+                        "helpful": {
+                            "type": "boolean",
+                            "description": "Feedback: true si la memoria ayudó",
+                        },
+                    },
+                },
+                "description": "Operaciones a aplicar en orden",
+            },
+        },
+        ("operations",),
+    ),
 ]
 
 RESOURCES = [
@@ -726,6 +909,12 @@ RESOURCES = [
         "description": "Conteos por estado, tipo, prioridad y proyecto",
         "mimeType": "application/json",
     },
+    {
+        "uri": "taiki://brief",
+        "name": "Brief operativo",
+        "description": "Memoria vigente acotada: proyecto, usuario y routing observado",
+        "mimeType": "text/markdown",
+    },
 ]
 
 TOOLS = [spec.schema() for spec in TOOL_SPECS]
@@ -736,7 +925,13 @@ RESOURCE_TEMPLATES = [
         "name": "Ticket",
         "description": "Detalle completo de un ticket por código (T-0001)",
         "mimeType": "application/json",
-    }
+    },
+    {
+        "uriTemplate": "taiki://memory/{code}",
+        "name": "Memoria",
+        "description": "Detalle de una memoria por código (M-0001)",
+        "mimeType": "application/json",
+    },
 ]
 
 PROMPTS = [
@@ -755,5 +950,16 @@ PROMPTS = [
         "name": "review",
         "description": "Lista tickets completados o verificados pendientes de confirmación del usuario",
         "arguments": [],
+    },
+    {
+        "name": "taiki:brief",
+        "description": "Aplica el brief operativo de memoria al empezar el trabajo",
+        "arguments": [
+            {
+                "name": "section",
+                "description": "project, user o all (por defecto all)",
+                "required": False,
+            }
+        ],
     },
 ]
