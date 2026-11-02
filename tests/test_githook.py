@@ -146,8 +146,7 @@ def run(h: Harness) -> None:
         conn,
         repo=str(hook_repo),
         refs_text=(
-            f"refs/heads/agent/{pending_commit['code']}-x abc1234 "
-            f"refs/heads/agent/{pending_commit['code']}-x 0000"
+            "refs/heads/develop abc1234 refs/heads/develop 0000"
         ),
         git_func=fake_push_git,
     )
@@ -155,7 +154,7 @@ def run(h: Harness) -> None:
         not push["ok"]
         and push["blocked"][0]["unconfirmed"]
         == [pending_commit["code"]],
-        "pre-push bloquea tickets sin confirmar",
+        "pre-push valida en develop los tickets sin confirmar",
     )
 
     def fake_push_ok(*args, cwd=None):
@@ -165,6 +164,27 @@ def run(h: Harness) -> None:
             return f"arreglo {approved['code']}"
         return ""
 
+    def fake_push_release(*args, cwd=None):
+        if args[0] == "rev-list":
+            return "rel1234"
+        if args[0] == "show":
+            return "chore(release): v0.1.0"
+        if args[0] == "tag":
+            return "v0.1.0"
+        return ""
+
+    blocked_main = githook.check_push(
+        conn,
+        repo=str(hook_repo),
+        refs_text="refs/heads/main abc1234 refs/heads/main 0000",
+        git_func=fake_push_ok,
+    )
+    release_push = githook.check_push(
+        conn,
+        repo=str(hook_repo),
+        refs_text="refs/heads/main rel1234 refs/heads/main 0000",
+        git_func=fake_push_release,
+    )
     h.ok(
         githook.check_push(
             conn,
@@ -175,13 +195,12 @@ def run(h: Harness) -> None:
             ),
             git_func=fake_push_ok,
         )["ok"]
-        and not githook.check_push(
-            conn,
-            repo=str(hook_repo),
-            refs_text="refs/heads/main abc1234 refs/heads/main 0000",
-            git_func=fake_push_ok,
-        )["ok"],
-        "pre-push deja pasar tickets confirmados y bloquea main",
+        and not blocked_main["ok"]
+        and blocked_main["blocked"][0]["reason"] == "protected-branch"
+        and "taiki release" in blocked_main["message"]
+        and "confirma" not in blocked_main["message"].lower()
+        and release_push["ok"],
+        "pre-push deja pasar la release etiquetada y bloquea commits sueltos en main",
     )
 
     integ = git_repo(Path(tmp) / "integ_repo")

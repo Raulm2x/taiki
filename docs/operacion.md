@@ -278,7 +278,8 @@ Varias sesiones pueden trabajar a la vez sin pisarse:
   avisa y usa la rama actual sin romper. Exige que el ticket esté
   `confirmado`: el commit vive en el worktree, pero la rama de integración solo
   recibe lo que el usuario ya revisó. `main` no se toca aquí: solo la release
-  (`taiki release`) escribe en ella. `--force` es el bypass consciente.
+  (`taiki release`) escribe en ella y después se publica con
+  `git push origin main --follow-tags`. `--force` es el bypass consciente.
 - **Estado**: `taiki status` (o la tecla `S` en la TUI) muestra sesiones,
   leases, ramas, worktrees y solapamientos. El plugin de recarga del MCP se
   aplaza si hay otra sesión con actividad reciente.
@@ -309,6 +310,14 @@ informa `reconcile_error` para resolverlo a mano. Para deshacer una release,
 `git revert <commit-de-release>` en `main`; el merge de reconciliación de
 `develop` no estorba y solo se revierte con
 `git revert -m 1 <commit-de-reconciliación>` si hace falta.
+
+`git push origin main --follow-tags` publica la release. El hook `pre-push`
+solo deja empujar `main` cuando el tip es una release de `taiki release`
+(asunto `chore(release): vX.Y.Z` y/o tag `v*` que lo apunte) y, en ese caso,
+se limita a comprobar que los tickets del rango existan; un commit suelto en
+`main` sigue bloqueado. No uses `--no-verify` para saltarte el hook: si el
+push se rechaza, publica con `taiki release` o deshaz la release con
+`git revert` en `main`.
 
 
 ## Tickets temporales (scratch)

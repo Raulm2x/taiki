@@ -157,8 +157,11 @@ Por defecto la release sigue bloqueando.
 
 `taiki release` aplana los commits de `develop` en **un solo commit** sobre
 `main`, actualiza `CHANGELOG.md` a partir de los tickets y commits desde el tag
-anterior y crea el tag anotado `vX.Y.Z`. `main` no recibe pushes ni commits
-directos: la única vía es ese comando con los gates en verde.
+anterior y crea el tag anotado `vX.Y.Z`. `main` no recibe commits directos: se
+publica con `git push origin main --follow-tags` después de `taiki release`, y
+el hook `pre-push` solo acepta el push cuando el tip es ese commit de release
+(con su tag `vX.Y.Z`). `--no-verify` no es la vía: si el hook rechaza el push,
+es porque `main` tiene commits que no vienen de `taiki release`.
 
 Después del tag, el comando **reconcilia** la rama de integración con `main`:
 el squash deja en `main` un commit que `develop` no tiene, así que lo integra
@@ -178,7 +181,8 @@ taiki release
 
 ### Reglas
 
-- `main` protegida: sin push directo, sin commits sueltos y sin reescribir
+- `main` protegida: solo admite el push del commit de release y su tag
+  (`git push origin main --follow-tags`), sin commits sueltos ni reescritura de
   historia publicada. `develop` también se protege contra force-push.
 - Commits convencionales (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`,
   `chore:`) con el código `T-XXXX` en el asunto; el hook `commit-msg` lo exige.

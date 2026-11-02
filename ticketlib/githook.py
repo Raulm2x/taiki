@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,12 @@ PRE_COMMIT_BLOCK = (
 
 BYPASS_TOKEN = "[sin-ticket]"
 DISABLED_VALUES = {"0", "off", "false", "no", "disabled"}
+
+RELEASE_SUBJECT_RE = re.compile(r"^chore\(release\):\s+v\d+\.\d+\.\d+\b")
+RELEASE_PUSH_MESSAGE = (
+    "{branch} solo recibe releases: publica con `taiki release` y sube el "
+    "tag vX.Y.Z junto a la rama (git push origin {branch} --follow-tags)."
+)
 
 
 def git(*args: str, cwd: Path | None = None) -> str:
@@ -136,16 +143,45 @@ def install_pre_commit_hook(repo: str | Path = ".") -> Path:
     return _install(repo, "pre-commit", PRE_COMMIT_BEGIN, PRE_COMMIT_BLOCK)
 
 
+def _is_release_tip(git_func: Any, root: Path, sha: str) -> bool:
+    """¿El commit empujado es la release de ``taiki release``?
+
+    Se acepta el asunto ``chore(release): vX.Y.Z`` o un tag ``v*`` que apunte
+    al commit. La rama protegida solo se permite cuando el tip es release.
+    """
+    try:
+        subject = git_func("show", "-s", "--format=%s", sha, cwd=root)
+    except TicketError:
+        subject = ""
+    if RELEASE_SUBJECT_RE.match((subject or "").strip()):
+        return True
+    try:
+        tags = git_func("tag", "--list", "--points-at", sha, "v*", cwd=root)
+    except TicketError:
+        return False
+    return any(
+        line.strip().startswith("v") for line in (tags or "").splitlines()
+    )
+
+
 def check_push(
     conn: Any,
     repo: str | Path = ".",
     refs_text: str = "",
     git_func: Any = None,
 ) -> dict[str, Any]:
-    """Bloquea el push si algún commit nuevo referencia un ticket no confirmado."""
+    """Bloquea el push si algún commit nuevo referencia un ticket no confirmado.
+
+    ``main``/``master`` solo aceptan el tip de una release de ``taiki release``
+    (asunto ``chore(release): vX.Y.Z`` o tag ``v*`` que lo apunte); en ese caso
+    solo se comprueba que los tickets del rango existan. Un commit suelto en la
+    rama protegida se bloquea con el motivo ``protected-branch`` y la vía de
+    publicación en ``message``.
+    """
     git_func = git_func or git
     root = Path(repo).expanduser()
     blocked: list[dict[str, Any]] = []
+    messages: list[str] = []
     checked = 0
 
     for line in (refs_text or "").splitlines():
@@ -154,12 +190,17 @@ def check_push(
             continue
         _local_ref, local_sha, remote_ref, remote_sha = parts[:4]
         target = _push_branch(remote_ref)
-        if target in commits.PROTECTED_BRANCHES:
+        protected = target in commits.PROTECTED_BRANCHES
+        release = protected and _is_release_tip(git_func, root, local_sha)
+        if protected and not release:
+            message = RELEASE_PUSH_MESSAGE.format(branch=target)
+            messages.append(message)
             blocked.append(
                 {
                     "commit": local_sha,
                     "subject": target,
                     "reason": "protected-branch",
+                    "message": message,
                     "codes": [],
                     "missing": [],
                     "unconfirmed": [],
@@ -186,8 +227,23 @@ def check_push(
                 continue
             checked += 1
             result = check_commit_message(
-                conn, subject, require_confirmed=True, branch=""
+                conn, subject, require_confirmed=not release, branch=""
             )
+            if release:
+                # La release agrega trabajo ya integrado: solo importa que
+                # los tickets citados existan, no su estado.
+                if result.get("missing"):
+                    blocked.append(
+                        {
+                            "commit": sha,
+                            "subject": subject,
+                            "reason": result.get("reason"),
+                            "codes": result.get("codes", []),
+                            "missing": result.get("missing", []),
+                            "unconfirmed": [],
+                        }
+                    )
+                continue
             if result["ok"] or result.get("reason") == "no-code":
                 continue
             blocked.append(
@@ -200,7 +256,12 @@ def check_push(
                     "unconfirmed": result.get("unconfirmed", []),
                 }
             )
-    return {"ok": not blocked, "checked": checked, "blocked": blocked}
+    return {
+        "ok": not blocked,
+        "checked": checked,
+        "blocked": blocked,
+        "message": " ".join(messages),
+    }
 
 
 def hooks_installed(repo: str | Path = ".") -> dict[str, bool]:
