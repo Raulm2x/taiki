@@ -259,8 +259,23 @@ desde `main`, se etiqueta una versión de parche y se integra también en
 ### Versionado y CHANGELOG
 
 Versionado semántico: un cambio incompatible sube **major**, un `feat:` sube
-**minor** y el resto (`fix:`, `docs:`, `refactor:`…) sube **patch**. El
-`CHANGELOG.md` se genera durante la release agrupando los tickets y commits
+**minor** y el resto (`fix:`, `docs:`, `refactor:`…) sube **patch**. Un `feat:`
+pequeño (un flag, un ajuste de salida) puede declarar su nivel en el cuerpo del
+commit con el trailer `Release-Bump`:
+
+```text
+feat: añade --push a release (T-0040)
+
+Release-Bump: patch
+```
+
+La release usa el **mayor** de los trailers declarados en el rango; si no hay
+ninguno, mantiene la convención anterior, y un `BREAKING CHANGE` (o `!`) siempre
+sube **major** aunque un commit pida `patch`. `--bump` prevalece sobre el
+trailer. El resumen (también con `--json`) lista esos commits en
+`explicit_bumps`, y el texto avisa de qué commits declararon el nivel.
+
+El `CHANGELOG.md` se genera durante la release agrupando los tickets y commits
 desde el `released_sha` de `.taiki/releases.json` (o desde el tag anterior si
 aún no hay marcador); solo se edita a mano para corregir el resumen. Tanto
 `CHANGELOG.md` como `.taiki/releases.json` se versionan en `develop`.

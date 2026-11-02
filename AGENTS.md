@@ -27,6 +27,8 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    orden de dependencias, con `taiki worktree merge T-XXXX --delete`; el guard
    rechaza los no confirmados.
 5. El asunto del commit debe incluir `T-XXXX`; el hook `commit-msg` lo exige.
+   Un `feat:` pequeño puede declarar `Release-Bump: patch|minor|major` como
+   trailer del cuerpo; sin trailer, `feat` sube minor.
 6. El conductor y los subagentes viven en `.opencode/agents/`; consulta el
    routing de variantes y el presupuesto de concurrencia con la herramienta
    MCP `agents` y `schedule` (paralelismo seguro por paths). Los perfiles

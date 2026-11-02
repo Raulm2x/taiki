@@ -23,7 +23,7 @@ import subprocess
 from argparse import Namespace
 from pathlib import Path
 
-from commands.release import cmd_release
+from commands.release import _bump_for, _explicit_bumps, cmd_release
 from commands.tickets import cmd_claim
 from commands.worktree import cmd_worktree_merge
 from tests.seeds import git_repo
@@ -291,6 +291,61 @@ def _push_cases(tmp: Path) -> tuple[dict, dict]:
     return actual, expected
 
 
+def _bump_cases(root: Path) -> dict[str, dict]:
+    """Niveles del trailer: capa pura y dos dry-runs de integración.
+
+    La precedencia y el parseo se prueban en ``_bump_for``/``_explicit_bumps``
+    (sin repos); el repo de ``run`` solo se usa para comprobar que el resumen
+    integra ``explicit_bumps`` y que ``--bump`` prevalece. Un ``reset --hard``
+    devuelve ``develop`` a su base.
+    """
+
+    def commit(subject: str, trailer: str = "") -> dict[str, str]:
+        body = f"{subject}\n\n{trailer}" if trailer else subject
+        return {"sha": subject[:7], "subject": subject, "body": body}
+
+    cases = {
+        "trailer_patch": [commit("feat: flag (T-0010)", "Release-Bump: patch")],
+        "trailer_minor": [
+            commit("feat: flag (T-0011)", "Release-Bump: minor"),
+            commit("fix: borde (T-0012)"),
+        ],
+        "breaking_trailer_patch": [
+            commit("feat!: rompe api (T-0013)", "Release-Bump: patch")
+        ],
+        "convention": [commit("feat: normal (T-0015)")],
+    }
+    results: dict[str, dict] = {
+        name: {
+            "bump": _bump_for(commits),
+            "explicit": [
+                (item["subject"], item["level"])
+                for item in _explicit_bumps(commits)
+            ],
+        }
+        for name, commits in cases.items()
+    }
+    base = _git(root, "rev-parse", "develop")
+    _commit(
+        root,
+        "sondeo-bump.txt",
+        "sondeo\n",
+        "feat: flag (T-0014)\n\nRelease-Bump: patch",
+    )
+    _, declared = _release(root, dry_run=True)
+    _, override = _release(root, dry_run=True, bump="minor")
+    _git(root, "reset", "--hard", base)
+    results["integration"] = {
+        "bump": declared.get("bump"),
+        "explicit": [
+            (item.get("subject"), item.get("level"))
+            for item in declared.get("explicit_bumps") or []
+        ],
+        "override": override.get("bump"),
+    }
+    return results
+
+
 def _claim_worktree(
     h, root: Path, database: Path, title: str
 ) -> tuple[str, Path, int]:
@@ -523,6 +578,7 @@ def run(h) -> None:
 
     sync_actual, sync_expected = _sync_cases(tmp)
     push_actual, push_expected = _push_cases(tmp)
+    bumps_actual = _bump_cases(root)
 
     rc, release = _release(root, no_verify=False, verify_cmd="true")
     message = _git(root, "log", "-1", "--format=%B", "main")
@@ -598,6 +654,7 @@ def run(h) -> None:
             **negative,
             "sync": sync_actual,
             "push": push_actual,
+            "bumps": bumps_actual,
             "marker": marker_actual,
             "release": {
                 "rc": rc,
@@ -625,6 +682,26 @@ def run(h) -> None:
             **expected_negative,
             "sync": sync_expected,
             "push": push_expected,
+            "bumps": {
+                "trailer_patch": {
+                    "bump": "patch",
+                    "explicit": [("feat: flag (T-0010)", "patch")],
+                },
+                "trailer_minor": {
+                    "bump": "minor",
+                    "explicit": [("feat: flag (T-0011)", "minor")],
+                },
+                "breaking_trailer_patch": {
+                    "bump": "major",
+                    "explicit": [("feat!: rompe api (T-0013)", "patch")],
+                },
+                "convention": {"bump": "minor", "explicit": []},
+                "integration": {
+                    "bump": "patch",
+                    "explicit": [("feat: flag (T-0014)", "patch")],
+                    "override": "minor",
+                },
+            },
             "marker": marker_expected,
             "release": {
                 "rc": 0,

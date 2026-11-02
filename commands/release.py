@@ -40,8 +40,11 @@ Sin ``--push`` no se toca la red: es el modo local determinista. ``--push`` y
 ``--dry-run`` son incompatibles.
 
 La versión sube según los commits: ``!`` o ``BREAKING CHANGE`` → major,
-``feat`` → minor y el resto → patch; ``--bump`` fuerza el incremento. Si el
-rango no tiene commits publicables, la release aborta con un error claro.
+``feat`` → minor y el resto → patch; ``--bump`` fuerza el incremento. Un
+commit puede declarar su nivel con el trailer ``Release-Bump: patch|minor|
+major`` en el cuerpo (véase ``_declared_bump``): gana el mayor declarado y un
+``BREAKING CHANGE`` nunca se degrada. Si el rango no tiene commits publicables,
+la release aborta con un error claro.
 
 Rollback: ``git revert <commit>`` del commit de release (y retira el tag si aún
 no se publicó). Nunca se reescribe ``main`` publicado. La reconciliación es un
@@ -72,6 +75,7 @@ VERIFY_ENV = "RELEASE_VERIFY"
 DEFAULT_VERIFY = (sys.executable, "tests/run.py", "--verify")
 RELEASES_FILE = ".taiki/releases.json"
 BUMPS = ("major", "minor", "patch")
+_BUMP_RANK = {"patch": 0, "minor": 1, "major": 2}
 # Orden estable de los grupos del resumen; el resto va al final como "otros".
 TYPE_ORDER = (
     "feat",
@@ -88,6 +92,10 @@ TYPE_ORDER = (
 )
 _CONVENTIONAL = re.compile(
     r"^(?P<type>[a-zA-Z]+)(?:\([^)]*\))?(?P<breaking>!)?:\s*(?P<desc>.+)$"
+)
+# Trailer opcional en el cuerpo: deja el criterio del nivel en el commit.
+_TRAILER_BUMP = re.compile(
+    r"^Release-Bump:\s*(?P<level>patch|minor|major)\s*$", re.IGNORECASE | re.MULTILINE
 )
 # Commits que genera la propia release en la integración. No son trabajo
 # publicable: si entraran en el rango, una segunda release los repetiría en el
@@ -299,9 +307,36 @@ def _commit_type(commit: dict[str, str]) -> str | None:
     return match.group("type") if match else None
 
 
+def _declared_bump(commit: dict[str, str]) -> str | None:
+    """Nivel pedido por el trailer ``Release-Bump`` (el último si se repite)."""
+    levels = _TRAILER_BUMP.findall(commit["body"])
+    return levels[-1].lower() if levels else None
+
+
+def _explicit_bumps(commits: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Commits que declaran nivel explícito, en el orden de ``git log``."""
+    entries: list[dict[str, str]] = []
+    for commit in commits:
+        level = _declared_bump(commit)
+        if level is not None:
+            entries.append(
+                {
+                    "sha": commit["sha"],
+                    "subject": commit["subject"],
+                    "level": level,
+                }
+            )
+    return entries
+
+
 def _bump_for(commits: list[dict[str, str]]) -> str:
     if any(_is_breaking(commit) for commit in commits):
         return "major"
+    declared = [
+        level for level in (_declared_bump(commit) for commit in commits) if level
+    ]
+    if declared:
+        return max(declared, key=_BUMP_RANK.__getitem__)
     if any(_commit_type(commit) == "feat" for commit in commits):
         return "minor"
     return "patch"
@@ -606,6 +641,7 @@ def run(
         "range": start,
         "released_sha": released_sha,
         "bump": level,
+        "explicit_bumps": _explicit_bumps(commits),
         "tickets": tickets,
         "commits": len(commits),
         "message": message,
@@ -727,6 +763,16 @@ def run(
     return summary
 
 
+def _print_explicit(result: dict[str, Any]) -> None:
+    explicit = result.get("explicit_bumps") or []
+    if not explicit:
+        return
+    declared = ", ".join(
+        f"{item['sha'][:12]} {item['subject']} → {item['level']}" for item in explicit
+    )
+    print(f"Nivel declarado por: {declared}")
+
+
 def cmd_release(args: argparse.Namespace) -> int:
     root = (
         Path(args.repo).expanduser()
@@ -753,6 +799,7 @@ def cmd_release(args: argparse.Namespace) -> int:
     if result["dry_run"]:
         print(f"Release {result['tag']} ({result['integration']} → {result['main']})")
         print(result["message"])
+        _print_explicit(result)
         if result.get("allow_ahead"):
             print(
                 f"allow-ahead: {result['integration']} va por delante de su "
@@ -765,6 +812,7 @@ def cmd_release(args: argparse.Namespace) -> int:
     if result.get("push"):
         steps = ", ".join(result["pushed"]) or "(sin pasos)"
         print(f"Publicado en {result['remote']}: {steps}")
+    _print_explicit(result)
     if result.get("reconciled"):
         print(
             f"Reconciliado: {result['integration']} contiene {result['main']} "
