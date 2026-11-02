@@ -13,6 +13,8 @@ from ticketlib.memory import (
     validate_memory_config,
     wilson_lower,
 )
+from ticketlib.memory import candidates as candidates_module
+from ticketlib.memory import candidates_rules as rules_module
 from tests.support import Harness
 
 _RULES = {item["rule"] for item in CANDIDATE_RULES}
@@ -452,6 +454,12 @@ def _thresholds(h: Harness) -> None:
 
 
 def run(h: Harness) -> None:
+    h.ok(
+        candidates_module.generate_candidates is generate_candidates
+        and candidates_module.CANDIDATE_RULES is rules_module.CANDIDATE_RULES
+        and candidates_module.wilson_lower is rules_module.wilson_lower,
+        "candidates reexporta la API pública de candidates_rules",
+    )
     _thresholds(h)
     _rules(h)
     _routing(h)
