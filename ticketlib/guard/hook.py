@@ -67,9 +67,15 @@ def parse_hook_input(payload: Any) -> dict[str, Any]:
     )
     cwd = (
         raw.get("cwd")
-        or raw.get("working_dir")
+        or raw.get("working_directory")
+        or raw.get("workdir")
         or raw.get("workingDirectory")
+        or raw.get("directory")
         or data.get("cwd")
+        or data.get("working_directory")
+        or data.get("workdir")
+        or data.get("workingDirectory")
+        or data.get("directory")
     )
     agent = (
         data.get("agent")

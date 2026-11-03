@@ -28,6 +28,7 @@ def _hook() -> int:
         agent=data["agent"],
         path=data["path"],
         command=data["command"],
+        cwd=data.get("cwd"),
     )
     print(
         json.dumps(

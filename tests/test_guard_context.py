@@ -418,4 +418,86 @@ def run(h: Harness) -> None:
         None,
         "sin cwd el payload queda en None",
     )
+    h.ok(
+        guard.parse_hook_input(
+            {"tool_input": {"working_directory": "/x"}}
+        )["cwd"]
+        == "/x"
+        and guard.parse_hook_input({"tool_input": {"workdir": "/y"}})["cwd"]
+        == "/y"
+        and guard.parse_hook_input({"directory": "/z"})["cwd"] == "/z"
+        and guard.parse_hook_input(
+            {"tool_input": {}, "workingDirectory": "/w"}
+        )["cwd"]
+        == "/w",
+        "parse_hook_input entiende las variantes de cwd",
+    )
+
+    # ── El hook propaga cwd y resuelve rutas relativas ──────────
+    repo.transition(
+        conn,
+        ctx_ticket["code"],
+        "cancelado",
+        note="fin del escenario de decodificación",
+        actor="usuario",
+        actor_type="usuario",
+    )
+    hook_project = Path(h.tmp) / "hook-proj"
+    (hook_project / ".taiki").mkdir(parents=True)
+    (hook_project / ".taiki" / "config.json").write_text(
+        json.dumps({"guard": True}), encoding="utf-8"
+    )
+    (hook_project / "src").mkdir()
+    hook_ticket = repo.create_ticket(
+        conn,
+        title="Hook con cwd",
+        isolation="scope",
+        paths=["src/"],
+        created_by="opencode",
+        actor_type="agente",
+        session_id="ses_hook_rel",
+    )
+    repo.claim_ticket(
+        conn, hook_ticket["code"], agent="opencode", session_id="ses_hook_rel"
+    )
+    hook_event = json.dumps(
+        {
+            "tool_name": "bash",
+            "tool_input": {
+                "command": "sed -i 's/a/b/' a.py",
+                "cwd": str(hook_project / "src"),
+            },
+            "session_id": "ses_hook_rel",
+        }
+    )
+    saved_stdin = sys.stdin
+    try:
+        sys.stdin = io.StringIO(hook_event)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = cli.main(["guard", "--hook"])
+        payload = json.loads(out.getvalue())
+        h.ok(
+            code == 0 and payload["decision"] == "allow",
+            "el hook resuelve la relativa contra el cwd del payload",
+        )
+        sys.stdin = io.StringIO(
+            json.dumps(
+                {
+                    "tool_name": "bash",
+                    "tool_input": {"command": "sed -i 's/a/b/' a.py"},
+                    "session_id": "ses_hook_rel",
+                }
+            )
+        )
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = cli.main(["guard", "--hook"])
+        payload = json.loads(out.getvalue())
+        h.ok(
+            code == 2 and payload["action"] == "scope",
+            "sin cwd la relativa se valida contra el proceso actual",
+        )
+    finally:
+        sys.stdin = saved_stdin
 
