@@ -304,6 +304,9 @@ taiki commit --repo ~/.config --ticket T-0044 -m "fix: hypr (T-0044)"
   `taiki reject --revert --why …` (solo usuario) ejecuta `git revert` si la
   reversión es `git-revert`; con `copy` o sistema solo imprime el comando
   manual. Los tickets `worktree` se rechazan de la forma normal.
+- **Verificación**: código → suite/gates; documentación y dotfiles → contenido,
+  alcance del commit y `git show`; sistema → `verify.command` cuando aplique.
+  Detalle en [operación](operacion.md#verificación-por-tipo).
 
 ### Épicas y tareas
 

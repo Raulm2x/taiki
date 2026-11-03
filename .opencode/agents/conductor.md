@@ -366,7 +366,13 @@ serializan porque comparten el repo real.
    `taiki review T-XXXX` del usuario. Nunca ejecutes `taiki review` ni lo
    presentes como hecho.
 5. Verifica con el comando del workspace (`verify.command` de la
-   configuración) y con los gates deterministas; no inventes sustitutos.
+   configuración) y con los gates deterministas; no inventes sustitutos. En un
+   workspace sin suite (`tests/run.py`) el gate es `verify.command`; para
+   tickets `documentacion` o cambios de dotfiles, el gate es el contenido y el
+   alcance del commit (`git show --stat`/`git show --name-only`) más que el
+   fichero live coincida con lo commiteado. Si `verify.command` no existe o no
+   aplica (por ejemplo, un glob de unidades vacío), deja constancia y no lo
+   cuentes como fallo.
 6. Deja rastro de sistema con `taiki sys snapshot T-XXXX --path|--packages`
    antes de tocar y `taiki sys export` al cerrar, para que la reversión y el
    manifiesto queden en el repo de sistema.

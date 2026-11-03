@@ -9,6 +9,7 @@ import os
 import sys
 from pathlib import Path
 from commands.git import cmd_hook_check_push
+from commands.mcp import install_repo_hooks
 from ticketlib import audit as audit_lib, githook, repo
 from tests.seeds import git_repo, repo_with_hooks
 from tests.support import Harness
@@ -325,4 +326,28 @@ def run(h: Harness) -> None:
         legacy_hook.read_text(encoding="utf-8").count("taiki auto-link"),
         migrated.count("taiki auto-link"),
         "reinstalar el hook migrado no duplica el bloque",
+    )
+
+    # ── mcp install instala los cuatro hooks ───────────────────────────
+    hooks_ws = git_repo(Path(tmp) / "hooks_ws")
+    with contextlib.redirect_stderr(io.StringIO()):
+        hooks_dir = install_repo_hooks(hooks_ws)
+    names = ("post-commit", "commit-msg", "pre-push", "pre-commit")
+    h.ok(
+        hooks_dir == hooks_ws.resolve() / ".git" / "hooks"
+        and all(
+            (hooks_dir / name).is_file()
+            and os.access(hooks_dir / name, os.X_OK)
+            for name in names
+        ),
+        "mcp install instala los cuatro hooks ejecutables",
+    )
+    plain = Path(tmp) / "sin_git"
+    plain.mkdir()
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        missing = install_repo_hooks(plain)
+    h.ok(
+        missing is None and "hooks" in err.getvalue(),
+        "sin repo Git avisa y no rompe la instalación de hooks",
     )

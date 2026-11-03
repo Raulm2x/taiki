@@ -65,6 +65,17 @@ nuevo → pendiente → en_progreso → completado → verificado → confirmado
   exige un motivo e incrementa el contador de intentos.
 - Cada cambio queda registrado en el historial con actor, sesión y nota.
 
+### Verificación por tipo
+
+El gate de `verificado` depende del cambio: en **código**, la suite y los gates
+deterministas (`python3 tests/run.py --verify`); en **documentación o
+dotfiles**, el contenido y el alcance del commit (`git show --stat` /
+`git show --name-only`) y que el fichero live coincida con lo commiteado; en
+**sistema**, `verify.command` del workspace cuando aplique. Un workspace sin
+suite (`tests/run.py`) usa `verify.command` como gate; si el comando no existe
+o no aplica (por ejemplo, un glob de unidades vacío), se deja constancia y no
+cuenta como fallo.
+
 
 ## Orquestación
 

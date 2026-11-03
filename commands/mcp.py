@@ -18,6 +18,12 @@ from typing import Any
 
 from ticketlib import db, workspace
 from ticketlib.domain import TicketError
+from ticketlib.githook import (
+    install_commit_msg_hook,
+    install_post_commit_hook,
+    install_pre_commit_hook,
+    install_pre_push_hook,
+)
 from ticketlib.memory.sync import (
     install_opencode_memory,
     sync_generated,
@@ -116,6 +122,29 @@ def install_opencode(root: Path) -> dict[str, Any]:
     return {"client": "opencode", "method": "file", "detail": str(path)}
 
 
+def install_repo_hooks(root: str | Path) -> Path | None:
+    """Instala los cuatro hooks de Taiki; ``None`` si ``root`` no es un repo Git.
+
+    ``taiki mcp install`` lo usa para dejar el repo listo sin exigir un
+    ``taiki hook-install`` aparte; este último sigue siendo la vía manual.
+    """
+    try:
+        installed = [
+            install_post_commit_hook(root),
+            install_commit_msg_hook(root),
+            install_pre_push_hook(root),
+            install_pre_commit_hook(root),
+        ]
+    except TicketError as exc:
+        print(
+            f"OpenCode: no se instalaron los hooks ({exc}). "
+            "Ejecuta `taiki hook-install` dentro del repo.",
+            file=sys.stderr,
+        )
+        return None
+    return installed[-1].parent
+
+
 def uninstall_opencode(root: Path) -> Path | None:
     """Quita el MCP del proyecto sin tocar el resto de su configuración."""
     removed = _drop_server(root, MCP_NAME)
@@ -159,6 +188,9 @@ def cmd_mcp_install(args: argparse.Namespace) -> int:
 
     result = install_opencode(root)
     print(f"OpenCode: MCP `{MCP_NAME}` instalado en {result['detail']}")
+    hooks = install_repo_hooks(root)
+    if hooks is not None:
+        print(f"OpenCode: hooks instalados en {hooks}")
 
     conn = db.connect()
     try:
