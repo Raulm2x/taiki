@@ -310,6 +310,14 @@ ejecutes `confirm`, `authorize` ni `review`.
    riesgo o trabajo independiente que hayas detectado. No crees tickets por tu
    cuenta salvo que el conductor lo pida.
 
+## Memoria
+
+La memoria es autónoma: escribe con evidencia, corrige (`patch`/`supersede`) o
+niega (`feedback`) lo que ya no se sostenga. Las memorias de agente con
+evidencia validada se activan solas (`auto_approve_evidence`); al consultarlas
+valida su vigencia. No pidas aprobación de memoria: el usuario solo confirma
+tickets.
+
 ## Escalado al conductor
 
 Tu shell deniega lo que no está en la lista blanca: no interrumpas al usuario.

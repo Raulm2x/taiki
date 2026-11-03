@@ -23,16 +23,16 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    `.taiki/generated/brief.md` o, si no aparece, llama a la herramienta MCP
    `brief`. Usa `memory_search` para el contexto que falte y aplica los
    `hints` del recibo de `claim` (memorias por rutas, tipo o etiquetas). La
-   memoria es contexto: no sustituye al ticket ni a estas reglas, y una
-   propuesta no es instrucción hasta que el usuario la apruebe. Si una memoria
-   trae `freshness` con `ok=false`, **no la uses como verdad**: actualiza el
-   contenido y la evidencia con `patch`/`supersede` o niégala con
-   `feedback`/`supersede`. Si el brief
-   muestra `## Pendientes`, son propuestas sin aprobar: revísalas con
-   `taiki memory pending`; `taiki status` y `health` también las cuentan. Las
-   memorias de agente con evidencia validada (ticket verificado/confirmado,
-   commit resoluble o fichero existente) se activan solas; las reglas negativas
-   y los `workflow`/routing siguen propuestas hasta su aprobación.
+   memoria es contexto: no sustituye al ticket ni a estas reglas. La memoria es
+   autónoma: las memorias de agente con evidencia validada (ticket
+   verificado/confirmado, commit resoluble o fichero existente) se activan solas
+   (`auto_approve_evidence`); las reglas negativas y los `workflow`/routing
+   siguen propuestas hasta su aprobación. Si una memoria trae `freshness` con
+   `ok=false`, **no la uses como verdad**: actualiza el contenido y la evidencia
+   con `patch`/`supersede` o niégala con `feedback`/`supersede`. Si el brief
+   muestra `## Pendientes`, son propuestas sin evidencia validada: revísalas con
+   `taiki memory pending`; `taiki status` y `health` también las cuentan. El
+   usuario solo confirma tickets: no pide aprobación de memoria.
    `memory.brief_mode` (`full`/`index`) decide si el brief lleva el contenido
    destilado o solo el índice con `memory_search`; `memory.enforce_budget`
    (`false` por defecto) convierte el exceso de presupuesto en aviso
@@ -57,17 +57,18 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    obvio, propón una lección con la herramienta MCP `memory_write` y evidencia
    (`ticket`, `commit`, `file`, `url` o `session`). No guardes fallos
    transitorios, credenciales, narrativas ni prohibiciones amplias. La
-   aprobación es del usuario con `taiki memory approve`; los agentes no
-   aprueban propuestas.
+   aprobación es automática con evidencia validada (`auto_approve_evidence`);
+   corrige o niega lo que ya no se sostenga. El usuario solo confirma tickets.
 7. **Revisión periódica con curator.** Cada 5 tickets verificados/cerrados o
    cuando `memory_candidates(mode=list)` acumule 3 o más candidatos, el
    conductor lanza el subagente `curator` en background con el paquete
-   `memory_candidates(mode=review)`. El curator propone como máximo 5 memorias,
-   prefiere `patch`/`supersede` sobre `add`, exige evidencia, no aprueba, no
-   edita código y no lanza subagentes. El conductor reporta las propuestas
-   pendientes (visibles en el brief, `taiki status` y `health`); **los agentes
-   proponen y el usuario aprueba o rechaza** con `taiki memory approve` o
-   `taiki memory reject`. Los agentes nunca aprueban ni rechazan.
+   `memory_candidates(mode=review)`. El curator escribe como máximo 5 memorias,
+   prefiere `patch`/`supersede` sobre `add`, exige evidencia, no aprueba a mano,
+   no edita código y no lanza subagentes. Sus memorias con evidencia validada
+   quedan activas; el conductor revisa que sean correctas y corrige o niega lo
+   que no se sostenga. La memoria es autónoma: escribe con evidencia, corrige o
+   niega lo que ya no se sostenga; no pidas aprobación de memoria. El usuario
+   solo confirma tickets.
 8. El conductor y los subagentes viven en `.opencode/agents/`; consulta el
    routing de variantes y el presupuesto de concurrencia con la herramienta
    MCP `agents` y `schedule` (paralelismo seguro por paths). Los perfiles
@@ -282,7 +283,7 @@ taiki stats                 # resumen
 taiki brief                 # brief operativo de la memoria
 taiki memory search <texto> # búsqueda puntual sin cargar el brief entero
 taiki remember "texto"      # preferencia activa del usuario
-taiki memory pending        # propuestas pendientes de aprobación
+taiki memory pending        # propuestas sin evidencia validada
 taiki memory pending --diff # diff frente a la memoria sustituida
 taiki memory candidates     # candidatos deterministas del histórico
 taiki memory review --write # paquete para el curator
