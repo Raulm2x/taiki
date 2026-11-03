@@ -454,12 +454,15 @@ ledger de snapshots y registros.
   ficheros fuera de esas raíces.
 - **`taiki sys snapshot T-XXXX --path FILE`**: copia a
   `snapshots/T-XXXX/<timestamp>/<ruta>` con `shutil.copy2`, calcula SHA-256,
-  commitea y anota en el ticket la reversión `copy` con el comando `cp -a`.
+  commitea, **enlaza el commit al ticket** (`commit`, actor `agente`, sin
+  resolver en el repo del proyecto: el sha vive en el repo de sistema) y anota
+  la reversión `copy` con el comando `cp -a`. Ese enlace es la evidencia que
+  `complete` exige en `none`/`scope`: no hace falta `taiki link` a mano.
   Solo para tickets `none`/`scope` y ficheros existentes.
 - **`--packages`**: guarda `pacman -Qqe` en
   `snapshots/T-XXXX/pacman-Qqe.txt`; `--from FILE` permite leer una lista sin
-  ejecutar `pacman`. El rollback es **manual**:
-  `pacman -S --needed $(cat …)`.
+  ejecutar `pacman`. También enlaza su commit al ticket. El rollback es
+  **manual**: `pacman -S --needed $(cat …)`.
 - **Dotfiles**: si el fichero vive en el repo de dotfiles detectado, no se
   copia. Se registra una reversión `git-revert` en ese repo y se imprime el
   comando `taiki commit --repo ~/.config --ticket T-XXXX`, con los `paths`
@@ -467,8 +470,13 @@ ledger de snapshots y registros.
   de dotfiles se enlaza como `external <repo>@<sha>`.
 - **`taiki sys export [T-XXXX]`**: exporta los tickets y escribe
   `records/tickets.json`, `records/tickets.md` y `records/manifest.json` con
-  snapshots, hashes y enlaces (`commit` y `external`), y lo commitea. La DB
-  nunca se versiona.
+  snapshots, hashes y enlaces (`commit` y `external`), y lo commitea. Con
+  código, enlaza el commit de `records/` al ticket, así que tampoco necesita
+  `taiki link` manual. La DB nunca se versiona.
+- **Enlace manual**: solo para cambios **sin commit** propio del ledger, por
+  ejemplo un fichero nuevo sin snapshot o trabajo hecho a mano en el árbol
+  vivo: `taiki link T-XXXX commit <sha>` o `external repo@sha`. Snapshot y
+  export ya enlazan solos.
 - **`taiki sys audit`**: compara los hashes del manifiesto con los ficheros
   actuales. Marca `changed`/`missing` y si el cambio está cubierto por un
   ticket abierto (`snapshots/<T-XXXX>/…`). **Límite**: no escanea ficheros

@@ -145,6 +145,7 @@ def run(h: Harness) -> None:
 
     # ── sys snapshot ────────────────────────────────────────────────────
     ticket = repo.create_ticket(h.conn, title="Ajuste del sistema", isolation="scope")
+    repo.transition(h.conn, ticket["code"], "en_progreso")
     copy = snapshot_path(
         h.conn, ticket["code"], tool, project=system, timestamp="20260101-000000"
     )
@@ -165,6 +166,15 @@ def run(h: Harness) -> None:
             "command": f"cp -a {system / copy['snapshot']} {tool}",
         },
         "sys snapshot anota la reversión copy en el ticket",
+    )
+    h.eq(
+        [
+            link["ref"]
+            for link in repo.get_ticket(h.conn, ticket["code"])["links"]
+            if link["kind"] == "commit"
+        ],
+        [copy["commit"]],
+        "sys snapshot enlaza su commit al ticket",
     )
     h.eq(
         subprocess.run(
@@ -219,7 +229,16 @@ def run(h: Harness) -> None:
         "sys snapshot --packages guarda pacman -Qqe y reporta recuento y ruta",
     )
     # ── sys export / audit ──────────────────────────────────────────────
-    export_records(h.conn, ticket["code"], project=system)
+    exported = export_records(h.conn, ticket["code"], project=system)
+    h.eq(
+        {
+            link["ref"]
+            for link in repo.get_ticket(h.conn, ticket["code"])["links"]
+            if link["kind"] == "commit"
+        },
+        {copy["commit"], packages["commit"], exported["commit"]},
+        "snapshot, packages y export enlazan su commit al ticket",
+    )
     records = system / "records"
     manifest = json.loads((records / "manifest.json").read_text(encoding="utf-8"))
     h.eq(
@@ -280,6 +299,13 @@ def run(h: Harness) -> None:
     h.ok(
         "no escanea ficheros nuevos" in uncovered["note"],
         "sys audit documenta que no escanea ficheros nuevos",
+    )
+    h.eq(
+        repo.complete_ticket(
+            h.conn, ticket["code"], "Snapshots enlazados al ticket"
+        )["status"],
+        "completado",
+        "complete en scope pasa con el commit del snapshot enlazado",
     )
 
     # ── Contrato de CLI ─────────────────────────────────────────────────

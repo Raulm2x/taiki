@@ -218,6 +218,11 @@ def snapshot_path(
         [destination],
         f"chore(sys): snapshot {ticket['code']} {source}",
     )
+    # El commit vive en el repo de sistema, no en el del ticket: se enlaza sin
+    # resolver para que `complete` tenga evidencia en none/scope.
+    repo.link_ticket(
+        conn, ticket["code"], "commit", commit, actor="agente", resolve=False
+    )
     reversal = {
         "kind": "copy",
         "ref": snapshot.as_posix(),
@@ -275,6 +280,9 @@ def snapshot_packages(
         root,
         [destination],
         f"chore(sys): packages {ticket['code']}",
+    )
+    repo.link_ticket(
+        conn, ticket["code"], "commit", commit, actor="agente", resolve=False
     )
     return {
         "ticket": ticket["code"],
@@ -371,6 +379,8 @@ def export_records(
     )
     message = f"chore(sys): export {code}" if code else "chore(sys): export"
     commit = _commit_paths(root, [tickets_json, tickets_md, manifest_path], message)
+    if code:
+        repo.link_ticket(conn, code, "commit", commit, actor="agente", resolve=False)
     return {
         "tickets": manifest["tickets"]["count"],
         "files": [item["path"] for item in files],
