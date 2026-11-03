@@ -143,6 +143,7 @@ def add_memory(
         )
 
     fingerprint = normalize_fingerprint(title_text, content_text)
+    validated = core.validated_evidence(conn, evidence_rows)
     final_status = status or core.decide_status(
         kind=kind,
         source=source,
@@ -150,6 +151,8 @@ def add_memory(
         confidence_value=level,
         text=" ".join((title_text, description_text, content_text, key_text)),
         policy=str(cfg["write_policy"]),
+        validated_evidence=len(validated),
+        auto_approve=bool(cfg["auto_approve_evidence"]),
     )
 
     with db.tx(conn):

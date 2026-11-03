@@ -26,7 +26,10 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    memoria es contexto: no sustituye al ticket ni a estas reglas, y una
    propuesta no es instrucción hasta que el usuario la apruebe. Si el brief
    muestra `## Pendientes`, son propuestas sin aprobar: revísalas con
-   `taiki memory pending`; `taiki status` y `health` también las cuentan.
+   `taiki memory pending`; `taiki status` y `health` también las cuentan. Las
+   memorias de agente con evidencia validada (ticket verificado/confirmado,
+   commit resoluble o fichero existente) se activan solas; las reglas negativas
+   y los `workflow`/routing siguen propuestas hasta su aprobación.
    `memory.brief_mode` (`full`/`index`) decide si el brief lleva el contenido
    destilado o solo el índice con `memory_search`; `memory.enforce_budget`
    (`false` por defecto) convierte el exceso de presupuesto en aviso

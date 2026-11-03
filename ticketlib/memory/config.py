@@ -35,6 +35,7 @@ DEFAULT_MEMORY_CONFIG: dict[str, Any] = {
     "candidate_similarity": 0.8,
     "instructions_sync": True,
     "skills_sync": True,
+    "auto_approve_evidence": True,
     "user_scope": "project",
     "auto_curate": dict(DEFAULT_AUTO_CURATE),
     "review_command": None,
@@ -46,6 +47,7 @@ _BOOL_KEYS = (
     "enforce_budget",
     "instructions_sync",
     "skills_sync",
+    "auto_approve_evidence",
 )
 _BRIEF_MODES = ("full", "index")
 _POSITIVE_KEYS = (

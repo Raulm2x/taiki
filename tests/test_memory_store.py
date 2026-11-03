@@ -274,6 +274,21 @@ def _crud(h: Harness) -> None:
 
 def _policy(h: Harness) -> None:
     conn = h.conn
+    closed = repo.create_ticket(conn, title="Ticket confirmado para memoria")
+    for target in ("pendiente", "en_progreso"):
+        repo.transition(conn, closed["code"], target)
+    repo.transition(conn, closed["code"], "completado", resolution="hecho")
+    repo.transition(
+        conn,
+        closed["code"],
+        "confirmado",
+        actor="usuario",
+        actor_type="usuario",
+    )
+    open_ticket = repo.create_ticket(conn, title="Ticket pendiente para memoria")
+    repo.transition(conn, open_ticket["code"], "pendiente")
+    existing_file = h.tmp / "evidencia.txt"
+    existing_file.write_text("evidencia", encoding="utf-8")
     h.raises(
         ValidationError,
         lambda: add_memory(
@@ -311,9 +326,69 @@ def _policy(h: Harness) -> None:
         key="fts-tokenizer",
         source="agent",
         confidence=0.9,
-        evidence=[{"kind": "file", "ref": "ticketlib/db.py"}],
+        evidence=[{"kind": "file", "ref": str(h.tmp / "no-existe.py")}],
     )
-    h.eq(weak["status"], "proposed", "agent con una evidencia queda propuesta")
+    missing_commit = add_memory(
+        conn,
+        title="Commit fantasma",
+        content="Un commit que no existe no valida la evidencia.",
+        kind="fact",
+        key="commit-fantasma",
+        source="agent",
+        evidence=[{"kind": "commit", "ref": "deadbeef"}],
+    )
+    open_case = add_memory(
+        conn,
+        title="Ticket abierto",
+        content="Un ticket sin cerrar no valida la evidencia.",
+        kind="fact",
+        key="ticket-abierto",
+        source="agent",
+        evidence=[{"kind": "ticket", "ref": open_ticket["code"]}],
+    )
+    closed_case = add_memory(
+        conn,
+        title="Ticket confirmado",
+        content="Un ticket confirmado valida la evidencia del agente.",
+        kind="fact",
+        key="ticket-confirmado",
+        source="agent",
+        evidence=[{"kind": "ticket", "ref": closed["code"]}],
+    )
+    no_auto = add_memory(
+        conn,
+        title="Auto-aprobación desactivada",
+        content="Con la política desactivada la evidencia no basta.",
+        kind="fact",
+        key="auto-aprobacion-off",
+        source="agent",
+        evidence=[{"kind": "file", "ref": str(existing_file)}],
+        config={"memory": {"auto_approve_evidence": False}},
+    )
+    negative_valid = add_memory(
+        conn,
+        title="Regla negativa con evidencia",
+        content="Nunca uses force push directo a main.",
+        kind="convention",
+        key="negativa-valida",
+        source="agent",
+        evidence=[
+            {"kind": "ticket", "ref": closed["code"]},
+            {"kind": "file", "ref": str(existing_file)},
+        ],
+    )
+    h.eq(
+        [
+            weak["status"],
+            missing_commit["status"],
+            open_case["status"],
+            closed_case["status"],
+            no_auto["status"],
+            negative_valid["status"],
+        ],
+        ["proposed", "proposed", "proposed", "active", "proposed", "proposed"],
+        "solo la evidencia validada activa; inexistente, abierta o desactivada propone",
+    )
 
     negative = add_memory(
         conn,

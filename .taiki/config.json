@@ -18,6 +18,7 @@
     "candidate_lookback_days": 90,
     "instructions_sync": true,
     "skills_sync": true,
+    "auto_approve_evidence": true,
     "user_scope": "project"
   },
   "defaults": {

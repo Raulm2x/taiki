@@ -6,10 +6,12 @@ import hashlib
 import json
 import re
 import sqlite3
+from pathlib import Path
 from typing import Any, Iterable
 
 from .. import db
 from ..domain import KINDS, ValidationError
+from ..gitutil import resolve_commit
 from ..util import check_enum, now
 from . import budget as budget_lib
 from . import ledger as ledger_lib
@@ -308,6 +310,38 @@ def clean_files(
     return list(out.values())
 
 
+def validated_evidence(
+    conn: sqlite3.Connection,
+    evidence: Iterable[dict[str, str]] | None,
+    root: str | Path | None = None,
+) -> list[dict[str, str]]:
+    """Devuelve solo las evidencias comprobables que siguen vigentes.
+
+    ``ticket`` exige un ticket cerrado (verificado o confirmado), ``commit`` un
+    objeto Git resoluble y ``file`` una ruta existente. ``url`` y ``session`` no
+    se pueden validar offline, así que nunca cuentan.
+    """
+    out: list[dict[str, str]] = []
+    for item in evidence or []:
+        kind = str(item.get("kind") or "")
+        ref = str(item.get("ref") or "").strip()
+        if not ref:
+            continue
+        valid = False
+        if kind == "ticket":
+            row = conn.execute(
+                "SELECT status FROM tickets WHERE code = ?", (ref.upper(),)
+            ).fetchone()
+            valid = row is not None and row["status"] in ("verificado", "confirmado")
+        elif kind == "commit":
+            valid = resolve_commit(ref, root) is not None
+        elif kind == "file":
+            valid = Path(ref).expanduser().exists()
+        if valid:
+            out.append({"kind": kind, "ref": ref})
+    return out
+
+
 def decide_status(
     *,
     kind: str,
@@ -316,6 +350,8 @@ def decide_status(
     confidence_value: float,
     text: str,
     policy: str,
+    validated_evidence: int = 0,
+    auto_approve: bool = True,
 ) -> str:
     """Política balanced: lo automático nace propuesto salvo evidencia sólida."""
     if policy == "manual":
@@ -323,6 +359,13 @@ def decide_status(
     if is_negative_rule(text):
         return "proposed"
     if source in ("user", "derived", "import"):
+        return "active"
+    if (
+        source == "agent"
+        and kind in ("fact", "convention", "pitfall")
+        and auto_approve
+        and validated_evidence >= 1
+    ):
         return "active"
     if (
         source == "agent"
@@ -495,4 +538,5 @@ __all__ = [
     "row_to_memory",
     "scope_entries",
     "ticket_id",
+    "validated_evidence",
 ]

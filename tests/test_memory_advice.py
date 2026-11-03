@@ -168,7 +168,7 @@ def _checklist(h: Harness) -> None:
         paths=["ticketlib/memory/advice.py"],
         confidence=0.9,
         source="agent",
-        evidence=[{"kind": "file", "ref": "ticketlib/memory/advice.py"}],
+        evidence=[{"kind": "file", "ref": "ticketlib/memory/no-existe.py"}],
     )
     archived = add_memory(
         conn,

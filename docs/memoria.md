@@ -89,11 +89,20 @@ taiki memory edit M-0001 --ticket-kinds seguridad
 Es la política por defecto (`memory.write_policy`) y decide el estado inicial:
 
 - escritura del usuario (`source=user`): nace `active`;
-- escritura de agente: nace `proposed`, salvo `fact` o `pitfall` con al menos 2
-  evidencias y confianza ≥ 0.7, que nace `active`;
+- escritura de agente: nace `proposed`, salvo `fact`, `convention` o `pitfall`
+  con al menos una **evidencia validada** (ticket `verificado`/`confirmado`,
+  commit resoluble o fichero existente) y `memory.auto_approve_evidence` en
+  `true`, que nace `active`; también activa `fact` o `pitfall` con al menos 2
+  evidencias y confianza ≥ 0.7;
 - prohibición amplia («nunca», «prohibido», «no uses»…): siempre `proposed`,
-  aunque venga del usuario;
+  aunque venga del usuario o tenga evidencia validada;
+- `workflow` y las memorias de routing siguen `proposed` salvo fuente de
+  usuario/derivada/importada;
 - con `write_policy: "manual"`, todo nace `proposed`.
+
+`url` y `session` no se validan offline, así que no cuentan como evidencia
+validada. `auto_approve_evidence=false` devuelve las altas de agente a
+`proposed` salvo la regla antigua de 2 evidencias + confianza.
 
 Una memoria de origen agente **exige al menos una evidencia**. Si una propuesta
 no encaja, recházala o edítala: no la apruebes para «arreglarla después».
@@ -564,6 +573,7 @@ al arrancar para no ignorar erratas.
     "candidate_similarity": 0.8,
     "instructions_sync": true,
     "skills_sync": true,
+    "auto_approve_evidence": true,
     "user_scope": "project",
     "auto_curate": {
       "enabled": false,
@@ -577,7 +587,9 @@ al arrancar para no ignorar erratas.
 ```
 
 `enabled` apaga la memoria sin borrar datos; `write_policy` es `balanced`
-(defecto) o `manual`; `user_scope` fija el scope de las preferencias (`project`)
+(defecto) o `manual`; `auto_approve_evidence` (defecto `true`) activa las altas
+de agente cuya evidencia se puede comprobar; `user_scope` fija el scope de las
+preferencias (`project`)
 y `skills_sync=false` evita exportar playbooks al sincronizar OpenCode.
 `brief_mode` es `full` (contenido en el brief) o `index` (solo código, tipo y
 título) y `enforce_budget=false` convierte el exceso de presupuesto en aviso en
