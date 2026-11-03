@@ -49,7 +49,7 @@ _BOOL_KEYS = (
     "skills_sync",
     "auto_approve_evidence",
 )
-_BRIEF_MODES = ("full", "index")
+_BRIEF_MODES = ("full", "index", "grouped")
 _POSITIVE_KEYS = (
     "project_budget_chars",
     "user_budget_chars",

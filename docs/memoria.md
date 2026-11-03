@@ -162,6 +162,17 @@ cargas el cuerpo: si la clave, el tipo del ticket o una ruta encajan con lo que
 vas a tocar, pide `memory_search <código>`; si no, no gastes contexto. La línea
 no incluye el contenido destilado y usa el mismo escape que el resto del brief.
 
+Con `brief_mode=grouped` el brief agrupa por dominio y dedica una sección y una
+línea a cada grupo: `## Paquetes` seguido de
+`- **M-0014**, **M-0017** — memory_search paquetes`. El dominio sale del primer
+tag; si no hay tags, del `key` (último segmento tras `/`, luego el primer `.` y
+el primer `-`/`_`, en minúsculas) y los alias conocidos se normalizan
+(`red→network`, `paquetes→packages`, `seguridad→security`,
+`limine/snapper/arranque/energia→boot`). No vuelca contenido: la línea solo
+lleva códigos y el `memory_search` del dominio. Respeta `brief_budget_chars`:
+añade grupos mientras quepan y, si no, resume `N entradas omitidas; usa
+memory_search`. Pendientes y playbooks se mantienen.
+
 Fuera del brief, `taiki status` muestra `Memoria: N propuestas pendientes` (JSON:
 `memory.pending` y `memory.proposed_codes`) y `health` añade `memory_pending`,
 con aviso a los 7 días sin decisión. Son altas sin evidencia validada: el agente
@@ -417,10 +428,16 @@ protegido y lo deja en el ledger. Los playbooks no consumen el presupuesto del
 scope: solo su índice consume `playbook_index_chars`.
 
 `brief_mode` decide qué lleva el brief: `full` (defecto) vuelca el contenido
-destilado y `index` deja una línea compacta por memoria (código, tipo, título,
-`key`, `tickets` y hasta dos `paths`, con `memory_search <código>` al final), así
-el brief no es el depósito completo y el detalle se carga bajo demanda. Los
-disparadores de esa línea te dicen cuándo merece la pena buscar.
+destilado; `index` deja una línea compacta por memoria (código, tipo, título,
+`key`, `tickets` y hasta dos `paths`, con `memory_search <código>` al final); y
+`grouped` agrupa por dominio con una línea de códigos por grupo. Así el brief no
+es el depósito completo y el detalle se carga bajo demanda. Los disparadores de
+la línea te dicen cuándo merece la pena buscar.
+
+`taiki memory stats` separa dos presiones: `storage` (`used`, `cap` y `percent`
+sumando project+user) mide el almacenamiento advisory de 3.000+1.200 caracteres,
+mientras que `index` mide el brief renderizado frente a `brief_budget_chars`
+(4.500). `budget` se conserva por compatibilidad.
 
 Prioridad para el brief: fijadas (`pin`), scope `user`, confianza, recencia y
 número de usos.
@@ -447,7 +464,9 @@ número de usos.
 
 `taiki memory stats` devuelve conteos por estado, scope y kind, presupuesto por
 scope, propuestas pendientes, uso (`by_action`, `use_count`, feedback y último
-uso) y routing observado por `(tipo de ticket, perfil)`.
+uso) y routing observado por `(tipo de ticket, perfil)`. Añade `index` (uso del
+brief renderizado frente a `brief_budget_chars`) y `storage` (project+user frente
+a sus techos), separando el espacio del índice del almacenamiento advisory.
 
 `taiki memory impact` resume cierres, intentos, lead time, verificaciones y
 fallos de la ventana, por semana. Son **datos descriptivos**: una tendencia no
@@ -637,9 +656,9 @@ al arrancar para no ignorar erratas.
 de agente cuya evidencia se puede comprobar; `user_scope` fija el scope de las
 preferencias (`project`)
 y `skills_sync=false` evita exportar playbooks al sincronizar OpenCode.
-`brief_mode` es `full` (contenido en el brief) o `index` (solo código, tipo y
-título) y `enforce_budget=false` convierte el exceso de presupuesto en aviso en
-vez de bloquear la escritura.
+`brief_mode` es `full` (contenido en el brief), `index` (solo código, tipo y
+título) o `grouped` (una línea de códigos por dominio) y `enforce_budget=false`
+convierte el exceso de presupuesto en aviso en vez de bloquear la escritura.
 `archive_after_days >= stale_after_days` y `0` es un umbral inmediato, no un
 interruptor. Resto de claves, en [Presupuesto](#presupuesto), [Umbrales](#umbrales) y
 [Auto-curado](#auto-curado-y-review_command-opt-in).

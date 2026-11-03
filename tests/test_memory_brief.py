@@ -300,6 +300,7 @@ def run(h: Harness) -> None:
         source="user",
     )
     index_text = render_brief(conn, {"brief_mode": "index"}, budget=5000)["text"]
+    grouped_text = render_brief(conn, {"brief_mode": "grouped"}, budget=5000)["text"]
     full_text = render_brief(conn, {"brief_mode": "full"}, budget=5000)["text"]
     h.ok(
         rama_code in index_text
@@ -311,7 +312,11 @@ def run(h: Harness) -> None:
         and long_title[:80] in index_text
         and long_title not in index_text
         and "develop integra con --ff-only." not in index_text
+        and "## Rama" in grouped_text
+        and rama_code in grouped_text
+        and "memory_search rama" in grouped_text
+        and "## Rama" not in index_text
         and "develop integra con --ff-only." in full_text,
         "brief_mode=index lista código, título y disparadores sin contenido destilado; "
-        "full lo conserva",
+        "grouped agrupa por dominio sin contenido; full lo conserva",
     )

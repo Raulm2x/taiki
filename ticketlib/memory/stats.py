@@ -15,12 +15,14 @@ from typing import Any
 from ..util import now, parse_datetime
 from . import core
 from . import budget as budget_lib
+from .brief import render_brief
 from .models import (
     MEMORY_KINDS,
     MEMORY_SCOPES,
     MEMORY_STATUSES,
     USAGE_ACTIONS,
 )
+from .render import percentage
 
 CLOSED_STATUSES = ("completado", "verificado", "confirmado", "cancelado")
 GENERIC_PROFILES = ("", "agente", "usuario", "conductor")
@@ -135,6 +137,23 @@ def _routing(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+def _storage(budget: dict[str, Any]) -> dict[str, Any]:
+    """Almacenamiento advisory: project+user de ``budget``."""
+    used = sum(int(item["used"]) for item in budget.values())
+    cap = sum(int(item["limit"]) for item in budget.values())
+    return {"used": used, "cap": cap, "percent": percentage(used, cap)}
+
+
+def _index(conn: sqlite3.Connection, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Presión del brief: lo que ocupa el índice generado frente a su techo."""
+    usage = render_brief(conn, cfg)["usage"]
+    return {
+        "used": int(usage["used"]),
+        "cap": int(usage["limit"]),
+        "percent": int(usage["percent"]),
+    }
+
+
 def stats(
     conn: sqlite3.Connection,
     config: dict[str, Any] | None = None,
@@ -142,13 +161,16 @@ def stats(
     """Foto estable de la memoria: conteos, presupuesto, uso y routing."""
     cfg = core.config(config)
     total, by_status, by_scope, by_kind = _counts(conn)
+    budget = _budget(conn, cfg)
     return {
         "generated_at": now(),
         "total": total,
         "by_status": by_status,
         "by_scope": by_scope,
         "by_kind": by_kind,
-        "budget": _budget(conn, cfg),
+        "budget": budget,
+        "index": _index(conn, cfg),
+        "storage": _storage(budget),
         "proposals": _proposals(conn),
         "usage": _usage(conn),
         "routing": _routing(conn),

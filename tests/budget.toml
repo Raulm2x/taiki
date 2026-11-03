@@ -83,10 +83,8 @@
 max_seconds = 9.5
 baseline_checks = 1584
 # Margen estrecho para que cualquier adición vuelva a avisar.
-# T-0065.04/B2-B8: +1 check (aviso de rutas ignoradas y project del
-# workspace); la épica acumula hasta 1600 checks, así que la tolerancia sube a
-# 16 una sola vez. A partir de aquí, podar antes de volver a subir.
-checks_tolerance = 16
+# T-0071/T-0072: grouped, stats índice/almacenamiento, tags y capa 0; techo 1604.
+checks_tolerance = 20
 
 [module]
 # El módulo más lento es test_release (1.11s medido); +0.2s de margen.

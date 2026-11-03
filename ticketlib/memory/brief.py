@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,41 @@ _KEY_CHARS = 40
 _TICKET_KINDS_CHARS = 60
 _PATH_CHARS = 60
 _INDEX_PATHS = 2
+# Dominios abreviados o en español que se normalizan en el brief agrupado.
+_DOMAIN_ALIASES = {
+    "red": "network",
+    "paquetes": "packages",
+    "seguridad": "security",
+    "limine": "boot",
+    "snapper": "boot",
+    "arranque": "boot",
+    "energia": "boot",
+}
+
+
+def _domain(memory: dict[str, Any]) -> str:
+    """Dominio estable de una memoria para el brief agrupado.
+
+    Usa el primer tag si existe; si no, deriva del ``key``: último segmento
+    tras ``/``, luego el primer ``.``, luego el primer ``-``/``_``. Los alias
+    conocidos se normalizan y un resultado vacío cae en ``general``.
+    """
+    tags = [
+        str(tag).strip()
+        for tag in (memory.get("tags") or [])
+        if str(tag).strip()
+    ]
+    if tags:
+        raw = tags[0]
+    else:
+        raw = str(memory.get("key") or "")
+        raw = raw.rsplit("/", 1)[-1]
+        raw = raw.split(".", 1)[0]
+        raw = re.split(r"[-_]", raw, maxsplit=1)[0]
+    domain = raw.strip().lower()
+    if not domain:
+        return "general"
+    return _DOMAIN_ALIASES.get(domain, domain)
 
 
 def _config(value: dict[str, Any] | None) -> dict[str, Any]:
@@ -148,13 +184,22 @@ def render_brief(
     reserve = (
         len(pending_short) if pending and section == "all" else 0
     )
-    index_mode = cfg["brief_mode"] == "index"
-    line_for = index_line if index_mode else memory_line
-    selected, dropped, used = select_for_budget(
-        [memory for memory in memories if memory.get("status") != "proposed"],
-        max(0, limit - reserve),
-        size=(lambda memory: len(index_line(memory))) if index_mode else None,
-    )
+    mode = cfg["brief_mode"]
+    grouped_mode = mode == "grouped"
+    index_mode = mode == "index"
+    line_for = index_line if (index_mode or grouped_mode) else memory_line
+    active = [memory for memory in memories if memory.get("status") != "proposed"]
+    if grouped_mode:
+        # El recorte del modo agrupado se decide al añadir líneas de dominio.
+        selected: list[dict[str, Any]] = active
+        dropped: list[dict[str, Any]] = []
+        used = 0
+    else:
+        selected, dropped, used = select_for_budget(
+            active,
+            max(0, limit - reserve),
+            size=(lambda memory: len(index_line(memory))) if index_mode else None,
+        )
 
     buckets: dict[str, list[dict[str, Any]]] = {
         name: [] for name in (*_SECTION_ORDER, "warnings")
@@ -171,6 +216,30 @@ def render_brief(
             )
     for items in buckets.values():
         items.sort(key=_stable_key)
+
+    group_members: dict[str, list[dict[str, Any]]] = {}
+    group_lines: dict[str, str] = {}
+    if grouped_mode:
+        for memory in selected:
+            if memory.get("status") == "stale":
+                continue
+            group_members.setdefault(_domain(memory), []).append(memory)
+        group_cap = max(0, limit - reserve)
+        for domain in sorted(group_members):
+            entries = sorted(
+                group_members[domain], key=lambda item: str(item.get("code") or "")
+            )
+            codes = ", ".join(
+                f"**{escape_text(item.get('code') or 'M-?')}**" for item in entries
+            )
+            line = f"- {codes} — memory_search {domain}"
+            cost = len(f"## {domain.title()}") + len(line)
+            if used + cost <= group_cap:
+                group_members[domain] = entries
+                group_lines[domain] = line
+                used += cost
+            else:
+                dropped.extend(entries)
 
     pending_lines: list[str] = []
     if pending and section == "all":
@@ -198,15 +267,22 @@ def render_brief(
             used += int(playbook_index["chars"])
     show_playbooks = bool(playbook_index["text"])
     data_sections = []
-    for name in _SECTION_ORDER:
-        if name == "pending":
-            if pending_lines:
+    if grouped_mode:
+        data_sections = sorted(group_lines)
+        if pending_lines:
+            data_sections.append("pending")
+        if show_playbooks:
+            data_sections.append("playbooks")
+    else:
+        for name in _SECTION_ORDER:
+            if name == "pending":
+                if pending_lines:
+                    data_sections.append(name)
+            elif name == "playbooks":
+                if show_playbooks:
+                    data_sections.append(name)
+            elif buckets[name] and section in ("all", name):
                 data_sections.append(name)
-        elif name == "playbooks":
-            if show_playbooks:
-                data_sections.append(name)
-        elif buckets[name] and section in ("all", name):
-            data_sections.append(name)
 
     header = (
         f"[{percentage(used, limit)}% — "
@@ -218,6 +294,11 @@ def render_brief(
         "",
     ]
     for name in data_sections:
+        if grouped_mode and name in group_lines:
+            lines.append(f"## {name.title()}")
+            lines.append(group_lines[name])
+            lines.append("")
+            continue
         lines.append(f"## {_SECTION_TITLES[name]}")
         if name == "playbooks":
             lines.append(str(playbook_index["text"]).rstrip())
@@ -243,7 +324,11 @@ def render_brief(
 
     sections: dict[str, list[str]] = {}
     for name in data_sections:
-        if name == "playbooks":
+        if grouped_mode and name in group_lines:
+            sections[name] = [
+                str(memory.get("code") or "") for memory in group_members[name]
+            ]
+        elif name == "playbooks":
             sections[name] = [
                 str(entry.get("code") or "") for entry in playbook_index["entries"]
             ]

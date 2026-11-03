@@ -108,6 +108,8 @@ def _stats(h: Harness) -> None:
             "by_scope",
             "by_kind",
             "budget",
+            "index",
+            "storage",
             "proposals",
             "usage",
             "routing",
@@ -123,7 +125,11 @@ def _stats(h: Harness) -> None:
         data["by_scope"]["project"] >= 4
         and data["by_kind"]["convention"] >= 1
         and {"project", "user"} <= set(data["budget"])
-        and data["budget"]["project"]["limit"] > 0,
+        and data["budget"]["project"]["limit"] > 0
+        and data["index"]["cap"] == 4500
+        and data["storage"]["cap"]
+        == data["budget"]["project"]["limit"] + data["budget"]["user"]["limit"]
+        and data["index"]["used"] != data["budget"]["project"]["used"],
         "stats agrupa por scope/kind e incluye presupuesto por scope",
     )
     h.ok(

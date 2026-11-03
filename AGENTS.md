@@ -38,10 +38,13 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    muestra `## Pendientes`, son propuestas sin evidencia validada: revísalas con
    `taiki memory pending`; `taiki status` y `health` también las cuentan. El
    usuario solo confirma tickets: no pide aprobación de memoria.
-   `memory.brief_mode` (`full`/`index`) decide si el brief lleva el contenido
-   destilado o solo el índice con `memory_search`; en modo `index` cada línea
+   `memory.brief_mode` (`full`/`index`/`grouped`) decide si el brief lleva el
+   contenido destilado, solo el índice con `memory_search`, o una línea de
+   códigos por dominio (`grouped`); en modo `index` cada línea
    muestra `key`, `tickets` y `paths` (si existen): úsalos como disparador para
-   decidir cuándo hacer `memory_search` y no cargar memoria que no encaja.
+   decidir cuándo hacer `memory_search` y no cargar memoria que no encaja. El
+   almacenamiento advisory (3.000 de proyecto + 1.200 de usuario) es distinto
+   del techo de 4.500 del índice del brief renderizado.
    `memory.enforce_budget`
    (`false` por defecto) convierte el exceso de presupuesto en aviso
    (`budget_warning`) en vez de bloquear escrituras.
