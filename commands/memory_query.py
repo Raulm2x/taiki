@@ -168,13 +168,12 @@ def _stats(conn, args: argparse.Namespace) -> int:
         "  kind: "
         + ", ".join(f"{name}={value}" for name, value in data["by_kind"].items())
     )
-    print("Presupuesto:")
+    index = data["index"]
+    print(f"Índice: {index['used']}/{index['cap']} chars ({index['percent']}%)")
+    print("Almacenamiento (advisory):")
     for scope in ("project", "user"):
         item = data["budget"][scope]
-        print(
-            f"  {scope}: {item['used']}/{item['limit']} chars · "
-            f"quedan {item['remaining']} · {item['entries']} entrada(s)"
-        )
+        print(f"  {scope}: {item['used']}/{item['limit']} chars")
     proposals = data["proposals"]
     print(f"Propuestas: {proposals['count']}")
     if proposals["codes"]:

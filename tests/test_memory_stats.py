@@ -157,7 +157,8 @@ def _stats(h: Harness) -> None:
         set(payload) == set(data)
         and code == 0
         and "Memorias:" in human
-        and "Presupuesto:" in human,
+        and "Índice:" in human
+        and "Almacenamiento (advisory):" in human,
         "el CLI de stats conserva el contrato JSON y la salida humana",
     )
 

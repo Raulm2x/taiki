@@ -445,7 +445,8 @@ disparadores de la línea te dicen cuándo merece la pena buscar.
 `taiki memory stats` separa dos presiones: `storage` (`used`, `cap` y `percent`
 sumando project+user) mide el almacenamiento advisory de 3.000+1.200 caracteres,
 mientras que `index` mide el brief renderizado frente a `brief_budget_chars`
-(4.500). `budget` se conserva por compatibilidad.
+(4.500). `budget` se conserva por compatibilidad. La salida humana muestra ambas
+por separado: `Índice: used/cap chars (percent%)` y `Almacenamiento (advisory)`.
 
 Prioridad para el brief: fijadas (`pin`), scope `user`, confianza, recencia y
 número de usos.
