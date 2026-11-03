@@ -62,7 +62,13 @@ from commands import (
     cmd_worktree_remove,
 )
 from ticketlib import domain
-from ticketlib.domain import KINDS, LINK_KINDS, PRIORITIES, STATUSES
+from ticketlib.domain import (
+    ISOLATION_MODES,
+    KINDS,
+    LINK_KINDS,
+    PRIORITIES,
+    STATUSES,
+)
 from ticketlib.memory import MEMORY_KINDS, MEMORY_SCOPES, MEMORY_STATUSES
 
 
@@ -164,6 +170,21 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="+",
         help="rutas o globs que posee el ticket (para commits seguros)",
     )
+    p.add_argument(
+        "--isolation",
+        choices=ISOLATION_MODES,
+        help="Aislamiento: none, scope (paths+resources) o worktree (defecto)",
+    )
+    p.add_argument(
+        "--resource",
+        action="append",
+        dest="resources",
+        help="Recurso tipado (systemd:user/<unit>, package:<name>…); repetible",
+    )
+    p.add_argument(
+        "--reversal",
+        help='Reversión JSON: {"kind": "...", "ref": "...", "command": "..."}',
+    )
     p.add_argument("--parent")
     p.set_defaults(func=cmd_new)
 
@@ -228,6 +249,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--paths",
         nargs="+",
         help="rutas o globs que posee el ticket",
+    )
+    p.add_argument(
+        "--isolation",
+        choices=ISOLATION_MODES,
+        help="Aislamiento: none, scope (paths+resources) o worktree",
+    )
+    p.add_argument(
+        "--resource",
+        action="append",
+        dest="resources",
+        help="Recurso tipado; repetible (reemplaza el conjunto completo)",
+    )
+    p.add_argument(
+        "--reversal",
+        help='Reversión JSON: {"kind": "...", "ref": "...", "command": "..."}',
     )
     p.add_argument("--tags", nargs="*")
     p.set_defaults(func=cmd_update)

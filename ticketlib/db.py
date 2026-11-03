@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS tickets (
     heartbeat_at  TEXT,
     lease_until   TEXT,
     paths         TEXT,
+    isolation     TEXT NOT NULL DEFAULT 'worktree',
+    resources     TEXT,
+    reversal      TEXT,
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL,
     started_at   TEXT,
@@ -420,12 +423,27 @@ def _migrate_v6(conn: sqlite3.Connection, force: bool = False) -> None:
         conn.execute("ALTER TABLE memories ADD COLUMN ticket_kinds TEXT")
 
 
+def _migrate_v7(conn: sqlite3.Connection, force: bool = False) -> None:
+    """Aislamiento, recursos tipados y reversión por ticket (aditiva)."""
+    columns = _table_columns(conn, "tickets")
+    if "isolation" not in columns:
+        conn.execute(
+            "ALTER TABLE tickets ADD COLUMN isolation TEXT NOT NULL "
+            "DEFAULT 'worktree'"
+        )
+    if "resources" not in columns:
+        conn.execute("ALTER TABLE tickets ADD COLUMN resources TEXT")
+    if "reversal" not in columns:
+        conn.execute("ALTER TABLE tickets ADD COLUMN reversal TEXT")
+
+
 MIGRATIONS = {
     2: _migrate_v2,
     3: _migrate_v3,
     4: _migrate_v4,
     5: _migrate_v5,
     6: _migrate_v6,
+    7: _migrate_v7,
 }
 
 

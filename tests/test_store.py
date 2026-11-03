@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 import time
 
-from ticketlib import db, domain, render, repo
+from ticketlib import db, domain, render, repo, workspace
 from ticketlib.store import queries, relations, workflow
 from tests.support import Harness
 
@@ -558,4 +558,138 @@ def run(h: Harness) -> None:
             {"agents": {"worker": {"strengths": ["inventado"]}}}
         ),
         "el registro rechaza tipos desconocidos",
+    )
+
+    # ── Aislamiento, scope y reversión (esquema v7) ─────────────────────
+    legacy = db.connect(h.tmp / "v6-isolation.db")
+    try:
+        previous = repo.create_ticket(legacy, title="Ticket anterior a v7")
+        for column in ("isolation", "resources", "reversal"):
+            legacy.execute(f"ALTER TABLE tickets DROP COLUMN {column}")
+        legacy.execute("PRAGMA user_version = 6")
+        db.migrate(legacy)
+        h.eq(db.schema_version(legacy), 7, "la migración sube de v6 a v7")
+        migrated = repo.get_ticket(legacy, previous["code"])
+        h.eq(
+            (migrated["isolation"], migrated["resources"], migrated["reversal"]),
+            ("worktree", [], None),
+            "los tickets existentes quedan en worktree y sin recursos",
+        )
+        db.migrate(legacy)
+        h.eq(db.schema_version(legacy), 7, "repetir la migración es idempotente")
+    finally:
+        legacy.close()
+
+    scoped = repo.create_ticket(
+        conn,
+        title="Ticket con scope",
+        isolation="scope",
+        resources=["systemd:user/taiki.service", "package:git"],
+        reversal='{"kind": "manual", "ref": "T-0001"}',
+    )
+    h.eq(
+        (scoped["isolation"], scoped["resources"], scoped["reversal"]),
+        (
+            "scope",
+            ["systemd:user/taiki.service", "package:git"],
+            {"kind": "manual", "ref": "T-0001"},
+        ),
+        "create guarda isolation, recursos tipados y reversión",
+    )
+    h.eq(
+        repo.create_ticket(conn, title="Aislamiento por defecto")["isolation"],
+        "worktree",
+        "el aislamiento por defecto es worktree",
+    )
+    updated_scope = repo.update_ticket(
+        conn,
+        scoped["code"],
+        isolation="none",
+        resources=["service:sshd", "systemd:system/nginx.service"],
+        reversal={"kind": "command", "command": "systemctl restart nginx"},
+    )
+    h.eq(
+        (
+            updated_scope["isolation"],
+            updated_scope["resources"],
+            updated_scope["reversal"]["kind"],
+        ),
+        ("none", ["service:sshd", "systemd:system/nginx.service"], "command"),
+        "update reemplaza isolation, recursos y reversión",
+    )
+    cleared = repo.update_ticket(
+        conn, scoped["code"], resources=[], reversal=None
+    )
+    h.eq(
+        (cleared["resources"], cleared["reversal"]),
+        ([], None),
+        "update puede vaciar recursos y reversión",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: repo.create_ticket(conn, title="Mal", isolation="docker"),
+        "un aislamiento desconocido se rechaza",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: repo.create_ticket(
+            conn, title="Mal", resources=["file:/etc/passwd"]
+        ),
+        "un recurso no tipado se rechaza",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: repo.create_ticket(
+            conn, title="Mal", resources=["package:git", "package:git"]
+        ),
+        "los recursos duplicados se rechazan",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: repo.create_ticket(conn, title="Mal", resources=["package:"]),
+        "un recurso sin nombre se rechaza",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: repo.create_ticket(
+            conn,
+            title="Mal",
+            resources=[
+                f"package:pkg{i}" for i in range(domain.MAX_RESOURCES + 1)
+            ],
+        ),
+        "el número de recursos tiene un límite",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: repo.create_ticket(
+            conn, title="Mal", reversal={"ref": "sin kind"}
+        ),
+        "la reversión exige kind",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: repo.create_ticket(conn, title="Mal", reversal="{no-json}"),
+        "una reversión con JSON inválido se rechaza",
+    )
+
+    config = workspace.default_config(h.tmp)
+    h.eq(
+        workspace.isolation_settings(config),
+        {"default": "worktree", "live_branch": "main"},
+        "la configuración trae isolation por defecto segura",
+    )
+    h.eq(
+        workspace.scope_roots(
+            config, {"scope": {"roots": ["/srv/taiki"]}}
+        ),
+        [".", "/srv/taiki"],
+        "scope roots combina config.json y local.json",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: workspace.isolation_settings(
+            {"isolation": {"default": "docker"}}
+        ),
+        "la configuración rechaza un isolation inválido",
     )

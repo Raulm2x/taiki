@@ -24,7 +24,13 @@ from pathlib import Path
 from typing import Any
 
 from . import db
-from .domain import TicketError
+from .domain import (
+    DEFAULT_ISOLATION,
+    ISOLATION_MODES,
+    TicketError,
+    ValidationError,
+    clean_branch,
+)
 from .paths import (
     CONFIG_NAME,
     DB_NAME,
@@ -61,8 +67,72 @@ def default_config(root: Path, name: str | None = None) -> dict[str, Any]:
         "guard": False,
         "guard_auto": "scratch",
         "defaults": {"kind": "otro", "priority": "media"},
+        "isolation": {"default": DEFAULT_ISOLATION, "live_branch": "main"},
+        # Raíces del modo scope. Los defaults viven en config.json (versionado);
+        # las rutas absolutas de la máquina van en local.json (ignorado).
+        "scope": {"roots": ["."]},
         "ui": {"scope": "atencion", "refresh": 2.0},
     }
+
+
+def isolation_settings(config: dict[str, Any] | None = None) -> dict[str, str]:
+    """Devuelve ``{default, live_branch}`` validados con defaults seguros."""
+    data = config if config is not None else load_config()
+    raw = data.get("isolation") if isinstance(data, dict) else None
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ValidationError("El bloque 'isolation' debe ser un objeto")
+    default = raw.get("default", DEFAULT_ISOLATION)
+    if default not in ISOLATION_MODES:
+        raise ValidationError(
+            f"isolation.default inválido: {default!r} "
+            f"(esperado uno de {', '.join(ISOLATION_MODES)})"
+        )
+    return {
+        "default": str(default),
+        "live_branch": clean_branch(raw.get("live_branch")),
+    }
+
+
+def scope_roots(
+    config: dict[str, Any] | None = None,
+    local: dict[str, Any] | None = None,
+) -> list[str]:
+    """Raíces del modo scope: config.json + local.json, sin duplicados.
+
+    Las rutas relativas se resuelven contra el proyecto; ``local.json`` puede
+    aportar rutas absolutas de la máquina sin versionarlas en config.json.
+    """
+    data = config if config is not None else load_config()
+    local_data = local if local is not None else load_local()
+    roots: list[str] = []
+    for source, block_name in ((data, "config.json"), (local_data, "local.json")):
+        if not isinstance(source, dict):
+            continue
+        block = source.get("scope")
+        if block is None:
+            continue
+        if not isinstance(block, dict):
+            raise ValidationError(f"scope en {block_name} debe ser un objeto")
+        values = block.get("roots")
+        if values is None:
+            continue
+        if isinstance(values, str):
+            values = [values]
+        if not isinstance(values, (list, tuple)):
+            raise ValidationError(
+                f"scope.roots en {block_name} debe ser una lista"
+            )
+        for value in values:
+            if not isinstance(value, str) or not value.strip():
+                raise ValidationError(
+                    f"scope.roots en {block_name} contiene una raíz inválida"
+                )
+            root = value.strip()
+            if root not in roots:
+                roots.append(root)
+    return roots or ["."]
 
 
 def load_config(workspace: str | Path | None = None) -> dict[str, Any]:

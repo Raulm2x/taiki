@@ -16,6 +16,9 @@ from ..domain import (
     TICKET_COUNTER,
     TOMBSTONE_TAG,
     ValidationError,
+    clean_isolation,
+    clean_resources,
+    clean_reversal,
 )
 from ..util import check_enum, clean_paths, clean_tags, normalize_agent, now
 from .common import UNSET, event, row_by_code
@@ -111,6 +114,9 @@ def create_ticket(
     actor_type: str = "agente",
     session_id: str | None = None,
     assigned_to: str | None = None,
+    isolation: Any = None,
+    resources: Any = None,
+    reversal: Any = None,
     code_prefix: str = "T",
     code: str | None = None,
 ) -> dict[str, Any]:
@@ -143,6 +149,9 @@ def create_ticket(
 
     tags = clean_tags(tags)
     scope = clean_paths(paths)
+    isolation = clean_isolation(isolation)
+    resources = clean_resources(resources)
+    reversal = clean_reversal(reversal)
     ts = now()
 
     with db.tx(conn):
@@ -176,8 +185,9 @@ def create_ticket(
             code = allocate_code(conn, prefix)
         cur = conn.execute(
             "INSERT INTO tickets(code, title, body, kind, status, priority, project, path, "
-            "created_by, assigned_to, parent_id, paths, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, 'nuevo', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "created_by, assigned_to, parent_id, paths, isolation, resources, "
+            "reversal, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, 'nuevo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 code,
                 title,
@@ -190,6 +200,9 @@ def create_ticket(
                 (assigned_to or "").strip() or None,
                 parent,
                 json.dumps(scope, ensure_ascii=False) if scope else None,
+                isolation,
+                json.dumps(resources, ensure_ascii=False) if resources else None,
+                json.dumps(reversal, ensure_ascii=False) if reversal else None,
                 ts,
                 ts,
             ),
@@ -226,6 +239,9 @@ def update_ticket(
     path: Any = UNSET,
     tags: Any = UNSET,
     paths: Any = UNSET,
+    isolation: Any = UNSET,
+    resources: Any = UNSET,
+    reversal: Any = UNSET,
     assigned_to: Any = UNSET,
     parent_id: Any = UNSET,
     actor: str = "agente",
@@ -266,6 +282,26 @@ def update_ticket(
             ("paths", json.dumps(scope, ensure_ascii=False) if scope else None)
         )
         touched.append("paths")
+    if isolation is not UNSET:
+        changes.append(("isolation", clean_isolation(isolation)))
+        touched.append("isolation")
+    if resources is not UNSET:
+        cleaned = clean_resources(resources)
+        changes.append(
+            ("resources", json.dumps(cleaned, ensure_ascii=False) if cleaned else None)
+        )
+        touched.append("resources")
+    if reversal is not UNSET:
+        cleaned_reversal = clean_reversal(reversal)
+        changes.append(
+            (
+                "reversal",
+                json.dumps(cleaned_reversal, ensure_ascii=False)
+                if cleaned_reversal
+                else None,
+            )
+        )
+        touched.append("reversal")
     if assigned_to is not UNSET:
         agent = (assigned_to or "").strip() or None
         changes.append(("assigned_to", agent))

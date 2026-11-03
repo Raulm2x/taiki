@@ -6,10 +6,20 @@ import json
 import sqlite3
 from typing import Any
 
-from ..domain import NotFoundError
+from ..domain import DEFAULT_ISOLATION, NotFoundError
 from ..util import normalize_code, now
 
 UNSET = object()
+
+
+def _decode_list(raw: Any) -> list[Any]:
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = [raw]
+        return parsed if isinstance(parsed, list) else [str(parsed)]
+    return []
 
 
 def row_to_ticket(row: sqlite3.Row) -> dict[str, Any]:
@@ -17,15 +27,20 @@ def row_to_ticket(row: sqlite3.Row) -> dict[str, Any]:
     tags_csv = data.pop("tags_csv", None)
     data["archived"] = bool(data["archived"])
     data["tags"] = [tag for tag in (tags_csv or "").split(",") if tag]
-    raw_paths = data.get("paths")
-    if isinstance(raw_paths, str) and raw_paths.strip():
+    data["paths"] = _decode_list(data.get("paths"))
+    data.setdefault("isolation", DEFAULT_ISOLATION)
+    data["resources"] = _decode_list(data.get("resources"))
+    raw_reversal = data.get("reversal")
+    if isinstance(raw_reversal, str) and raw_reversal.strip():
         try:
-            parsed = json.loads(raw_paths)
+            parsed_reversal = json.loads(raw_reversal)
         except json.JSONDecodeError:
-            parsed = [raw_paths]
-        data["paths"] = parsed if isinstance(parsed, list) else [str(parsed)]
+            parsed_reversal = None
+        data["reversal"] = (
+            parsed_reversal if isinstance(parsed_reversal, dict) else None
+        )
     else:
-        data["paths"] = []
+        data["reversal"] = None
     return data
 
 

@@ -60,8 +60,11 @@
 # T-0058.03 auditoría sin épicas: +4 comprobaciones (épica confirmada fuera,
 # hoja sin commit dentro, hoja con commit fuera y lista de épicas excluidas).
 # Revisión única del techo por el comportamiento nuevo; a partir de aquí, podar.
+# T-0060.01 aislamiento/scope: +31 comprobaciones (migración v7, CRUD,
+# validaciones de recursos/reversión, config, CLI y contrato MCP). Revisión
+# única del techo por el modelo nuevo; a partir de aquí, podar.
 max_seconds = 11.6
-baseline_checks = 1966
+baseline_checks = 1997
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
 
