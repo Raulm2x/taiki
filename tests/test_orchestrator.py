@@ -1100,7 +1100,18 @@ def run(h: Harness) -> None:
         and "pwd" in worker_body
         and "directory == worktree" in conductor_body
         and "agent/T-XXXX-*" in conductor_body
-        and "merge-base --is-ancestor" in conductor_body,
+        and "merge-base --is-ancestor" in conductor_body
+        and "Modo live" in worker_body
+        and all(
+            "Modo live" in _frontmatter(name)[1]
+            for name in ("worker-low.md", "worker-medium.md", "worker-high.md")
+        )
+        and _rule(worker, "shell", "git -C * status*") == "allow"
+        and _rule(worker, "shell", "git -C * add *") == "allow"
+        and _rule(worker, "shell", "git -C * add -A*") == "deny"
+        and _rule(worker, "shell", "git -C * add .*") == "deny"
+        and _rule(worker, "shell", "git -C * add -u*") == "deny"
+        and _rule(worker, "shell", "git -C * add --all*") == "deny",
         "el worker mueve la sesión al worktree y verifica directorio/rama/commit",
     )
     h.ok(

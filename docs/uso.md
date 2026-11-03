@@ -287,6 +287,10 @@ taiki commit --repo ~/.config --ticket T-0044 -m "fix: hypr (T-0044)"
   `package:<nombre>`) también delimitan el alcance.
 - **`worktree`** mantiene el flujo clásico: `claim --worktree`,
   `session_move`, commit en `agent/T-XXXX-*` y merge tras confirmar.
+- **En `scope`/`none` el worker no crea worktree ni mueve la sesión**: reclama
+  con `worktree=false` y trabaja en el checkout vivo; solo inspecciona y stagea
+  rutas concretas (`git -C <repo> status`, `git -C <repo> add <ruta>`). El
+  commit lo hace el conductor en el repo live con `taiki commit --repo <ruta>`.
 - `risk` (`low`/`medium`/`high`) se deriva de paths y resources; las rutas
   sensibles marcan `requires_review` como aviso, no como bloqueo.
 - La reversión se registra con

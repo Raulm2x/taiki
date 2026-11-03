@@ -148,6 +148,24 @@ permissions:
     resource: "git -C * rev-parse*"
     effect: allow
   - action: shell
+    resource: "git -C * status*"
+    effect: allow
+  - action: shell
+    resource: "git -C * add *"
+    effect: allow
+  - action: shell
+    resource: "git -C * add -A*"
+    effect: deny
+  - action: shell
+    resource: "git -C * add .*"
+    effect: deny
+  - action: shell
+    resource: "git -C * add -u*"
+    effect: deny
+  - action: shell
+    resource: "git -C * add --all*"
+    effect: deny
+  - action: shell
     resource: "git add *"
     effect: allow
   - action: shell
@@ -262,6 +280,17 @@ subagentes, no confirmas y no mergeas.
    y committearías en el checkout principal y el worktree quedaría vacío. El
    MCP registra actor, `actor_type=agente` y `owner_session`. Si el ticket ya
    está reclamado por otra sesión, no lo fuerces: informa.
+
+### Modo live (isolation none/scope)
+
+Si el ticket declara `isolation` `none` o `scope`, no hay worktree: reclama con
+`claim` y `worktree=false` y **no llames a `session_move`**; la sesión sigue en
+el checkout vivo. Trabaja solo dentro de los `paths` del ticket y no commitees:
+el conductor commitea en el repo live con `taiki commit` o `--repo <ruta>`. Para
+revisar el staging usa `git -C <repo> status` y, si el conductor lo pide,
+`git -C <repo> add <ruta concreta>`; nunca `-A`, `.`, `-u` ni `--all`. No
+ejecutes `confirm`, `authorize` ni `review`.
+
 3. Implementa el cambio mínimo que cumple los criterios. Stagea rutas
    concretas (`git add <ruta>`), nunca `git add -A`.
 4. Publica checkpoints durante el trabajo (qué hiciste y qué falta) con la
