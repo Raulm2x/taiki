@@ -27,14 +27,18 @@ Flujo:
 5. Reconcilia la integración con ``main``: el squash deja en ``main`` un commit
    que la rama de integración no tiene, así que se integra de vuelta con
    ``git merge --no-ff`` (idempotente: no hace nada si ``main`` ya es
-   ancestro). Sin este paso la segunda release fallaría por la comprobación de
-   ancestro. Al terminar se restaura el checkout original.
+   ancestro). Un conflicto solo en los ficheros de versión se resuelve con la
+   versión de ``main`` (la del release); cualquier otro conflicto se aborta y
+   se informa con ``reconcile_error``. Sin este paso la segunda release
+   fallaría por la comprobación de ancestro. Al terminar se restaura el
+   checkout original.
 6. Registra la release en ``.taiki/releases.json`` (versionado): ``tag``,
    ``version``, ``released_sha`` (commit de integración aplanado) y ``date``.
-   El registro viaja en el mismo merge de reconciliación o en un commit propio
-   de la integración; ``main`` no cambia. La siguiente release usa ese
-   ``released_sha`` como inicio del rango, así que el squash no repite commits
-   ya publicados.
+   La entrada viaja en el commit de release de ``main``, antes de reconciliar,
+   para que no se pierda si el merge falla; el merge la trae a la integración y
+   solo se escribe aparte en repos anteriores al marcador. La siguiente release
+   usa ese ``released_sha`` como inicio del rango, así que el squash no repite
+   commits ya publicados.
 
 Con ``--push`` el comando publica en el remoto además de escribir en local, en
 este orden: sube la integración si solo iba por delante, ejecuta los gates,
@@ -80,6 +84,11 @@ DEFAULT_VERIFY = (sys.executable, "tests/run.py", "--verify")
 RELEASES_FILE = ".taiki/releases.json"
 VERSION_FILE = "ticketlib/__init__.py"
 PYPROJECT_FILE = "pyproject.toml"
+# Solo estos conflictos se resuelven solos: son los ficheros que controla la
+# propia release. ``main`` trae la versión publicada y un marcador construido
+# desde el árbol de la integración (incluye sus entradas), así que tomar su
+# lado no pierde nada. Cualquier otro choque exige intervención humana.
+RELEASE_CONFLICT_FILES = frozenset({VERSION_FILE, PYPROJECT_FILE, RELEASES_FILE})
 BUMPS = ("major", "minor", "patch")
 _BUMP_RANK = {"patch": 0, "minor": 1, "major": 2}
 # Orden estable de los grupos del resumen; el resto va al final como "otros".
@@ -283,6 +292,44 @@ def _write_releases(root: Path, entry: dict[str, str]) -> Path:
         json.dumps(entries, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     return path
+
+
+def _marker_recorded(root: Path, entry: dict[str, str]) -> bool:
+    """True si el marcador ya contiene esa release (mismo tag y commit)."""
+    return any(
+        item.get("tag") == entry.get("tag")
+        and item.get("released_sha") == entry.get("released_sha")
+        for item in _load_releases(root)
+    )
+
+
+def _ensure_marker(root: Path, entry: dict[str, str]) -> Path | None:
+    """Escribe la entrada solo si falta; devuelve la ruta o ``None``."""
+    if _marker_recorded(root, entry):
+        return None
+    return _write_releases(root, entry)
+
+
+def _conflicted_paths(root: Path) -> list[str]:
+    raw = _capture(root, "diff", "--name-only", "--diff-filter=U")
+    return [line.strip() for line in raw.splitlines() if line.strip()]
+
+
+def _resolve_release_conflicts(root: Path) -> list[str] | None:
+    """Resuelve un merge en curso tomando los ficheros que controla la release.
+
+    Son la versión publicada y el marcador; ``main`` es la fuente de verdad de
+    ambos y su marcador ya contiene las entradas de la integración. Si hay
+    cualquier otro conflicto devuelve ``None`` para que el llamante aborte como
+    siempre.
+    """
+    paths = _conflicted_paths(root)
+    if not paths or any(path not in RELEASE_CONFLICT_FILES for path in paths):
+        return None
+    for path in paths:
+        _git(root, "checkout", "--theirs", "--", path)
+        _git(root, "add", "--", path)
+    return paths
 
 
 def _commits(root: Path, lines: list[str]) -> list[dict[str, str]]:
@@ -524,11 +571,16 @@ def _reconcile(
     """Integra ``main`` en ``branch`` y registra la release, sin tocar ``main``.
 
     Idempotente: si ``main`` ya es ancestro de la integración no hay merge,
-    pero sí se escribe el marcador en un commit propio. Cuando hay
-    reconciliación, el marcador se integra en el mismo merge commit
-    (``merge --no-commit`` → escribir → commit), de modo que no queda un commit
-    extra. Un conflicto se aborta y se informa; la release ya está publicada y
-    no se revierte por ello. Restaura el checkout original pase lo que pase.
+    pero sí se escribe el marcador en un commit propio si falta. El marcador
+    viaja normalmente en el commit de release de ``main`` (escrito antes de
+    reconciliar), de modo que no se pierde si la reconciliación falla; aquí
+    solo se completa si el repositorio no lo tenía. Cuando hay reconciliación,
+    el merge se commitea aunque el marcador ya estuviera presente.
+
+    Un conflicto solo en ficheros de versión se resuelve tomando la versión de
+    ``main`` y el merge continúa; cualquier otro conflicto se aborta y se
+    informa. La release ya está publicada y no se revierte por ello. Restaura
+    el checkout original pase lo que pase.
     """
     outcome: dict[str, Any] = {
         "reconciled": False,
@@ -571,23 +623,41 @@ def _reconcile(
         if result.returncode == 0:
             outcome["reconciled"] = True
         else:
-            subprocess.run(
-                ["git", "-C", str(root), "merge", "--abort"],
-                capture_output=True,
-                text=True,
-            )
-            outcome["reconcile_error"] = (result.stderr or result.stdout).strip()
-            failed = True
-    if marker is not None and not failed:
-        path = _write_releases(root, marker)
-        outcome["release_marker"] = str(path.relative_to(root))
+            resolved = _resolve_release_conflicts(root)
+            if resolved is None:
+                subprocess.run(
+                    ["git", "-C", str(root), "merge", "--abort"],
+                    capture_output=True,
+                    text=True,
+                )
+                outcome["reconcile_error"] = (
+                    result.stderr or result.stdout
+                ).strip()
+                failed = True
+            else:
+                outcome["reconciled"] = True
+                outcome["resolved_conflicts"] = resolved
+    if not failed:
         try:
-            _git(root, "add", RELEASES_FILE)
-            commit_message = (
-                message if needs_merge else f"chore(release): registrar v{version}"
-            )
-            _git(root, "commit", "--no-verify", "-m", commit_message)
-            outcome["marker_commit"] = _git(root, "rev-parse", "HEAD")
+            path = _ensure_marker(root, marker) if marker is not None else None
+            if path is not None:
+                outcome["release_marker"] = str(path.relative_to(root))
+                _git(root, "add", RELEASES_FILE)
+            # El commit del merge no depende del marcador: puede venir ya en el
+            # commit de release de main. Sin merge, solo se commitea si faltaba
+            # la entrada (repos anteriores al marcador).
+            if needs_merge:
+                _git(root, "commit", "--no-verify", "-m", message)
+                outcome["marker_commit"] = _git(root, "rev-parse", "HEAD")
+            elif path is not None:
+                _git(
+                    root,
+                    "commit",
+                    "--no-verify",
+                    "-m",
+                    f"chore(release): registrar v{version}",
+                )
+                outcome["marker_commit"] = _git(root, "rev-parse", "HEAD")
         except TicketError as exc:
             if needs_merge:
                 subprocess.run(
@@ -596,7 +666,6 @@ def _reconcile(
                     text=True,
                 )
             outcome["reconcile_error"] = str(exc)
-            failed = True
     if original != branch:
         restored = subprocess.run(
             ["git", "-C", str(root), "checkout", original],
@@ -811,20 +880,24 @@ def run(
     changelog_path.write_text(
         _changelog(existing, version, tickets, groups), encoding="utf-8"
     )
-    _git(base, "add", "CHANGELOG.md")
-    if version_files:
-        _git(base, "add", *version_files)
-    # El commit de release agrega tickets ya verificados y no tiene un T-XXXX
-    # propio; los gates se ejecutaron antes. Los hooks no aportan nada aquí.
-    _git(base, "commit", "--no-verify", "-m", message)
-    commit = _git(base, "rev-parse", "HEAD")
-    _git(base, "tag", "-a", tag, "-m", f"Release {tag}")
     marker = {
         "tag": tag,
         "version": version,
         "released_sha": released_sha,
         "date": date.today().isoformat(),
     }
+    # El marcador viaja en el commit de release: si la reconciliación falla,
+    # main ya lo conserva y la siguiente release no repite commits publicados.
+    _write_releases(base, marker)
+    _git(base, "add", "CHANGELOG.md")
+    if version_files:
+        _git(base, "add", *version_files)
+    _git(base, "add", RELEASES_FILE)
+    # El commit de release agrega tickets ya verificados y no tiene un T-XXXX
+    # propio; los gates se ejecutaron antes. Los hooks no aportan nada aquí.
+    _git(base, "commit", "--no-verify", "-m", message)
+    commit = _git(base, "rev-parse", "HEAD")
+    _git(base, "tag", "-a", tag, "-m", f"Release {tag}")
     if push:
         retry = f"git push --atomic {remote} {main} {tag}"
         try:

@@ -311,6 +311,113 @@ def _latest_tag(root: Path) -> str | None:
     return tags[0] if tags else None
 
 
+def _version_repo(path: Path, version: str = "0.0.0") -> Path:
+    """Repo ``main``/``develop`` con versión, CHANGELOG y app de partida."""
+    root = git_repo(path)
+    _seed_versions(root, version)
+    _commit(root, "CHANGELOG.md", "# Changelog\n", "docs: changelog base")
+    _commit(root, "app.py", "v0\n", "chore: base")
+    _git(root, "branch", "-m", "main")
+    _git(root, "checkout", "-b", "develop")
+    return root
+
+
+def _merge_in_progress(root: Path) -> bool:
+    result = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--verify", "--quiet", "MERGE_HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def _marker_at(root: Path, ref: str) -> list[dict]:
+    return json.loads(_git(root, "show", f"{ref}:.taiki/releases.json"))
+
+
+def _reconcile_cases(tmp: Path) -> tuple[dict, dict]:
+    """Reconciliación: conflicto de versión, ajeno, marcador y rango.
+
+    Un solo repo encadena los dos conflictos: primero ``develop`` mueve los
+    ficheros de versión al margen del release (se resuelve con la versión de
+    ``main``); después borra ``CHANGELOG.md`` (modify/delete no se resuelve y
+    aborta). El marcador debe sobrevivir en ``main`` incluso en el fallo.
+    """
+    root = _version_repo(tmp / "reconciliacion")
+    init_content = '"""Sistema de tickets."""\n\n__version__ = "0.0.5"\n'
+    project_content = '[project]\nname = "taiki"\nversion = "0.0.5"\n'
+    _commit(
+        root,
+        "ticketlib/__init__.py",
+        init_content,
+        "chore: versión de develop (T-0060)",
+    )
+    _commit(
+        root,
+        "pyproject.toml",
+        project_content,
+        "chore: metadatos de develop (T-0060)",
+    )
+    _commit(root, "feature.txt", "feature\n", "feat: feature (T-0061)")
+
+    rc, first = _release(root, no_verify=True)
+    tag = str(first.get("tag"))
+    develop_versions = _version_files(root)
+    tag_versions = _version_files_at(root, tag)
+    marker_develop = _marker_at(root, "develop")
+    marker_main = _marker_at(root, "main")
+
+    _commit(root, "siguiente.txt", "siguiente\n", "fix: parche (T-0062)")
+    _, following = _release(root, dry_run=True)
+
+    _git(root, "rm", "CHANGELOG.md")
+    _git(root, "commit", "-m", "fix: sin changelog (T-0063)")
+    before_foreign = _git(root, "rev-parse", "develop")
+    foreign_rc, foreign = _release(root, no_verify=True)
+    foreign_tag = str(foreign.get("tag"))
+    foreign_marker = _marker_at(root, "main")
+
+    actual = {
+        "rc": rc,
+        "reconciled": first.get("reconciled"),
+        "error": first.get("reconcile_error"),
+        "resolved": sorted(first.get("resolved_conflicts") or []),
+        "merge_head": _merge_in_progress(root),
+        "develop_versions": develop_versions,
+        "tag_versions": tag_versions,
+        "marker_develop": [entry.get("tag") for entry in marker_develop],
+        "marker_main": [entry.get("tag") for entry in marker_main],
+        "next_range": following.get("range"),
+        "next_tickets": following.get("tickets"),
+        "foreign_rc": foreign_rc,
+        "foreign_error": bool(foreign.get("reconcile_error")),
+        "foreign_develop": _git(root, "rev-parse", "develop") == before_foreign,
+        "foreign_merge_head": _merge_in_progress(root),
+        "foreign_tag": _tag_exists(root, foreign_tag),
+        "foreign_marker": [entry.get("tag") for entry in foreign_marker],
+    }
+    expected = {
+        "rc": 0,
+        "reconciled": True,
+        "error": None,
+        "resolved": ["pyproject.toml", "ticketlib/__init__.py"],
+        "merge_head": False,
+        "develop_versions": {"init": "0.1.0", "pyproject": "0.1.0"},
+        "tag_versions": {"init": "0.1.0", "pyproject": "0.1.0"},
+        "marker_develop": ["v0.1.0"],
+        "marker_main": ["v0.1.0"],
+        "next_range": first.get("released_sha"),
+        "next_tickets": ["T-0062"],
+        "foreign_rc": 0,
+        "foreign_error": True,
+        "foreign_develop": True,
+        "foreign_merge_head": False,
+        "foreign_tag": True,
+        "foreign_marker": ["v0.1.0", foreign_tag],
+    }
+    return actual, expected
+
+
 def _push_cases(tmp: Path) -> tuple[dict, dict]:
     """``--push`` contra un bare local: éxito, ahead y rechazo de main.
 
@@ -736,6 +843,7 @@ def run(h) -> None:
     push_actual, push_expected = _push_cases(tmp)
     bumps_actual = _bump_cases(root)
     changelog_units, changelog_unit_expected = _changelog_cases()
+    reconcile_actual, reconcile_expected = _reconcile_cases(tmp)
 
     rc, release = _release(root, no_verify=False, verify_cmd="true")
     message = _git(root, "log", "-1", "--format=%B", "main")
@@ -844,6 +952,7 @@ def run(h) -> None:
             "push": push_actual,
             "bumps": bumps_actual,
             "changelog": changelog_units,
+            "reconcile": reconcile_actual,
             "version": version_actual,
             "marker": marker_actual,
             "release": {
@@ -899,6 +1008,7 @@ def run(h) -> None:
                 },
             },
             "changelog": changelog_unit_expected,
+            "reconcile": reconcile_expected,
             "marker": marker_expected,
             "version": version_expected,
             "release": {
