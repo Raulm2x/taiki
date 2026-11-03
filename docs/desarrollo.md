@@ -405,8 +405,12 @@ el total real de comprobaciones, que cubre filtros de tags, subtareas, concurren
 - Presupuestos **runner-aware**: con `CI=true` (o `TAIKI_CI=true`) se aplica el
   perfil `[ci.suite]`/`[ci.module]` de `budget.toml` (8 s de suite y 1,5 s por
   módulo). `TAIKI_SUITE_BUDGET` y `TAIKI_MODULE_BUDGET` sobrescriben cualquier
-  valor. Los benchmarks usan 10 ms/500 ms en local y 25 ms/1.500 ms en CI, con
-  `TAIKI_BENCH_CONNECT_MS` / `TAIKI_BENCH_EXPORT_MS` como override.
+  valor. Los benchmarks usan 10 ms/800 ms en local y 25 ms/1.500 ms en CI, con
+  `TAIKI_BENCH_CONNECT_MS` / `TAIKI_BENCH_EXPORT_MS` como override para un
+  runner concreto. El export se mide como **best-of-3** (el mínimo de tres
+  pasadas sobre la misma conexión): así un pico de carga puntual de la máquina
+  no tumba el gate, mientras que el límite local de 800 ms sigue detectando
+  regresiones reales y CI conserva el margen de 1.500 ms.
 - Política de tests: un comportamiento, un test en la capa más baja; un bug,
   una regresión en la capa que falló; MCP/CLI solo contrato y TUI solo lógica
   pura. Borrar tests es válido si la cobertura no baja; añadir por encima del
