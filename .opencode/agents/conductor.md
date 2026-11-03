@@ -160,10 +160,40 @@ permissions:
     resource: "taiki worktree merge*"
     effect: allow
   - action: shell
+    resource: "taiki sys *"
+    effect: allow
+  - action: shell
+    resource: "taiki commit *"
+    effect: allow
+  - action: shell
+    resource: "taiki mcp install*"
+    effect: allow
+  - action: shell
+    resource: "taiki hook-install*"
+    effect: allow
+  - action: shell
+    resource: "taiki brief*"
+    effect: allow
+  - action: shell
     resource: "taiki confirm*"
     effect: deny
   - action: shell
     resource: "taiki transition*"
+    effect: deny
+  - action: shell
+    resource: "taiki authorize*"
+    effect: deny
+  - action: shell
+    resource: "taiki review*"
+    effect: deny
+  - action: shell
+    resource: "taiki reject*"
+    effect: deny
+  - action: shell
+    resource: "taiki memory approve*"
+    effect: deny
+  - action: shell
+    resource: "taiki memory reject*"
     effect: deny
   - action: shell
     resource: "python3 -c*"

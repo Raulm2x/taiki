@@ -92,8 +92,12 @@ y los workers piden.
 - **Conductor**: fallback `allow`, los mismos privilegios que el agente `build`
   de OpenCode. No pregunta por comandos comunes ni desconocidos no
   destructivos; ejecuta lo que los workers le escalan, los gates y el merge de
-  worktrees ya confirmados. El guardrail es una lista de denies explícitos que
-  se evalúa después de los allows.
+  worktrees ya confirmados. En el flujo live también ejecuta `taiki sys`,
+  `taiki commit`, `taiki mcp install` y `taiki hook-install`, con `taiki brief`
+  como lectura. `taiki authorize`, `taiki review`, `taiki confirm` y
+  `taiki memory approve|reject` siguen siendo exclusivos del usuario y
+  conservan su deny explícito al final de la lista. El guardrail es una lista
+  de denies explícitos que se evalúa después de los allows.
 - **Workers**: fallback `deny`. Lo que no está en su lista blanca no se ejecuta
   ni genera un prompt al usuario. Si necesitan un comando denegado, publican un
   `checkpoint` o `comment` con el comando exacto, el motivo y el resultado

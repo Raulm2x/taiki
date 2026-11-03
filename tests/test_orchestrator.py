@@ -76,6 +76,17 @@ def run(h: Harness) -> None:
         and _rule(conductor, "shell", "taiki confirm*") == "deny"
         and _rule(conductor, "shell", "git merge*") == "deny"
         and _rule(conductor, "shell", "taiki worktree merge*") == "allow"
+        and _rule(conductor, "shell", "taiki sys *") == "allow"
+        and _rule(conductor, "shell", "taiki commit *") == "allow"
+        and _rule(conductor, "shell", "taiki mcp install*") == "allow"
+        and _rule(conductor, "shell", "taiki hook-install*") == "allow"
+        and _rule(conductor, "shell", "taiki brief*") == "allow"
+        and _rule(conductor, "shell", "taiki authorize*") == "deny"
+        and _rule(conductor, "shell", "taiki review*") == "deny"
+        and _rule(conductor, "shell", "taiki reject*") == "deny"
+        and _rule(conductor, "shell", "taiki memory approve*") == "deny"
+        and _rule(conductor, "shell", "taiki memory reject*") == "deny"
+        and _rule(conductor, "shell", "taiki transition*") == "deny"
         and _rule(conductor, "shell", "git push*") == "deny"
         and "verificado" in conductor_body
         and "Nunca" in conductor_body
@@ -1097,7 +1108,7 @@ def run(h: Harness) -> None:
         and _rule(worker, "shell", "taiki commit *") == "allow"
         and _rule(worker, "shell", "taiki complete*") is None
         and _rule(conductor, "shell", "taiki *") == "deny"
-        and _rule(conductor, "shell", "taiki commit *") is None
+        and _rule(conductor, "shell", "taiki commit *") == "allow"
         and "--agent worker" in worker_body,
         "los writes de taiki solo van por MCP; el commit se atribuye",
     )
