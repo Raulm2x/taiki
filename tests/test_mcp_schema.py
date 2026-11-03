@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from mcp_layer import handlers, schemas
 from ticketlib import repo
@@ -61,6 +62,23 @@ def run(h: Harness) -> None:
             spec.name for spec in schemas.TOOL_SPECS if not spec.read_only
         ),
         "MUTATING_TOOLS se deriva de read_only",
+    )
+    module_root = Path(__file__).resolve().parents[1] / "mcp_layer"
+    line_counts = {
+        path.relative_to(module_root).as_posix(): len(
+            path.read_text(encoding="utf-8").splitlines()
+        )
+        for path in module_root.rglob("*.py")
+    }
+    oversized = sorted(
+        f"{name} ({lines})"
+        for name, lines in line_counts.items()
+        if lines > 700
+    )
+    h.ok(
+        not oversized,
+        "ningún módulo MCP supera 700 líneas"
+        + (f": {', '.join(oversized)}" if oversized else ""),
     )
     transition_tool = next(
         tool for tool in schemas.TOOLS if tool["name"] == "transition"
