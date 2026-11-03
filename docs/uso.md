@@ -285,6 +285,12 @@ taiki commit --repo ~/.config --ticket T-0044 -m "fix: hypr (T-0044)"
 - **`scope`** exige `paths`; sin ellos el guard no permite escribir
   (fail-closed). Los `resources` (`systemd:user/<unit>`, `systemd:system/<unit>`,
   `package:<nombre>`) también delimitan el alcance.
+- **Rama live**: el `commit-msg` permite committear en
+  `isolation.live_branch` (por defecto `main`) cuando todos los tickets del
+  asunto son `none`/`scope`; en el workspace de sistema
+  (`~/.local/share/taiki-sys`) es el caso normal. Un ticket `worktree` sigue
+  bloqueado en `main`: su trabajo va en `agent/T-XXXX-*` y en `main` solo entra
+  una release.
 - **`worktree`** mantiene el flujo clásico: `claim --worktree`,
   `session_move`, commit en `agent/T-XXXX-*` y merge tras confirmar.
 - **En `scope`/`none` el worker no crea worktree ni mueve la sesión**: reclama

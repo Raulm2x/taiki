@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from . import commits, env as envlib, worktree
+from . import commits, env as envlib, workspace, worktree
 from .domain import TicketError
 from .store.relations import TICKET_CODE_RE
 
@@ -327,6 +327,36 @@ def _integration_warnings(root: Path, branch: str | None) -> list[str]:
     return warnings
 
 
+def _live_branch() -> str:
+    """Rama del árbol vivo del workspace (``isolation.live_branch``)."""
+    config = workspace.load_config()
+    isolation = config.get("isolation") if isinstance(config, dict) else None
+    if not isinstance(isolation, dict):
+        return "main"
+    return str(isolation.get("live_branch") or "main")
+
+
+def _live_branch_allowed(conn: Any, name: str, codes: list[str]) -> bool:
+    """¿La rama protegida es la live y todos los códigos son ``none``/``scope``?
+
+    Un ticket con aislamiento ``worktree`` nunca commitea en la rama live: su
+    trabajo vive en ``agent/T-XXXX-*``.
+    """
+    if not codes or name != _live_branch():
+        return False
+    placeholders = ", ".join("?" for _ in codes)
+    isolations = [
+        row["isolation"]
+        for row in conn.execute(
+            f"SELECT isolation FROM tickets WHERE code IN ({placeholders})",
+            codes,
+        )
+    ]
+    return len(isolations) == len(codes) and all(
+        value in commits.LIVE_ISOLATIONS for value in isolations
+    )
+
+
 def check_commit_message(
     conn: Any,
     message: str,
@@ -348,8 +378,11 @@ def check_commit_message(
 
     Con ``branch`` (o detectada desde ``repo``) se bloquea commitear en
     ``main``/``master`` y se exige que ``agent/T-XXXX-*`` o ``hotfix/T-XXXX``
-    correspondan al ticket del asunto. ``repo`` añade avisos de integración
-    (develop ausente, desalineada o rama sin rebasar) sin bloquear.
+    correspondan al ticket del asunto. La excepción live es la rama
+    ``isolation.live_branch`` del workspace cuando todos los tickets del asunto
+    usan aislamiento ``none``/``scope``; un ticket ``worktree`` sigue bloqueado
+    en la rama protegida. ``repo`` añade avisos de integración (develop
+    ausente, desalineada o rama sin rebasar) sin bloquear.
     """
     disabled = str(envlib.get("HOOK", "")).strip().lower()
     if disabled in DISABLED_VALUES:
@@ -373,7 +406,9 @@ def check_commit_message(
     root = Path(repo).expanduser() if repo is not None else Path.cwd()
     name = branch if branch is not None else commits.current_branch(root)
 
-    if name in commits.PROTECTED_BRANCHES:
+    if name in commits.PROTECTED_BRANCHES and not _live_branch_allowed(
+        conn, name, subject_codes
+    ):
         return {
             "ok": False,
             "reason": "protected-branch",

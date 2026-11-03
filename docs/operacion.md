@@ -259,6 +259,11 @@ El `commit-msg` instalado por `taiki hook-install` exige un `T-XXXX` existente
 explicar renumeraciones o historia. Para commits que no son trabajo de un
 ticket, escribe `[sin-ticket]` o usa `TAIKI_HOOK=off`.
 
+La rama `isolation.live_branch` del workspace (normalmente `main`) se permite
+cuando todos los tickets del asunto usan aislamiento `none` o `scope`; un
+ticket `worktree` sigue bloqueado con `protected-branch` y su trabajo va en
+`agent/T-XXXX-*`.
+
 
 ## Aislamiento configurable
 

@@ -280,6 +280,29 @@ def run(h: Harness) -> None:
     )
     os.environ.pop("TICKETS_HOOK", None)
 
+    live_ticket = repo.create_ticket(
+        conn, title="Trabajo live", isolation="none"
+    )
+    repo.claim_ticket(conn, live_ticket["code"], agent="test")
+    live_ok = githook.check_commit_message(
+        conn, f"chore: x ({live_ticket['code']})", branch="main"
+    )
+    wt_ticket = repo.create_ticket(
+        conn, title="Solo worktree", isolation="worktree"
+    )
+    repo.claim_ticket(conn, wt_ticket["code"], agent="test")
+    wt_blocked = githook.check_commit_message(
+        conn, f"chore: x ({wt_ticket['code']})", branch="main"
+    )
+    h.ok(
+        live_ok["ok"]
+        and not wt_blocked["ok"]
+        and wt_blocked["reason"] == "protected-branch"
+        and "main" in wt_blocked["message"]
+        and "release" in wt_blocked["message"],
+        "commit-msg permite la rama live a none/scope y bloquea worktree",
+    )
+
     pending_audit = repo.create_ticket(conn, title="Cerrado sin resolución")
     conn.execute(
         "UPDATE tickets SET status = 'completado', resolution = '' "
