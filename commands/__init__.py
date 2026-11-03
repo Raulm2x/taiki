@@ -58,7 +58,7 @@ from .system import (
     cmd_scheme_uninstall,
     cmd_tui,
 )
-from .sys import cmd_sys_status
+from .sys import cmd_sys_snapshot, cmd_sys_status
 
 __all__ = [
     "cmd_list",
@@ -111,4 +111,5 @@ __all__ = [
     "cmd_scheme_uninstall",
     "cmd_tui",
     "cmd_sys_status",
+    "cmd_sys_snapshot",
 ]

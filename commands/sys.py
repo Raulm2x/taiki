@@ -9,12 +9,25 @@ como ledger de snapshots y exportaciones.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import shutil
+import subprocess
+import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from ticketlib import commits, render, workspace
+from ticketlib import commits, render, repo, workspace
 from ticketlib.domain import TicketError
 from ticketlib.paths import MARKER
+
+from .common import _conn
+
+SNAPSHOTS_DIR = "snapshots"
+PACKAGES_FILE = "pacman-Qqe.txt"
+PACKAGES_ROLLBACK = (
+    "Rollback manual: `pacman -S --needed $(cat %s)` (no se ejecuta solo)"
+)
 
 
 def project_root() -> Path:
@@ -72,6 +85,235 @@ def status(root: str | Path | None = None) -> dict[str, Any]:
         "verify": {"command": workspace.verify_command(config)},
         "dotfiles": workspace.dotfiles_settings(config, local),
     }
+
+
+def _resolve(path: str | Path) -> Path:
+    return Path(path).expanduser().resolve()
+
+
+def _stamp(timestamp: str | None = None) -> str:
+    return timestamp or datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _git(root: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(root), *args],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or f"git {' '.join(args)} falló"
+        raise TicketError(detail)
+    return result.stdout
+
+
+def _commit_paths(project: Path, paths: list[Path], message: str) -> str:
+    """Commit de bookkeeping del repo de sistema (hooks de ticket no aplican)."""
+    base = _resolve(project)
+    relative = [str(_resolve(path).relative_to(base)) for path in paths]
+    _git(project, "add", "--", *relative)
+    _git(project, "commit", "--no-verify", "-m", message)
+    return _git(project, "rev-parse", "--short", "HEAD").strip()
+
+
+def _snapshot_ticket(conn, code: str | None) -> dict[str, Any]:
+    """Ticket válido para snapshot: existe, no archivado y en árbol vivo."""
+    if not code:
+        raise TicketError("Falta el código del ticket (T-XXXX)")
+    ticket = repo.get_ticket(conn, code)
+    if ticket.get("archived"):
+        raise TicketError(f"{ticket['code']} está archivado")
+    if ticket.get("isolation") not in ("none", "scope"):
+        raise TicketError(
+            f"{ticket['code']} usa aislamiento {ticket.get('isolation')!r}; "
+            "sys snapshot solo aplica al árbol vivo (none/scope)"
+        )
+    return ticket
+
+
+def _inside(target: Path, folder: Path) -> bool:
+    try:
+        target.relative_to(_resolve(folder))
+    except ValueError:
+        return False
+    return True
+
+
+def _in_roots(target: Path, project: Path, config, local) -> bool:
+    return any(
+        _inside(target, _absolute(value, project))
+        for value in workspace.scope_roots(config, local)
+    )
+
+
+def _snapshot_rel(code: str, stamp: str, target: Path) -> Path:
+    return Path(SNAPSHOTS_DIR, code, stamp, *target.parts[1:])
+
+
+def snapshot_path(
+    conn,
+    code: str | None,
+    target: str | Path,
+    *,
+    project: str | Path | None = None,
+    timestamp: str | None = None,
+) -> dict[str, Any]:
+    """Copia un fichero vivo a ``snapshots/<code>/<timestamp>`` y lo commitea.
+
+    Si el fichero vive en el repo de dotfiles, no se copia: el commit va allí y
+    la reversión es un ``git revert`` del commit que haga el usuario.
+    """
+    ticket = _snapshot_ticket(conn, code)
+    root = Path(project) if project is not None else project_root()
+    source = _resolve(target)
+    if not source.is_file():
+        raise TicketError(f"No es un fichero existente: {source}")
+    folder = root / MARKER
+    config = workspace.load_config(folder)
+    local = workspace.load_local(folder)
+    if not _in_roots(source, root, config, local):
+        raise TicketError(
+            f"{source} queda fuera de scope.roots: "
+            + ", ".join(workspace.scope_roots(config, local))
+        )
+
+    dotfiles = workspace.dotfiles_settings(config, local)
+    if dotfiles["detected"] and _inside(source, Path(dotfiles["detected"])):
+        repo_dir = dotfiles["detected"]
+        command = f"git -C {repo_dir} revert <sha>"
+        reversal = {"kind": "git-revert", "ref": repo_dir, "command": command}
+        repo.update_ticket(conn, ticket["code"], reversal=reversal)
+        return {
+            "ticket": ticket["code"],
+            "path": str(source),
+            "copied": False,
+            "repo": repo_dir,
+            "hint": f"taiki commit --repo {repo_dir} --ticket {ticket['code']}",
+            "reversal": reversal,
+        }
+
+    stamp = _stamp(timestamp)
+    snapshot = _snapshot_rel(ticket["code"], stamp, source)
+    destination = root / snapshot
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+    digest = _sha256(destination)
+    commit = _commit_paths(
+        root,
+        [destination],
+        f"chore(sys): snapshot {ticket['code']} {source}",
+    )
+    reversal = {
+        "kind": "copy",
+        "ref": snapshot.as_posix(),
+        "command": f"cp -a {destination} {source}",
+    }
+    repo.update_ticket(conn, ticket["code"], reversal=reversal)
+    return {
+        "ticket": ticket["code"],
+        "path": str(source),
+        "snapshot": snapshot.as_posix(),
+        "sha256": digest,
+        "commit": commit,
+        "copied": True,
+        "reversal": reversal,
+    }
+
+
+def _package_list(source: str | Path | None) -> str:
+    if source is not None:
+        text = Path(source).expanduser().read_text(encoding="utf-8")
+    else:
+        try:
+            result = subprocess.run(
+                ["pacman", "-Qqe"],
+                capture_output=True,
+                text=True,
+            )
+        except OSError as exc:
+            raise TicketError(f"No se pudo ejecutar pacman -Qqe: {exc}") from exc
+        if result.returncode != 0:
+            raise TicketError(
+                result.stderr.strip() or "pacman -Qqe falló; usa --from FILE"
+            )
+        text = result.stdout
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return "\n".join(lines) + "\n"
+
+
+def snapshot_packages(
+    conn,
+    code: str | None,
+    *,
+    source: str | Path | None = None,
+    project: str | Path | None = None,
+) -> dict[str, Any]:
+    """Guarda la lista de paquetes instalados; el rollback es manual."""
+    ticket = _snapshot_ticket(conn, code)
+    root = Path(project) if project is not None else project_root()
+    content = _package_list(source)
+    snapshot = Path(SNAPSHOTS_DIR, ticket["code"], PACKAGES_FILE)
+    destination = root / snapshot
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(content, encoding="utf-8")
+    commit = _commit_paths(
+        root,
+        [destination],
+        f"chore(sys): packages {ticket['code']}",
+    )
+    return {
+        "ticket": ticket["code"],
+        "snapshot": snapshot.as_posix(),
+        "sha256": _sha256(destination),
+        "commit": commit,
+        "packages": len(content.splitlines()),
+        "rollback": PACKAGES_ROLLBACK % (root / snapshot),
+    }
+
+
+def cmd_sys_snapshot(args: argparse.Namespace) -> int:
+    code = getattr(args, "code", None)
+    try:
+        with _conn() as conn:
+            if getattr(args, "packages", False):
+                report = snapshot_packages(
+                    conn,
+                    code,
+                    source=getattr(args, "source", None),
+                )
+            else:
+                report = snapshot_path(conn, code, args.path)
+    except TicketError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    if getattr(args, "json", False):
+        print(render.to_json(report))
+        return 0
+    if report.get("copied") is False:
+        print(
+            f"{report['ticket']}: {report['path']} vive en el repo de dotfiles "
+            f"({report['repo']}); no se copia"
+        )
+        print(f"Commitea allí: {report['hint']}")
+        print(f"Reversión: {report['reversal']['command']}")
+        return 0
+    print(
+        f"{report['ticket']} snapshot: {report['snapshot']} "
+        f"(sha256 {report['sha256'][:12]}…)"
+    )
+    print(f"Commit: {report['commit']}")
+    print(f"Reversión: {report['reversal']['command']}")
+    if "packages" in report:
+        print(report["rollback"])
+    return 0
 
 
 def cmd_sys_status(args: argparse.Namespace) -> int:

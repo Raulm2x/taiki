@@ -39,21 +39,17 @@ def run(h: Harness) -> None:
     )
 
     with h.env(HOME=str(home), TAIKI_DB=None, TICKETS_DB=None):
-        h.eq(
-            workspace.find_workspace(nested),
-            folder,
-            "find_workspace sube hasta el .taiki del proyecto",
-        )
         resolved = workspace.resolve(nested)
         h.eq(
-            (resolved["source"], resolved["project"], workspace.label(nested)),
-            ("project", "proyecto", "proyecto"),
-            "resolve marca origen y proyecto; label lo resume",
-        )
-        h.eq(
-            workspace.resolve_db(nested),
-            folder / "taiki.db",
-            "la DB del proyecto gana sobre la global",
+            (
+                workspace.find_workspace(nested),
+                resolved["source"],
+                resolved["project"],
+                workspace.label(nested),
+                workspace.resolve_db(nested),
+            ),
+            (folder, "project", "proyecto", "proyecto", folder / "taiki.db"),
+            "find_workspace sube al .taiki; resolve, label y resolve_db coinciden",
         )
 
     # ── Configuración ───────────────────────────────────────────────────
@@ -80,15 +76,16 @@ def run(h: Harness) -> None:
         TICKETS_DB=None,
     ):
         missing = workspace.resolve(home / "otro")
+        try:
+            workspace.resolve_db(home / "otro")
+        except domain.TicketError:
+            needs_init = True
+        else:
+            needs_init = False
         h.eq(
-            (missing["source"], missing["db"]),
-            ("missing", None),
-            "sin .taiki el origen es missing y no hay DB implícita",
-        )
-        h.raises(
-            domain.TicketError,
-            lambda: workspace.resolve_db(home / "otro"),
-            "sin .taiki resolve_db pide inicializar",
+            (missing["source"], missing["db"], needs_init),
+            ("missing", None, True),
+            "sin .taiki el origen es missing y resolve_db pide inicializar",
         )
         with h.env(TAIKI_DB=str(tmp / "explicita.db"), TICKETS_DB=None):
             explicit = workspace.resolve_db(nested)
@@ -100,15 +97,14 @@ def run(h: Harness) -> None:
         ):
             both = workspace.resolve_db(nested)
         h.eq(
-            (explicit, alias, both),
-            (tmp / "explicita.db", tmp / "alias.db", tmp / "nueva.db"),
-            "TAIKI_DB gana; TICKETS_DB sigue como alias",
-        )
-
-        h.eq(
-            workspace.registry_path(),
-            tmp / "xdg" / "taiki" / "registry.db",
-            "el registro de instancias respeta XDG_DATA_HOME",
+            (explicit, alias, both, workspace.registry_path()),
+            (
+                tmp / "explicita.db",
+                tmp / "alias.db",
+                tmp / "nueva.db",
+                tmp / "xdg" / "taiki" / "registry.db",
+            ),
+            "TAIKI_DB gana, TICKETS_DB es alias y el registro respeta XDG",
         )
 
     # ── Adopción de una base existente ───────────────────────────────────
@@ -127,12 +123,6 @@ def run(h: Harness) -> None:
         codes = [ticket["code"] for ticket in repo.list_tickets(conn)]
     finally:
         conn.close()
-    h.eq(
-        (adopted["adopted"], created["code"] in codes),
-        (True, True),
-        "init_workspace adopta la DB y conserva los tickets",
-    )
-
     try:
         workspace.init_workspace(other, adopt=source)
     except domain.TicketError:
@@ -141,9 +131,14 @@ def run(h: Harness) -> None:
         re_adopt = False
     with h.env(TAIKI_DB=str(adopted["db"])):
         h.eq(
-            (re_adopt, db.db_path()),
-            (True, adopted["db"]),
-            "adoptar sin --force no pisa la DB y db_path respeta el override",
+            (
+                adopted["adopted"],
+                created["code"] in codes,
+                re_adopt,
+                db.db_path(),
+            ),
+            (True, True, True, adopted["db"]),
+            "adopción conserva tickets, sin --force no pisa y db_path respeta el override",
         )
 
     # ── Guard opt-in ─────────────────────────────────────────────────────

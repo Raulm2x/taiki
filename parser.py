@@ -48,6 +48,7 @@ from commands import (
     cmd_scheme_install,
     cmd_servers,
     cmd_scheme_uninstall,
+    cmd_sys_snapshot,
     cmd_sys_status,
     cmd_show,
     cmd_skills,
@@ -821,6 +822,30 @@ def build_parser() -> argparse.ArgumentParser:
     sys_status = sys_sub.add_parser("status", help="estado del workspace de sistema")
     sys_status.add_argument("--json", action="store_true")
     sys_status.set_defaults(func=cmd_sys_status)
+    sys_snap = sys_sub.add_parser(
+        "snapshot",
+        help="guarda un fichero vivo o la lista de paquetes en el repo de sistema",
+        description="Copia el fichero a snapshots/<T-XXXX>/<timestamp>/ en el "
+        "repo de sistema, lo commitea y anota la reversión en el ticket. Si el "
+        "fichero vive en el repo de dotfiles no se copia: se commitea allí. "
+        "Los paquetes se guardan con pacman -Qqe y el rollback es manual.",
+    )
+    sys_snap.add_argument("code")
+    sys_snap_group = sys_snap.add_mutually_exclusive_group(required=True)
+    sys_snap_group.add_argument("--path", help="fichero absoluto a copiar")
+    sys_snap_group.add_argument(
+        "--packages",
+        action="store_true",
+        help="guarda la lista pacman -Qqe (rollback manual)",
+    )
+    sys_snap.add_argument(
+        "--from",
+        dest="source",
+        metavar="FILE",
+        help="lee la lista de paquetes de FILE en vez de ejecutar pacman",
+    )
+    sys_snap.add_argument("--json", action="store_true")
+    sys_snap.set_defaults(func=cmd_sys_snapshot)
 
     p = sub.add_parser("link", help="Enlaza una referencia a un ticket")
     p.add_argument("code")
