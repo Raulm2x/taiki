@@ -456,9 +456,68 @@ def _policy(h: Harness) -> None:
 
     helpful = feedback_memory(conn, solid["code"], helpful=True, note="útil")
     unhelpful = feedback_memory(conn, solid["code"], helpful=False)
+
+    cancelled = repo.create_ticket(conn, title="Evidencia cancelada")
+    repo.transition(conn, cancelled["code"], "cancelado")
+    vigente = repo.create_ticket(conn, title="Evidencia vigente")
+    (h.tmp / "references").mkdir(exist_ok=True)
+    changed = h.tmp / "references" / "vigencia.md"
+    changed.write_text("v1", encoding="utf-8")
+    intact = h.tmp / "references" / "vigente.md"
+    intact.write_text("estable", encoding="utf-8")
+    file_memory = add_memory(
+        conn,
+        title="Fichero cambiado",
+        content="El fichero de referencia define el contrato.",
+        key="evidencia-fichero",
+        source="user",
+        evidence=[{"kind": "file", "ref": "references/vigencia.md"}],
+        files=[{"path": "references/vigencia.md", "content": "v1"}],
+    )
+    changed.write_text("v2", encoding="utf-8")
+    cancelled_memory = add_memory(
+        conn,
+        title="Ticket cancelado",
+        content="La evidencia apunta a un ticket cancelado.",
+        key="evidencia-cancelada",
+        source="user",
+        evidence=[{"kind": "ticket", "ref": cancelled["code"]}],
+    )
+    uncheckable = add_memory(
+        conn,
+        title="Evidencia remota",
+        content="Solo hay url y sesión.",
+        key="evidencia-remota",
+        source="user",
+        evidence=[
+            {"kind": "url", "ref": "https://example.test/x"},
+            {"kind": "session", "ref": "ses_123"},
+        ],
+    )
+    fresh = add_memory(
+        conn,
+        title="Evidencia vigente",
+        content="Ticket y fichero intactos.",
+        key="evidencia-vigente",
+        source="user",
+        evidence=[
+            {"kind": "ticket", "ref": vigente["code"]},
+            {"kind": "file", "ref": "references/vigente.md"},
+        ],
+        files=[{"path": "references/vigente.md", "content": "estable"}],
+    )
     h.ok(
-        helpful["helpful_count"] == 1 and unhelpful["unhelpful_count"] == 1,
-        "feedback actualiza helpful_count y unhelpful_count",
+        helpful["helpful_count"] == 1
+        and unhelpful["unhelpful_count"] == 1
+        and get_memory(conn, cancelled_memory["code"])["freshness"]["ok"] is False
+        and get_memory(conn, cancelled_memory["code"])["status"] == "stale"
+        and get_memory(conn, file_memory["code"])["freshness"]["ok"] is False
+        and get_memory(conn, solid["code"])["status"] == "stale"
+        and get_memory(conn, fresh["code"])["freshness"]["ok"] is True
+        and get_memory(conn, fresh["code"])["status"] == "active"
+        and get_memory(conn, uncheckable["code"])["freshness"]
+        == {"ok": True, "checked": 0, "reasons": [], "stale": []},
+        "feedback actualiza contadores y la evidencia no vigente pasa a stale",
     )
 
 

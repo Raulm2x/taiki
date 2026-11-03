@@ -229,7 +229,7 @@ def checklist(
     ranked.sort()
     selected: list[dict[str, Any]] = []
     for *_, code in ranked[:limit]:
-        memory = get_memory(conn, code)
+        memory = get_memory(conn, code, mark=False)
         summary = str(memory.get("description") or "").strip()
         if not summary:
             summary = " ".join(str(memory.get("content") or "").split())[:180]

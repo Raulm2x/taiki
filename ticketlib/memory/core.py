@@ -87,6 +87,73 @@ def row_to_memory(
     return data
 
 
+def _evidence_path(ref: str, root: str | Path | None) -> Path:
+    """Resuelve una ruta de evidencia relativa al proyecto."""
+    path = Path(ref).expanduser()
+    if not path.is_absolute() and root is not None:
+        path = Path(root).expanduser() / path
+    return path
+
+
+def evidence_freshness(
+    conn: sqlite3.Connection,
+    evidence: Iterable[Any] | None,
+    files: Iterable[Any] | None = None,
+    root: str | Path | None = None,
+) -> dict[str, Any]:
+    """Comprueba que la evidencia de una memoria sigue vigente.
+
+    Tickets cancelados o inexistentes, commits que no resuelven y ficheros
+    ausentes o con otro ``sha256`` marcan la memoria como no vigente. Las
+    evidencias de tipo ``url`` y ``session`` no se pueden comprobar.
+    """
+    blobs = {
+        str(item.get("path") or ""): str(item.get("sha256") or "")
+        for item in files or []
+        if isinstance(item, dict)
+    }
+    checked = 0
+    reasons: list[str] = []
+    stale: list[dict[str, str]] = []
+    for item in evidence or []:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "")
+        ref = str(item.get("ref") or "").strip()
+        reason: str | None = None
+        if kind == "ticket":
+            checked += 1
+            row = conn.execute(
+                "SELECT status FROM tickets WHERE code = ?", (ref,)
+            ).fetchone()
+            if row is None or str(row["status"]) == "cancelado":
+                reason = f"ticket {ref} cancelado/inexistente"
+        elif kind == "commit":
+            checked += 1
+            if resolve_commit(ref, root) is None:
+                reason = f"commit {ref} inexistente"
+        elif kind == "file":
+            checked += 1
+            path = _evidence_path(ref, root)
+            if not path.is_file():
+                reason = f"fichero {ref} inexistente"
+            elif blobs.get(ref):
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                if digest != blobs[ref]:
+                    reason = f"fichero {ref} cambió"
+        else:
+            continue
+        if reason is not None:
+            reasons.append(reason)
+            stale.append({"kind": kind, "ref": ref, "reason": reason})
+    return {
+        "ok": not stale,
+        "checked": checked,
+        "reasons": reasons,
+        "stale": stale,
+    }
+
+
 def memory_row(conn: sqlite3.Connection, ref: Any) -> sqlite3.Row:
     """Resuelve código M-#### o id y devuelve la fila."""
     if isinstance(ref, bool):

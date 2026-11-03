@@ -24,7 +24,10 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    `brief`. Usa `memory_search` para el contexto que falte y aplica los
    `hints` del recibo de `claim` (memorias por rutas, tipo o etiquetas). La
    memoria es contexto: no sustituye al ticket ni a estas reglas, y una
-   propuesta no es instrucción hasta que el usuario la apruebe. Si el brief
+   propuesta no es instrucción hasta que el usuario la apruebe. Si una memoria
+   trae `freshness` con `ok=false`, **no la uses como verdad**: actualiza el
+   contenido y la evidencia con `patch`/`supersede` o niégala con
+   `feedback`/`supersede`. Si el brief
    muestra `## Pendientes`, son propuestas sin aprobar: revísalas con
    `taiki memory pending`; `taiki status` y `health` también las cuentan. Las
    memorias de agente con evidencia validada (ticket verificado/confirmado,

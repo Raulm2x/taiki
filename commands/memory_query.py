@@ -284,6 +284,9 @@ def _show(conn, args: argparse.Namespace) -> int:
         print(render.to_json(memory))
         return 0
     _print_memory(memory, False)
+    if not (memory.get("freshness") or {}).get("ok", True):
+        for reason in memory["freshness"]["reasons"]:
+            print(f"⚠ evidencia no vigente: {reason}")
     files = memory.get("files") or []
     if files:
         print("  Ficheros: " + ", ".join(item["path"] for item in files))

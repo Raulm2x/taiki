@@ -70,9 +70,25 @@ taiki memory edit M-0001 --ticket-kinds seguridad
 |---|---|
 | `proposed` | Pendiente de aprobación humana. No es instrucción. |
 | `active` | Vigente y aplicable. |
-| `stale` | Válida pero conviene revisarla; el brief la avisa. En P1 no se genera automáticamente. |
+| `stale` | Válida pero conviene revisarla. Puede generarse al consultar si la evidencia deja de sostenerse. |
 | `archived` | Retirada; no aparece en el brief. Su histórico queda en el ledger. |
 | `superseded` | Sustituida por otra; se conserva para trazabilidad. |
+
+### Vigencia al consultar
+
+`memory_get`/`taiki memory show` validan la evidencia registrada: el ticket
+existe y no está cancelado, el commit resuelve y el fichero sigue existiendo con
+el mismo `sha256`. Si alguna deja de sostenerse, la memoria `active` pasa a
+`stale` con un motivo concreto en el ledger y la respuesta incluye `freshness`
+con los motivos. La comprobación es determinista y no requiere aprobación humana.
+Las evidencias `url` y `session` no se verifican offline y la ausencia de
+evidencia no degrada la memoria.
+
+El agente que recibe una memoria no vigente **no debe usarla como verdad**:
+actualiza el contenido y la evidencia con `patch`/`supersede`, o la niega con
+`feedback` negativo/`supersede`. Los listados (`memory_search`, `memory list`,
+`memory_checklist`) calculan `freshness` pero **no mutan estado**: solo la
+consulta explícita de una memoria puede marcarla `stale`.
 
 ## Ciclo de vida
 

@@ -240,6 +240,8 @@ def _snippet(memory: dict[str, Any]) -> dict[str, Any]:
     data["snippet"] = content[:SNIPPET_CHARS] + (
         "…" if len(content) > SNIPPET_CHARS else ""
     )
+    if memory.get("freshness") is not None:
+        data["freshness"] = memory["freshness"]
     return data
 
 
