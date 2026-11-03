@@ -160,6 +160,15 @@ def run(h: Harness) -> None:
         "memory pin y unpin fijan y desfijan",
     )
 
+    search_code, search_out, _ = _run(["memory", "search", "trabajo"])
+    _, search_json = _json(["memory", "search", "trabajo", "--json"])
+    h.ok(
+        search_code == 0
+        and created["code"] in search_out
+        and any(item["code"] == created["code"] for item in search_json),
+        "memory search encuentra por texto y respeta --json",
+    )
+
     missing_why, _, _ = _run(["memory", "rm", created["code"]])
     _, removed = _json(
         ["memory", "rm", created["code"], "--why", "obsoleta", "--json"]

@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import argparse
 
-from ticketlib import workspace  # los tests parchean project_root desde aquí
+from ticketlib import render, workspace  # los tests parchean project_root desde aquí
 from ticketlib.domain import ValidationError
+from ticketlib.memory import search_memories
+from ticketlib.memory.render import escape_text
 
 from .common import _conn
 from .memory_playbook import _playbook
@@ -35,6 +37,26 @@ from .memory_write import (
 )
 
 
+def _search(conn, args: argparse.Namespace) -> int:
+    """Búsqueda legible por CLI; ``search_memories`` ya registra el uso."""
+    rows = search_memories(conn, args.query, scope=args.scope, limit=args.limit)
+    if args.kind:
+        rows = [memory for memory in rows if memory.get("kind") == args.kind]
+    if args.json:
+        print(render.to_json(rows))
+        return 0
+    if not rows:
+        print("Sin coincidencias.")
+        return 0
+    for memory in rows:
+        print(
+            f"{memory['code']} [{memory.get('kind', 'fact')}] "
+            f"{escape_text(memory.get('title') or '')} "
+            f"({memory.get('status', '?')})"
+        )
+    return 0
+
+
 def cmd_memory(args: argparse.Namespace) -> int:
     """Despacha los subcomandos de ``taiki memory``."""
     action = args.memory_action
@@ -45,6 +67,8 @@ def cmd_memory(args: argparse.Namespace) -> int:
             return _list(conn, args)
         if action == "show":
             return _show(conn, args)
+        if action == "search":
+            return _search(conn, args)
         if action == "pending":
             return _pending(conn, args)
         if action == "candidates":

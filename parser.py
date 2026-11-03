@@ -434,6 +434,14 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--json", action="store_true")
     m.set_defaults(func=cmd_memory)
 
+    m = memory_sub.add_parser("search", help="Busca memorias por texto")
+    m.add_argument("query", help="Texto a buscar en título y contenido")
+    m.add_argument("--scope", choices=MEMORY_SCOPES)
+    m.add_argument("--kind", choices=MEMORY_KINDS)
+    m.add_argument("--limit", type=int, default=10)
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
     m = memory_sub.add_parser("pending", help="Propuestas pendientes")
     m.add_argument("--limit", type=int, default=50)
     m.add_argument(

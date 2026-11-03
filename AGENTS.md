@@ -277,6 +277,7 @@ Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
 taiki init                  # DB y workspace actuales
 taiki stats                 # resumen
 taiki brief                 # brief operativo de la memoria
+taiki memory search <texto> # búsqueda puntual sin cargar el brief entero
 taiki remember "texto"      # preferencia activa del usuario
 taiki memory pending        # propuestas pendientes de aprobación
 taiki memory pending --diff # diff frente a la memoria sustituida

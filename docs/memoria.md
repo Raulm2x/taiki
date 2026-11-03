@@ -498,6 +498,8 @@ taiki memory add --scope project --kind convention \
 
 taiki memory list --kind pitfall --status active
 taiki memory show M-0001
+taiki memory search "gate exige ruff"   # lectura bajo demanda, sin brief
+taiki memory search template --scope project --kind convention --limit 5 --json
 taiki memory pending --diff            # diff frente a la sustituida
 taiki memory approve M-0002            # solo el usuario
 taiki memory reject M-0003 --why "Es un fallo transitorio"
