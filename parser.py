@@ -746,6 +746,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="también en Antigravity (su configuración es global)",
     )
+    mcp_add.add_argument(
+        "--force-agents",
+        action="store_true",
+        help="sobrescribe los perfiles de .opencode/agents con la versión de Taiki",
+    )
     mcp_add.set_defaults(func=cmd_mcp_install)
     mcp_rm = mcp_sub.add_parser(
         "uninstall", help="retira el MCP del proyecto actual"

@@ -540,6 +540,7 @@ def run(h: Harness) -> None:
         ),
         "el presupuesto de concurrencia se valida",
     )
+    from commands import mcp as mcp_cmd
     from commands.mcp import sync_agent_profiles
 
     live_root = Path(h.tmp) / "live"
@@ -547,14 +548,32 @@ def run(h: Harness) -> None:
     live_sync = sync_agent_profiles(live_root, {"isolation": {"default": "scope"}})
     wt_sync = sync_agent_profiles(wt_root, {"isolation": {"default": "worktree"}})
     live_dir = live_root / ".opencode" / "agents"
+    source_dir = Path(mcp_cmd.__file__).resolve().parent.parent / ".opencode" / "agents"
+    custom = live_dir / "conductor.md"
+    custom.write_text("# perfil propio\n", encoding="utf-8")
+    (live_dir / "merger.md").write_text(
+        (source_dir / "merger.md").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    keep_sync = sync_agent_profiles(live_root, {"isolation": {"default": "scope"}})
+    kept = custom.read_text(encoding="utf-8")
+    forced_sync = sync_agent_profiles(
+        live_root, {"isolation": {"default": "scope"}}, force=True
+    )
     h.ok(
         (live_dir / "conductor.md").exists()
         and (live_dir / "worker.md").exists()
         and not (live_dir / "merger.md").exists()
         and "merger.md" in live_sync["skipped"]
         and (wt_root / ".opencode" / "agents" / "merger.md").exists()
-        and "merger.md" in wt_sync["copied"],
-        "mcp install copia perfiles sin merger en live y con merger en worktree",
+        and "merger.md" in wt_sync["copied"]
+        and "conductor.md" in keep_sync["customized"]
+        and kept == "# perfil propio\n"
+        and "merger.md" in keep_sync["removed"]
+        and "conductor.md" in forced_sync["copied"]
+        and custom.read_text(encoding="utf-8")
+        == (source_dir / "conductor.md").read_text(encoding="utf-8"),
+        "mcp install no pisa perfiles propios, retira merger prístino en live "
+        "y --force-agents sobrescribe",
     )
     mcp_agents = handlers.call_tool("agents", {"kind": "documentacion"})
     h.ok(

@@ -145,12 +145,18 @@ def install_repo_hooks(root: str | Path) -> Path | None:
     return installed[-1].parent
 
 
-def sync_agent_profiles(root: str | Path, config: dict[str, Any]) -> dict[str, list[str]]:
-    """Sincroniza los perfiles de ``.opencode/agents`` con el workspace.
+def sync_agent_profiles(
+    root: str | Path,
+    config: dict[str, Any],
+    force: bool = False,
+) -> dict[str, list[str]]:
+    """Sincroniza los perfiles de ``.opencode/agents`` sin pisar los propios.
 
-    En un workspace live (``none``/``scope``) no hay worktrees que integrar:
-    se copia todo menos ``merger.md`` y, si existe uno de Taiki en destino, se
-    elimina. Otros archivos no se tocan.
+    Un perfil que ya existe y difiere del de Taiki se conserva y se informa en
+    ``customized``; solo ``force`` lo sobrescribe. En un workspace live
+    (``none``/``scope``) no hay worktrees que integrar: se copia todo menos
+    ``merger.md`` y se retira el de destino solo si es idéntico al de origen
+    (prístino) o si se fuerza. Uno personalizado se conserva.
     """
     source = Path(__file__).resolve().parent.parent / ".opencode" / "agents"
     dest = Path(root) / ".opencode" / "agents"
@@ -159,25 +165,43 @@ def sync_agent_profiles(root: str | Path, config: dict[str, Any]) -> dict[str, l
     copied: list[str] = []
     skipped: list[str] = []
     removed: list[str] = []
+    customized: list[str] = []
     for profile in sorted(source.glob("*.md")):
         if live and profile.name == "merger.md":
             skipped.append(profile.name)
             continue
         target = dest / profile.name
         text = profile.read_text(encoding="utf-8")
-        if not target.exists() or target.read_text(encoding="utf-8") != text:
+        if not target.exists():
             target.write_text(text, encoding="utf-8")
-        copied.append(profile.name)
+            copied.append(profile.name)
+            continue
+        if target.read_text(encoding="utf-8") == text:
+            copied.append(profile.name)
+        elif force:
+            target.write_text(text, encoding="utf-8")
+            copied.append(profile.name)
+        else:
+            customized.append(profile.name)
     if live:
         stale = dest / "merger.md"
         if stale.exists():
-            body = stale.read_text(encoding="utf-8")
-            if "name: merger" in body or "Eres el merger" in body:
+            source_merger = source / "merger.md"
+            pristine = source_merger.is_file() and (
+                stale.read_text(encoding="utf-8")
+                == source_merger.read_text(encoding="utf-8")
+            )
+            if force or pristine:
                 stale.unlink()
                 removed.append(stale.name)
             else:
-                skipped.append(stale.name)
-    return {"copied": copied, "skipped": skipped, "removed": removed}
+                customized.append(stale.name)
+    return {
+        "copied": copied,
+        "skipped": skipped,
+        "removed": removed,
+        "customized": customized,
+    }
 
 
 def uninstall_opencode(root: Path) -> Path | None:
@@ -226,10 +250,35 @@ def cmd_mcp_install(args: argparse.Namespace) -> int:
     hooks = install_repo_hooks(root)
     if hooks is not None:
         print(f"OpenCode: hooks instalados en {hooks}")
-    profiles = sync_agent_profiles(root, config)
+    agents_source = Path(__file__).resolve().parent.parent / ".opencode" / "agents"
+    if not agents_source.is_dir():
+        print(
+            "OpenCode: el paquete no trae perfiles de agente; "
+            "se conservan los existentes en .opencode/agents.",
+            file=sys.stderr,
+        )
+    profiles = sync_agent_profiles(
+        root, config, force=getattr(args, "force_agents", False)
+    )
     live = (config.get("isolation") or {}).get("default") in ("none", "scope")
     suffix = "sin merger: isolation live" if live else "con merger"
-    print(f"OpenCode: {len(profiles['copied'])} perfiles de agente ({suffix})")
+    print(
+        f"OpenCode: {len(profiles['copied'])} perfiles de agente "
+        f"sincronizados ({suffix})"
+    )
+    if profiles["removed"]:
+        print(
+            "OpenCode: retirado "
+            + ", ".join(profiles["removed"])
+            + " (sin merger en isolation live)"
+        )
+    if profiles["customized"]:
+        print(
+            "OpenCode: perfiles personalizados conservados: "
+            + ", ".join(profiles["customized"])
+            + ". Usa `--force-agents` para sobrescribirlos.",
+            file=sys.stderr,
+        )
 
     conn = db.connect()
     try:

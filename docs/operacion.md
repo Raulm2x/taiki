@@ -302,8 +302,13 @@ El aislamiento es por ticket (`--isolation`) y el defecto sale de
   y, sin el aviso, el commit acababa en «Nada en el índice».
 - **Merger**: el subagente `merger` solo existe en workspaces `worktree`: el
   registro de agentes y `taiki mcp install` lo omiten en `none`/`scope` (y
-  retiran un `merger.md` de Taiki que hubiera quedado). Un workspace live no
+  retiran un `merger.md` de Taiki que hubiera quedado, solo si su contenido es
+  idéntico al de origen; uno personalizado se conserva). Un workspace live no
   integra worktrees; el conductor no debe lanzarlo.
+- **Perfiles**: `mcp install` es no destructivo: copia los perfiles que faltan y
+  conserva los que difieren del paquete (los lista como personalizados y avisa
+  por stderr). `--force-agents` los sobrescribe a propósito. Si el paquete no
+  trae `.opencode/agents/`, avisa y deja los existentes.
 - **Reversión**: `taiki update --reversal '{"kind","ref","command"}'`.
   `reject --revert` (usuario) ejecuta `git revert` solo para `git-revert`; en
   `copy`/sistema imprime el comando y cancela el ticket. `worktree` no aplica.
