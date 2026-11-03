@@ -1,24 +1,5 @@
 # Changelog
 
-## Unreleased
-
-Tickets: T-0045.01–T-0045.05, T-0046.01–T-0046.05, T-0047.01–T-0047.06,
-T-0048.01–T-0048.06, T-0049.01–T-0049.03
-
-### feat
-- feat: memoria semántica P0/P1 con brief, búsqueda, propuestas y aprobación (T-0045)
-- feat: candidatos deterministas, CLI/MCP de revisión y subagente curator P2 (T-0046)
-- feat: playbooks, skills, routing advice y checklist del reviewer P3 (T-0047)
-- feat: curado determinista con stale/archive, dedupe y presupuesto (T-0048.01)
-- feat: CLI memory curate/stats/impact (T-0048.02)
-- feat: MCP memory_stats y health de memoria (T-0048.03)
-- feat: export/import JSON-Markdown y rollback por ledger/snapshot (T-0048.04)
-- feat: auto-curado opt-in y review_command externo (T-0048.05)
-- docs: documentación de curado, métricas, export y rollback P4 (T-0048.06)
-- feat: núcleo autoskills con detección de stack, registro verificado y playbooks propuestos (T-0049.01)
-- feat: CLI `taiki skills` y tool MCP `skills_suggest` de solo lectura (T-0049.02)
-- docs: skills curadas, seguridad, límites y desinstalación de autoskills (T-0049.03)
-
 ## v0.2.0 — 2026-11-02
 
 Tickets: T-0038, T-0039, T-0042, T-0040, T-0043, T-0041, T-0044

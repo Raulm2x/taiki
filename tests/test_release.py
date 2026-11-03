@@ -25,11 +25,37 @@ import tomllib
 from argparse import Namespace
 from pathlib import Path
 
-from commands.release import _bump_for, _explicit_bumps, cmd_release
+from commands.release import (
+    _bump_for,
+    _changelog,
+    _explicit_bumps,
+    _groups,
+    _tickets,
+    cmd_release,
+)
 from commands.tickets import cmd_claim
 from commands.worktree import cmd_worktree_merge
 from tests.seeds import git_repo
 from ticketlib import __version__, db, repo, workspace
+
+# CHANGELOG de partida con el bloque de trabajo en curso que dejaban las
+# integraciones antiguas y una release anterior que debe conservarse.
+_CHANGELOG_SEED = """# Changelog
+
+## Unreleased
+
+Tickets: T-0045
+
+### feat
+- feat: bloque viejo (T-0045)
+
+## v0.2.0 — 2026-11-02
+
+Tickets: T-0038
+
+### feat
+- feat: release anterior (T-0038)
+"""
 
 
 def _git(root: Path, *args: str) -> str:
@@ -418,6 +444,55 @@ def _bump_cases(root: Path) -> dict[str, dict]:
     return results
 
 
+def _changelog_cases() -> tuple[dict, dict]:
+    """``_changelog`` consume ``Unreleased``, no duplica y conserva el histórico.
+
+    Simula la release v0.3.0 desde v0.2.0 con los tickets T-0050–T-0057 en la
+    capa pura: sin repo, sin red y sin escribir ficheros.
+    """
+    kinds = ("feat", "fix", "feat", "docs", "fix", "feat", "test", "refactor")
+    commits = [
+        {
+            "sha": f"{index:07d}",
+            "subject": f"{kind}: cambio {index} (T-00{49 + index})",
+            "body": f"{kind}: cambio {index} (T-00{49 + index})",
+        }
+        for index, kind in enumerate(kinds, start=1)
+    ]
+    tickets = _tickets(commits)
+    groups = _groups(commits)
+    generated = _changelog(_CHANGELOG_SEED, "0.3.0", tickets, groups)
+    repeated = _changelog(generated, "0.3.0", tickets, groups)
+    newest = generated.split("## v0.3.0", 1)[-1].split("## v0.2.0", 1)[0]
+    actual = {
+        "unreleased": "Unreleased" not in generated,
+        "old_block": "T-0045" not in generated,
+        "version_once": generated.count("## v0.3.0") == 1,
+        "previous": "## v0.2.0" in generated,
+        "previous_body": "release anterior (T-0038)" in generated,
+        "ordered": generated.index("## v0.3.0") < generated.index("## v0.2.0"),
+        "range": sorted(code for code in tickets if code >= "T-0050"),
+        "range_in_section": all(
+            f"T-{code:04d}" in newest for code in range(50, 58)
+        ),
+        "rerun": repeated.count("## v0.3.0") == 1
+        and "Unreleased" not in repeated
+        and "## v0.2.0" in repeated,
+    }
+    expected = {
+        "unreleased": True,
+        "old_block": True,
+        "version_once": True,
+        "previous": True,
+        "previous_body": True,
+        "ordered": True,
+        "range": [f"T-{code:04d}" for code in range(50, 58)],
+        "range_in_section": True,
+        "rerun": True,
+    }
+    return actual, expected
+
+
 def _claim_worktree(
     h, root: Path, database: Path, title: str
 ) -> tuple[str, Path, int]:
@@ -602,6 +677,12 @@ def run(h) -> None:
     root = git_repo(tmp / "proyecto")
     _seed_versions(root)
     _commit(root, "app.py", "v0\n", "chore: base")
+    _commit(
+        root,
+        "CHANGELOG.md",
+        _CHANGELOG_SEED,
+        "docs: changelog con bloque Unreleased",
+    )
     _git(root, "branch", "-m", "main")
     main_head = _git(root, "rev-parse", "main")
     _git(root, "checkout", "-b", "develop")
@@ -654,6 +735,7 @@ def run(h) -> None:
     sync_actual, sync_expected = _sync_cases(tmp)
     push_actual, push_expected = _push_cases(tmp)
     bumps_actual = _bump_cases(root)
+    changelog_units, changelog_unit_expected = _changelog_cases()
 
     rc, release = _release(root, no_verify=False, verify_cmd="true")
     message = _git(root, "log", "-1", "--format=%B", "main")
@@ -741,7 +823,7 @@ def run(h) -> None:
         "second_range": develop_head,
         "second_message_old": False,
         "second_message_new": True,
-        "changelog_entries": 2,
+        "changelog_entries": 3,
         "entries": 2,
         "tags": ["v0.1.0", "v0.1.1"],
         "versions": ["0.1.0", "0.1.1"],
@@ -761,6 +843,7 @@ def run(h) -> None:
             "sync": sync_actual,
             "push": push_actual,
             "bumps": bumps_actual,
+            "changelog": changelog_units,
             "version": version_actual,
             "marker": marker_actual,
             "release": {
@@ -781,6 +864,12 @@ def run(h) -> None:
                 "changelog_second": all(
                     part in changelog
                     for part in ("## v0.1.1", "T-0005")
+                ),
+                "changelog_unreleased": "Unreleased" not in changelog_first,
+                "changelog_version_once": changelog_first.count("## v0.1.0") == 1,
+                "changelog_previous": all(
+                    part in changelog_first
+                    for part in ("## v0.2.0", "release anterior (T-0038)")
                 ),
             },
             "flow": flow_actual,
@@ -809,6 +898,7 @@ def run(h) -> None:
                     "override": "minor",
                 },
             },
+            "changelog": changelog_unit_expected,
             "marker": marker_expected,
             "version": version_expected,
             "release": {
@@ -821,6 +911,9 @@ def run(h) -> None:
                 "message_groups": True,
                 "changelog_first": True,
                 "changelog_second": True,
+                "changelog_unreleased": True,
+                "changelog_version_once": True,
+                "changelog_previous": True,
             },
             "flow": flow_expected,
         },

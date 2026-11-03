@@ -20,8 +20,9 @@ Flujo:
    de commit. No se reescribe ``main``.
 4. Alinea la versión del paquete (``ticketlib/__init__.py`` y
    ``pyproject.toml``) con ``vX.Y.Z``, actualiza ``CHANGELOG.md`` (lo crea si
-   falta) y etiqueta el commit con un tag anotado ``vX.Y.Z``. Ambos ficheros de
-   versión viajan en el mismo commit de release, de modo que código, commit y
+   falta; retira el bloque ``Unreleased`` previo y no duplica la sección de la
+   versión) y etiqueta el commit con un tag anotado ``vX.Y.Z``. Ambos ficheros
+   de versión viajan en el mismo commit de release, de modo que código, commit y
    tag coinciden.
 5. Reconcilia la integración con ``main``: el squash deja en ``main`` un commit
    que la rama de integración no tiene, así que se integra de vuelta con
@@ -112,6 +113,9 @@ _BOOKKEEPING = re.compile(
     r"|chore: reconciliar .+ tras v\d+\.\d+\.\d+"
     r")$"
 )
+# Bloque de trabajo en curso que algunas integraciones dejan en el CHANGELOG:
+# su contenido se regenera en la release y no debe sobrevivir a ella.
+_UNRELEASED_HEADING = re.compile(r"^##\s+Unreleased\s*$", re.IGNORECASE)
 
 
 def _git(root: Path, *args: str) -> str:
@@ -402,10 +406,37 @@ def _changelog(
     ).strip()
     if not existing.strip():
         return f"# Changelog\n\n{entry}\n"
-    if existing.startswith("# "):
-        title, _, rest = existing.partition("\n")
-        return f"{title}\n\n{entry}\n\n{rest.lstrip(chr(10))}".rstrip() + "\n"
-    return f"{entry}\n\n{existing}".rstrip() + "\n"
+    header, sections = _split_changelog(existing)
+    kept = [section for section in sections if not _is_stale_section(section, version)]
+    if header.startswith("# "):
+        parts = [header, entry, *kept]
+    else:
+        parts = [entry, header, *kept] if header else [entry, *kept]
+    return "\n\n".join(parts).rstrip() + "\n"
+
+
+def _split_changelog(existing: str) -> tuple[str, list[str]]:
+    """Separa el encabezado del fichero de sus secciones ``## …``."""
+    header: list[str] = []
+    sections: list[list[str]] = []
+    for line in existing.splitlines():
+        if line.startswith("## "):
+            sections.append([line])
+        elif sections:
+            sections[-1].append(line)
+        else:
+            header.append(line)
+    return "\n".join(header).strip(), [
+        "\n".join(section).strip() for section in sections
+    ]
+
+
+def _is_stale_section(section: str, version: str) -> bool:
+    """``## Unreleased`` o una sección previa de la misma versión."""
+    heading = section.splitlines()[0].strip() if section else ""
+    if _UNRELEASED_HEADING.match(heading):
+        return True
+    return bool(re.fullmatch(rf"##\s+v{re.escape(version)}(?:\s.*)?", heading))
 
 
 def _replace_line(
