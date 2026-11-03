@@ -145,6 +145,41 @@ def install_repo_hooks(root: str | Path) -> Path | None:
     return installed[-1].parent
 
 
+def sync_agent_profiles(root: str | Path, config: dict[str, Any]) -> dict[str, list[str]]:
+    """Sincroniza los perfiles de ``.opencode/agents`` con el workspace.
+
+    En un workspace live (``none``/``scope``) no hay worktrees que integrar:
+    se copia todo menos ``merger.md`` y, si existe uno de Taiki en destino, se
+    elimina. Otros archivos no se tocan.
+    """
+    source = Path(__file__).resolve().parent.parent / ".opencode" / "agents"
+    dest = Path(root) / ".opencode" / "agents"
+    dest.mkdir(parents=True, exist_ok=True)
+    live = (config.get("isolation") or {}).get("default") in ("none", "scope")
+    copied: list[str] = []
+    skipped: list[str] = []
+    removed: list[str] = []
+    for profile in sorted(source.glob("*.md")):
+        if live and profile.name == "merger.md":
+            skipped.append(profile.name)
+            continue
+        target = dest / profile.name
+        text = profile.read_text(encoding="utf-8")
+        if not target.exists() or target.read_text(encoding="utf-8") != text:
+            target.write_text(text, encoding="utf-8")
+        copied.append(profile.name)
+    if live:
+        stale = dest / "merger.md"
+        if stale.exists():
+            body = stale.read_text(encoding="utf-8")
+            if "name: merger" in body or "Eres el merger" in body:
+                stale.unlink()
+                removed.append(stale.name)
+            else:
+                skipped.append(stale.name)
+    return {"copied": copied, "skipped": skipped, "removed": removed}
+
+
 def uninstall_opencode(root: Path) -> Path | None:
     """Quita el MCP del proyecto sin tocar el resto de su configuración."""
     removed = _drop_server(root, MCP_NAME)
@@ -191,6 +226,10 @@ def cmd_mcp_install(args: argparse.Namespace) -> int:
     hooks = install_repo_hooks(root)
     if hooks is not None:
         print(f"OpenCode: hooks instalados en {hooks}")
+    profiles = sync_agent_profiles(root, config)
+    live = (config.get("isolation") or {}).get("default") in ("none", "scope")
+    suffix = "sin merger: isolation live" if live else "con merger"
+    print(f"OpenCode: {len(profiles['copied'])} perfiles de agente ({suffix})")
 
     conn = db.connect()
     try:

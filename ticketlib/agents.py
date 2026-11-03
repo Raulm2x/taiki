@@ -377,6 +377,10 @@ def registry(config: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
                 f"disponibles: {', '.join(sorted(merged))}"
             )
         merged[name] = {**merged[name], **value}
+    # Un workspace live (``none``/``scope``) no tiene worktrees que integrar:
+    # el merger no existe y el conductor no debe poder lanzarlo.
+    if ((config or {}).get("isolation") or {}).get("default") in ("none", "scope"):
+        merged.pop("merger", None)
     return {
         name: _capability(name, data, models)
         for name, data in merged.items()

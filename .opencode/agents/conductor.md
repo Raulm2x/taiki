@@ -354,7 +354,8 @@ es exclusiva del usuario.
 
 Cuando el ticket declara `isolation` `none` o `scope`, el trabajo va sobre el
 árbol vivo: **no se crea worktree y no se lanza el merger**, y las tareas se
-serializan porque comparten el repo real.
+serializan porque comparten el repo real. En un workspace live no existe el
+subagente `merger`; no lo lances.
 
 1. Reclama sin `worktree` y comprueba que la sesión del worker sigue en el
    checkout principal; no pidas `session_move` a una ruta inexistente.

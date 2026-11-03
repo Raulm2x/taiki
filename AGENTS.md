@@ -10,6 +10,9 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
   `taiki mcp install`. No hay MCP global. Además del ciclo de vida expone
   `status`, `whoami`, `heartbeat`, `worktree_create`, `worktree_list`,
   `promote` y `health`; úsalos antes de coordinar trabajo en paralelo.
+  `mcp install` sincroniza `.opencode/agents/` y, en un workspace live
+  (`isolation.default` `none`/`scope`), omite y retira `merger.md`: sin
+  worktrees no hay merger.
 - DB: `.taiki/taiki.db`. `config.json` y `.taiki/.gitignore` se versionan;
   `taiki.db`, `local.json` y `backups/` no.
 - Guard: activo porque `.taiki/config.json` tiene `"guard": true`.

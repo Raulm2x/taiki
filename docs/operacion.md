@@ -300,6 +300,10 @@ El aislamiento es por ticket (`--isolation`) y el defecto sale de
   Si un path declarado cae en `.gitignore`, el comando avisa con la ruta y
   sugiere `git add -f <ruta>` o una excepción `!ruta/`: taiki no stagea por ti
   y, sin el aviso, el commit acababa en «Nada en el índice».
+- **Merger**: el subagente `merger` solo existe en workspaces `worktree`: el
+  registro de agentes y `taiki mcp install` lo omiten en `none`/`scope` (y
+  retiran un `merger.md` de Taiki que hubiera quedado). Un workspace live no
+  integra worktrees; el conductor no debe lanzarlo.
 - **Reversión**: `taiki update --reversal '{"kind","ref","command"}'`.
   `reject --revert` (usuario) ejecuta `git revert` solo para `git-revert`; en
   `copy`/sistema imprime el comando y cancela el ticket. `worktree` no aplica.

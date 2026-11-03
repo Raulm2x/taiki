@@ -500,7 +500,9 @@ def run(h: Harness) -> None:
         and "documentacion" in short["strengths"]
         and short["steps"] >= 16
         and bug["level"] == "high"
-        and bug["variant"] == "high",
+        and bug["variant"] == "high"
+        and "merger" not in agents_lib.registry({"isolation": {"default": "scope"}})
+        and "merger" in agents_lib.registry({"isolation": {"default": "worktree"}}),
         "docs grandes va a worker-medium; worker-low (16 pasos) es para cortas",
     )
     limited = agents_lib.capability("worker-medium")
@@ -537,6 +539,22 @@ def run(h: Harness) -> None:
             {"orchestrator": {"max_parallel": 0}}
         ),
         "el presupuesto de concurrencia se valida",
+    )
+    from commands.mcp import sync_agent_profiles
+
+    live_root = Path(h.tmp) / "live"
+    wt_root = Path(h.tmp) / "wt"
+    live_sync = sync_agent_profiles(live_root, {"isolation": {"default": "scope"}})
+    wt_sync = sync_agent_profiles(wt_root, {"isolation": {"default": "worktree"}})
+    live_dir = live_root / ".opencode" / "agents"
+    h.ok(
+        (live_dir / "conductor.md").exists()
+        and (live_dir / "worker.md").exists()
+        and not (live_dir / "merger.md").exists()
+        and "merger.md" in live_sync["skipped"]
+        and (wt_root / ".opencode" / "agents" / "merger.md").exists()
+        and "merger.md" in wt_sync["copied"],
+        "mcp install copia perfiles sin merger en live y con merger en worktree",
     )
     mcp_agents = handlers.call_tool("agents", {"kind": "documentacion"})
     h.ok(
