@@ -827,7 +827,7 @@ def run(h: Harness) -> None:
         actor_type="usuario",
     )
 
-    # ── Revisión especial de rutas sensibles ────────────────────────────
+    # ── Revisión especial de rutas sensibles (aviso, no gate) ───────────
     h.eq(
         (
             domain.requires_review(["ticketlib/domain.py"]),
@@ -863,12 +863,15 @@ def run(h: Harness) -> None:
     repo.transition(
         conn, sensitive["code"], "completado", note="listo", actor="opencode"
     )
-    h.raises(
-        domain.TransitionError,
-        lambda: workflow.transition(
-            conn, sensitive["code"], "verificado", note="tests"
-        ),
-        "sin revisión el ticket sensible no pasa a verificado",
+    verified = workflow.transition(
+        conn, sensitive["code"], "verificado", note="tests"
+    )
+    h.ok(
+        verified["status"] == "verificado"
+        and not workflow.review_active(conn, verified)
+        and domain.requires_review(verified["paths"]),
+        "un ticket sensible pasa a verificado sin taiki review; "
+        "requires_review queda como aviso",
     )
     reviewed = workflow.review_ticket(
         conn, sensitive["code"], "revisado por el usuario"
@@ -884,11 +887,9 @@ def run(h: Harness) -> None:
         "review_active pasa de falso a verdadero y deja evento",
     )
     h.eq(
-        workflow.transition(
-            conn, sensitive["code"], "verificado", note="tests"
-        )["status"],
+        reviewed["status"],
         "verificado",
-        "con revisión el ticket sensible sí pasa a verificado",
+        "revisar después de verificar es opcional y no cambia el estado",
     )
 
     # ── complete live: exige commit o external enlazado ────────────────

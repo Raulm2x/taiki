@@ -24,7 +24,6 @@ from ..domain import (
     ValidationError,
     clean_isolation,
     clean_reversal,
-    requires_review,
 )
 from ..gitutil import resolve_commit
 from ..util import (
@@ -35,7 +34,7 @@ from ..util import (
     normalize_code,
     now,
 )
-from .common import UNSET, _decode_list, event, row_by_code
+from .common import UNSET, event, row_by_code
 from .relations import link_ticket
 from .queries import get_ticket
 
@@ -149,18 +148,9 @@ def transition(
             "(tests, CI, revisión)"
         )
 
-    if (
-        status == "verificado"
-        and requires_review(_decode_list(row["paths"]))
-        and not review_active(
-            conn, {"id": row["id"], "started_at": row["started_at"]}
-        )
-    ):
-        raise TransitionError(
-            f"{row['code']} toca rutas sensibles y necesita revisión del "
-            f"usuario: ejecuta `taiki review {row['code']} --why ...` antes "
-            "de marcarlo como 'verificado'."
-        )
+    # Las rutas sensibles (``requires_review``) quedan como aviso en el ticket,
+    # no como gate: ``taiki review`` es opcional y la confirmación del usuario
+    # (``taiki confirm``) es la revisión especial de esos tickets.
 
     if status in ("completado", "verificado", "confirmado"):
         closed = (
@@ -602,8 +592,10 @@ def review_ticket(
 ) -> dict[str, Any]:
     """Registra la revisión del usuario para un ticket sensible.
 
-    No cambia el estado: deja un evento ``revisar`` que ``transition`` exige
-    antes de pasar a ``verificado``. Los agentes no pueden revisar.
+    No cambia el estado: deja un evento ``revisar`` y ``review_active`` lo
+    consulta. Es opcional: ``transition`` a ``verificado`` no lo exige y la
+    confirmación del usuario sigue siendo la revisión especial. Los agentes no
+    pueden revisar.
     """
     if actor_type != "usuario":
         raise PermissionDenied(
