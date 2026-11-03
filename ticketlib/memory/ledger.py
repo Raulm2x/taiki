@@ -12,7 +12,7 @@ from ..domain import ValidationError
 from ..util import now
 from . import budget as budget_lib
 from . import security
-from .config import load_memory_config, validate_memory_config
+from .config import resolve_memory_config
 from .models import BUDGET_STATUSES
 
 ACTOR_TYPE = "agente"
@@ -178,11 +178,7 @@ def _restore(conn: sqlite3.Connection, target: dict[str, Any]) -> None:
 
 
 def _budget_config(value: dict[str, Any] | None) -> dict[str, Any]:
-    if value is None:
-        return load_memory_config()
-    if "memory" in value:
-        return validate_memory_config(value.get("memory"))
-    return validate_memory_config(value)
+    return resolve_memory_config(value)
 
 
 def _check_budget(

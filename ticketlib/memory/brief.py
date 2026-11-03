@@ -9,7 +9,7 @@ from typing import Any
 
 from ..domain import ValidationError
 from .budget import select_for_budget
-from .config import load_memory_config, validate_memory_config
+from .config import resolve_memory_config
 from .playbooks import brief_index
 from .render import format_chars, memory_line, percentage
 from .store import list_memories
@@ -30,13 +30,7 @@ _SECTION_CHOICES = ("project", "user", "all")
 
 def _config(value: dict[str, Any] | None) -> dict[str, Any]:
     """Acepta el bloque memory, el config completo o nada."""
-    if value is None:
-        return load_memory_config()
-    if "memory" in value:
-        return validate_memory_config(value.get("memory"))
-    if "brief_budget_chars" in value:
-        return validate_memory_config(value)
-    return load_memory_config(config=value)
+    return resolve_memory_config(value)
 
 
 def _is_routing(memory: dict[str, Any]) -> bool:

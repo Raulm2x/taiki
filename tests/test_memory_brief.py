@@ -7,6 +7,7 @@ from pathlib import Path
 from ticketlib import db
 from ticketlib.memory import add_memory
 from ticketlib.memory.brief import render_brief, write_brief
+from ticketlib.memory.config import resolve_memory_config
 from ticketlib.memory.render import escape_text
 from tests.support import Harness
 
@@ -268,4 +269,15 @@ def run(h: Harness) -> None:
     h.ok(
         "Aparece tras reescribir." in target.read_text(encoding="utf-8"),
         "reescribir reemplaza el artefacto completo",
+    )
+
+    root_config = {"project": "taiki-sys", "guard": True, "scope": {}, "verify": {}}
+    h.ok(
+        render_brief(conn, root_config, budget=5000)["text"]
+        == render_brief(conn, {}, budget=5000)["text"]
+        and resolve_memory_config({"project": "x", "memory": {"stale_after_days": 10}})[
+            "stale_after_days"
+        ]
+        == 10,
+        "el brief acepta el config raíz sin memory y el bloque memory explícito se valida",
     )

@@ -9,7 +9,9 @@ from datetime import datetime, timedelta
 
 import cli
 from ticketlib import repo
+from ticketlib.domain import ValidationError
 from ticketlib.memory import add_memory, feedback_memory, get_memory
+from ticketlib.memory.config import resolve_memory_config, validate_memory_config
 from ticketlib.memory.stats import impact, stats
 from tests.support import Harness
 
@@ -158,6 +160,17 @@ def _stats(h: Harness) -> None:
         (first["code"], second["code"]),
     )
     conn.commit()
+
+    h.raises(
+        ValidationError,
+        lambda: validate_memory_config({"bogus": 1}),
+        "el bloque memory sigue rechazando claves desconocidas",
+    )
+    h.raises(
+        ValidationError,
+        lambda: resolve_memory_config({"project": "x", "memory": {"bogus": 1}}),
+        "el config raíz con una clave memory desconocida también falla",
+    )
 
 
 def _impact(h: Harness) -> None:

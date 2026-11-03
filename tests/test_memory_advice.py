@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from ticketlib import repo
 from ticketlib.domain import ValidationError
-from ticketlib.memory import add_memory, archive_memory
+from ticketlib.memory import add_memory, archive_memory, core
 from ticketlib.memory.advice import checklist, routing_advice
 from ticketlib.memory.candidates import wilson_lower
+from ticketlib.memory.config import validate_memory_config
 from tests.support import Harness
 
 
@@ -94,6 +95,18 @@ def _routing(h: Harness) -> None:
         ValidationError,
         lambda: routing_advice(conn, "inventado"),
         "un tipo de ticket inválido se rechaza",
+    )
+    root_config = {
+        "project": "taiki-sys",
+        "guard": True,
+        "scope": {},
+        "verify": {},
+        "dotfiles": {},
+    }
+    h.ok(
+        core.config(root_config) == validate_memory_config(None)
+        and routing_advice(conn, "bug", [], root_config) is not None,
+        "un config raíz sin bloque memory usa defaults y no rompe el advice",
     )
 
 

@@ -29,7 +29,7 @@ from datetime import timedelta
 from typing import Any
 
 from ..util import now, parse_datetime
-from .config import load_memory_config, validate_memory_config
+from .config import resolve_memory_config
 from .security import SECRET_PATTERNS
 
 CANDIDATE_RULES: tuple[dict[str, str], ...] = (
@@ -119,13 +119,7 @@ def rejection_reason(text: object) -> str | None:
 
 def _config(value: dict[str, Any] | None) -> dict[str, Any]:
     """Acepta el bloque ``memory``, el config completo o nada."""
-    if value is None:
-        return load_memory_config()
-    if "memory" in value:
-        return validate_memory_config(value.get("memory"))
-    if "candidate_max" in value or "candidate_min_evidence" in value:
-        return validate_memory_config(value)
-    return load_memory_config(config=value)
+    return resolve_memory_config(value)
 
 
 def _since(days: int, since: Any) -> str:

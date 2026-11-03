@@ -14,7 +14,7 @@ from ..util import check_enum, now
 from . import budget as budget_lib
 from . import ledger as ledger_lib
 from . import security
-from .config import load_memory_config, validate_memory_config
+from .config import resolve_memory_config
 from .models import (
     BUDGET_STATUSES,
     EVIDENCE_KINDS,
@@ -33,12 +33,8 @@ from .models import (
 
 
 def config(value: dict[str, Any] | None) -> dict[str, Any]:
-    """Valida el bloque memory o carga los defaults del workspace."""
-    if value is None:
-        return load_memory_config()
-    if "memory" in value:
-        return validate_memory_config(value.get("memory"))
-    return validate_memory_config(value)
+    """Resuelve el config raíz, el bloque memory o los defaults."""
+    return resolve_memory_config(value)
 
 
 def load_list(value: Any) -> list[str]:

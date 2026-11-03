@@ -182,9 +182,32 @@ def load_memory_config(
     return validate_memory_config(data.get("memory"))
 
 
+def resolve_memory_config(value: dict[str, Any] | None) -> dict[str, Any]:
+    """Acepta None, el bloque ``memory`` o el config raíz completo.
+
+    Regla única para todos los flujos de memoria: un dict con ``memory`` usa
+    ese bloque; un dict cuyas claves son todas del bloque ``memory`` se valida
+    tal cual (estricto); cualquier otro dict es un config raíz y se lee su
+    ``memory`` (ausente → defaults del workspace). Así ``schedule`` o
+    ``agents`` pueden pasar el config raíz sin bloque ``memory`` sin que las
+    claves ajenas (``project``, ``guard``, ``scope``…) se confundan con
+    claves desconocidas de ``memory.*``.
+    """
+    if value is None:
+        return load_memory_config()
+    if not isinstance(value, dict):
+        return validate_memory_config(value)
+    if "memory" in value:
+        return validate_memory_config(value.get("memory"))
+    if set(value) <= set(DEFAULT_MEMORY_CONFIG):
+        return validate_memory_config(value)
+    return load_memory_config(config=value)
+
+
 __all__ = [
     "DEFAULT_AUTO_CURATE",
     "DEFAULT_MEMORY_CONFIG",
     "load_memory_config",
+    "resolve_memory_config",
     "validate_memory_config",
 ]
