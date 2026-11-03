@@ -48,6 +48,7 @@ from commands import (
     cmd_scheme_install,
     cmd_servers,
     cmd_scheme_uninstall,
+    cmd_sys_status,
     cmd_show,
     cmd_skills,
     cmd_stats,
@@ -808,6 +809,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     wt_merge.add_argument("--json", action="store_true")
     wt_merge.set_defaults(func=cmd_worktree_merge)
+
+    p = sub.add_parser(
+        "sys",
+        help="Workspace de sistema: estado, raíces y dotfiles",
+        description="Trabaja sobre el workspace de sistema (repo Git propio en "
+        "~/.local/share/taiki-sys): estado del repo, raíces del modo scope y "
+        "detección de dotfiles.",
+    )
+    sys_sub = p.add_subparsers(dest="sys_action", required=True)
+    sys_status = sys_sub.add_parser("status", help="estado del workspace de sistema")
+    sys_status.add_argument("--json", action="store_true")
+    sys_status.set_defaults(func=cmd_sys_status)
 
     p = sub.add_parser("link", help="Enlaza una referencia a un ticket")
     p.add_argument("code")

@@ -135,6 +135,79 @@ def scope_roots(
     return roots or ["."]
 
 
+DOTFILES_LIVE_DEFAULT = "~/.config"
+
+
+def verify_command(config: dict[str, Any] | None = None) -> str | None:
+    """Comando de verificación del workspace (``verify.command``) o ``None``."""
+    data = config if config is not None else load_config()
+    block = data.get("verify") if isinstance(data, dict) else None
+    if block is None:
+        return None
+    if not isinstance(block, dict):
+        raise ValidationError("El bloque 'verify' debe ser un objeto")
+    command = block.get("command")
+    if command is None:
+        return None
+    text = str(command).strip()
+    return text or None
+
+
+def _dotfiles_path(value: Any, source: str, key: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValidationError(f"dotfiles.{key} en {source} debe ser una cadena")
+    text = value.strip()
+    if not text:
+        return None
+    return str(Path(text).expanduser())
+
+
+def dotfiles_settings(
+    config: dict[str, Any] | None = None,
+    local: dict[str, Any] | None = None,
+) -> dict[str, str | None]:
+    """Repositorio de dotfiles configurado o detectado.
+
+    ``dotfiles.repo``/``dotfiles.live`` pueden venir de ``config.json`` o de
+    ``local.json`` (este último gana para rutas de la máquina). Sin bloque, se
+    detecta un repositorio en ``live`` (por defecto ``~/.config``) cuando
+    contiene ``.git``. ``detected`` solo se rellena si el repo existe.
+    """
+    data = config if config is not None else load_config()
+    local_data = local if local is not None else load_local()
+    repo: str | None = None
+    live: str | None = None
+    for source, block_name in ((data, "config.json"), (local_data, "local.json")):
+        if not isinstance(source, dict):
+            continue
+        block = source.get("dotfiles")
+        if block is None:
+            continue
+        if not isinstance(block, dict):
+            raise ValidationError(f"dotfiles en {block_name} debe ser un objeto")
+        repo = _dotfiles_path(block.get("repo"), block_name, "repo") or repo
+        live = _dotfiles_path(block.get("live"), block_name, "live") or live
+    live_path = Path(live) if live else Path(DOTFILES_LIVE_DEFAULT).expanduser()
+    detected: str | None = None
+    origin: str | None = None
+    if repo is not None:
+        if (Path(repo) / ".git").exists():
+            detected = repo
+            origin = "config"
+    elif (live_path / ".git").exists():
+        repo = str(live_path)
+        detected = repo
+        origin = "git"
+    return {
+        "repo": repo,
+        "live": str(live_path),
+        "detected": detected,
+        "source": origin,
+    }
+
+
 def load_config(workspace: str | Path | None = None) -> dict[str, Any]:
     """Lee ``config.json`` del workspace indicado (o del actual)."""
     folder = Path(workspace) if workspace is not None else find_workspace()
