@@ -9,6 +9,7 @@ from typing import Any
 from ticketlib import (
     db,
     domain,
+    orchestrator as orchestrator_lib,
     repo,
     runtime,
     workspace,
@@ -276,6 +277,16 @@ def _handle_claim(
     code = args.get("code")
     if not code:
         raise domain.ValidationError("El parámetro 'code' es obligatorio")
+    if args.get("worktree"):
+        # none/scope trabajan en el árbol vivo: el worktree no aplica y se
+        # rechaza antes de reclamar para no dejar el ticket a medio asignar.
+        target = repo.get_ticket(conn, code)
+        isolation = str(target.get("isolation") or domain.DEFAULT_ISOLATION)
+        if isolation in orchestrator_lib.LIVE_ISOLATIONS:
+            raise domain.ValidationError(
+                f"{target['code']} usa aislamiento {isolation}: no crea "
+                "worktree; reclama sin worktree y trabaja en el checkout live."
+            )
     ticket = repo.claim_ticket(
         conn,
         code,
@@ -286,6 +297,7 @@ def _handle_claim(
         anonymous_owner=True,
         lease_minutes=args.get("lease_minutes"),
     )
+    isolation = str(ticket.get("isolation") or domain.DEFAULT_ISOLATION)
     if args.get("worktree"):
         ticket = _attach_worktree(conn, ticket)
     scope = workspace.scope_roots()
@@ -296,7 +308,8 @@ def _handle_claim(
         extra={
             "worktree": ticket.get("worktree"),
             "branch": ticket.get("branch"),
-            "isolation": ticket.get("isolation"),
+            "isolation": isolation,
+            "requires_worktree": isolation == "worktree",
             "resources": ticket.get("resources"),
             "scope": scope,
         },

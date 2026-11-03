@@ -64,50 +64,38 @@ def run(h: Harness) -> None:
     h.ok(
         conductor["mode"] == "primary"
         and isinstance(conductor["steps"], int)
-        and conductor["steps"] <= 40,
-        "el conductor es primario y tiene límite de pasos",
-    )
-    h.ok(
-        _rule(conductor, "edit", "*") == "deny"
+        and conductor["steps"] <= 40
+        and _rule(conductor, "edit", "*") == "deny"
         and _rule(conductor, "subagent", "*") == "deny"
         and _rule(conductor, "subagent", "worker") is None
         and _rule(conductor, "subagent", "worker-low") == "allow"
         and _rule(conductor, "subagent", "worker-medium") == "allow"
         and _rule(conductor, "subagent", "worker-high") == "allow"
         and _rule(conductor, "subagent", "reviewer") == "allow"
-        and _rule(conductor, "subagent", "merger") == "allow",
-        "el conductor no edita y solo lanza perfiles worker/reviewer/merger",
-    )
-    h.ok(
-        _rule(conductor, "shell", "taiki confirm*") == "deny"
+        and _rule(conductor, "subagent", "merger") == "allow"
+        and _rule(conductor, "shell", "taiki confirm*") == "deny"
         and _rule(conductor, "shell", "git merge*") == "deny"
         and _rule(conductor, "shell", "taiki worktree merge*") == "allow"
-        and _rule(conductor, "shell", "git push*") == "deny",
-        "el conductor mergea tras la confirmación pero no confirma ni publica",
-    )
-    h.ok(
-        "verificado" in conductor_body
+        and _rule(conductor, "shell", "git push*") == "deny"
+        and "verificado" in conductor_body
         and "Nunca" in conductor_body
         and "tests/run.py" in conductor_body
         and "Borrado seguro" in conductor_body
         and "autoriza" in conductor_body,
-        "el prompt del conductor exige gates, verificación y autorizar borrados",
+        "el conductor es primario, no edita, lanza perfiles y mergea sin publicar",
     )
 
     h.ok(
         worker["mode"] == "subagent"
         and _rule(worker, "edit", "*") == "allow"
-        and _rule(worker, "subagent", "*") == "deny",
-        "el worker edita pero no lanza subagentes",
-    )
-    h.ok(
-        _rule(worker, "shell", "git push*") == "deny"
+        and _rule(worker, "subagent", "*") == "deny"
+        and _rule(worker, "shell", "git push*") == "deny"
         and _rule(worker, "shell", "git merge*") == "deny"
         and _rule(worker, "shell", "taiki confirm*") == "deny"
         and _rule(worker, "shell", "taiki worktree merge*") == "deny"
         and "Borrado seguro" in worker_body
         and "OK al conductor" in worker_body,
-        "el worker no publica, no mergea, no confirma y pide OK para borrar",
+        "el worker edita sin lanzar subagentes y pide OK para borrar",
     )
 
     h.ok(
@@ -600,6 +588,68 @@ def run(h: Harness) -> None:
         "el presupuesto limita la ola, difiere el resto y schedule MCP coincide",
     )
 
+    # ── Aislamiento: none serial, scope disjunto y recursos ─────────────
+    iso_none = repo.create_ticket(
+        conn, title="Live none", project="iso-none", isolation="none",
+        paths=["src/iso_none.py"],
+    )
+    none_plan = orchestrator.parallel_plan(conn, project="iso-none", limit=3)
+    h.ok(
+        none_plan["parallel"] == []
+        and none_plan["isolation"][iso_none["code"]] == "none"
+        and none_plan["requires_worktree"] is False
+        and any(
+            "none" in item["reason"] and "serial" in item["reason"]
+            for item in none_plan["serial"]
+        ),
+        "isolation none siempre va serial y no exige worktree",
+    )
+
+    iso_a = repo.create_ticket(
+        conn, title="Scope A", project="iso-scope", priority="alta",
+        isolation="scope", paths=["src/iso_a.py"], resources=["package:nginx"],
+    )
+    iso_b = repo.create_ticket(
+        conn, title="Scope B", project="iso-scope", priority="alta",
+        isolation="scope", paths=["src/iso_b.py"], resources=["package:redis"],
+    )
+    scope_plan = orchestrator.parallel_plan(conn, project="iso-scope", limit=3)
+    h.ok(
+        scope_plan["parallel"] == [iso_a["code"], iso_b["code"]]
+        and scope_plan["requires_worktree"] is False
+        and scope_plan["isolation"][iso_a["code"]] == "scope"
+        and scope_plan["isolation"][iso_b["code"]] == "scope",
+        "scope disjunto en paths y recursos corre en paralelo",
+    )
+
+    clash_a = repo.create_ticket(
+        conn, title="Clash A", project="iso-clash", priority="alta",
+        isolation="scope", paths=["src/iso_shared.py"],
+    )
+    clash_b = repo.create_ticket(
+        conn, title="Clash B", project="iso-clash", priority="alta",
+        isolation="scope", paths=["src/iso_shared.py"],
+    )
+    clash_plan = orchestrator.parallel_plan(conn, project="iso-clash", limit=3)
+    res_a = repo.create_ticket(
+        conn, title="Res A", project="iso-res", priority="alta",
+        isolation="scope", paths=["src/iso_r1.py"], resources=["package:nginx"],
+    )
+    res_b = repo.create_ticket(
+        conn, title="Res B", project="iso-res", priority="alta",
+        isolation="scope", paths=["src/iso_r2.py"], resources=["package:nginx"],
+    )
+    res_plan = orchestrator.parallel_plan(conn, project="iso-res", limit=3)
+    h.ok(
+        clash_plan["parallel"] == [clash_a["code"]]
+        and clash_plan["serial"][0]["code"] == clash_b["code"]
+        and "solapa" in clash_plan["serial"][0]["reason"]
+        and res_plan["parallel"] == [res_a["code"]]
+        and res_plan["serial"][0]["code"] == res_b["code"]
+        and "recurso" in res_plan["serial"][0]["reason"],
+        "scope serializa solapes de paths y de recursos entre candidatos",
+    )
+
     # ── E2E: épica con 3 tareas, paralelismo, bug y confirmación ────────
     from ticketlib import status as status_lib
 
@@ -1035,8 +1085,12 @@ def run(h: Harness) -> None:
         and "session_move" in conductor_body
         and "worktree" in worker_body
         and "MCP `health`" in conductor_body
-        and "taiki health" not in conductor_body,
-        "el worker mueve la sesión al worktree y el conductor usa health MCP",
+        and "taiki health" not in conductor_body
+        and "pwd" in worker_body
+        and "directory == worktree" in conductor_body
+        and "agent/T-XXXX-*" in conductor_body
+        and "merge-base --is-ancestor" in conductor_body,
+        "el worker mueve la sesión al worktree y verifica directorio/rama/commit",
     )
     h.ok(
         _rule(worker, "shell", "taiki *") == "deny"
@@ -1046,13 +1100,6 @@ def run(h: Harness) -> None:
         and _rule(conductor, "shell", "taiki commit *") is None
         and "--agent worker" in worker_body,
         "los writes de taiki solo van por MCP; el commit se atribuye",
-    )
-    h.ok(
-        "pwd" in worker_body
-        and "directory == worktree" in conductor_body
-        and "agent/T-XXXX-*" in conductor_body
-        and "merge-base --is-ancestor" in conductor_body,
-        "el protocolo publica y verifica directorio, rama y commit",
     )
     profiles = {
         name: _frontmatter(name)[0]
@@ -1263,6 +1310,36 @@ def run(h: Harness) -> None:
         branch="main",
         commit=None,
     )
+    live_ok = orchestrator.isolation_problems(
+        "T-0001",
+        isolation="scope",
+        worktree=None,
+        directory="/live",
+        branch="main",
+        commit="abc",
+        live_branch="main",
+        live_directory="/live",
+    )
+    live_bad = orchestrator.isolation_problems(
+        "T-0001",
+        isolation="none",
+        worktree="/live",
+        directory="/live",
+        branch="agent/T-0001-x",
+        commit=None,
+        live_branch="main",
+        live_directory="/live",
+    )
+    wrong_dir = orchestrator.isolation_problems(
+        "T-0001",
+        isolation="scope",
+        worktree=None,
+        directory="/wt",
+        branch="main",
+        commit="abc",
+        live_branch="main",
+        live_directory="/live",
+    )
     h.ok(
         orchestrator.isolation_problems(
             "T-0001",
@@ -1275,6 +1352,11 @@ def run(h: Harness) -> None:
         and len(problems) == 3
         and any("directory" in item for item in problems)
         and any("rama" in item for item in problems)
-        and any("commit" in item for item in problems),
-        "el helper valida el aislamiento y detecta directory/rama/commit malos",
+        and any("commit" in item for item in problems)
+        and live_ok == []
+        and any("worktree" in item for item in live_bad)
+        and any("rama live" in item for item in live_bad)
+        and any("commit" in item for item in live_bad)
+        and any("checkout live" in item for item in wrong_dir),
+        "isolation_problems valida worktree y el árbol vivo/rama live por modo",
     )

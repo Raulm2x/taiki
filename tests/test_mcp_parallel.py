@@ -41,6 +41,14 @@ def run(h: Harness) -> None:
                 conn, title="Con worktree", project="proyecto"
             )
             third = repo.create_ticket(conn, title="Con lease", project="proyecto")
+            live_ticket = repo.create_ticket(
+                conn, title="Live scope", project="proyecto",
+                isolation="scope", paths=["src/app.py"],
+            )
+            live_other = repo.create_ticket(
+                conn, title="Live scope 2", project="proyecto",
+                isolation="scope", paths=["src/app.py"],
+            )
             scratch_ticket = scratch.create_or_reuse(
                 conn, agent="opencode", session_id="ses_scratch"
             )
@@ -153,6 +161,44 @@ def run(h: Harness) -> None:
         h.ok(
             lease_claim["lease_until"] is not None,
             "claim acepta lease_minutes",
+        )
+        live_claim = handlers.call_tool(
+            "claim",
+            {"code": live_ticket["code"], "agent": "opencode"},
+            meta={"sessionId": "ses_live"},
+        )
+        h.ok(
+            live_claim["isolation"] == "scope"
+            and live_claim.get("worktree") is None
+            and live_claim["requires_worktree"] is False,
+            "claim en scope no crea worktree y devuelve el aislamiento",
+        )
+        h.raises(
+            domain.ValidationError,
+            lambda: handlers.call_tool(
+                "claim",
+                {
+                    "code": live_other["code"],
+                    "agent": "opencode",
+                    "worktree": True,
+                },
+                meta={"sessionId": "ses_live2"},
+            ),
+            "claim con worktree se rechaza en scope",
+        )
+        handlers.call_tool(
+            "claim",
+            {"code": live_other["code"], "agent": "opencode"},
+            meta={"sessionId": "ses_live2"},
+        )
+        h.raises(
+            domain.ValidationError,
+            lambda: handlers.call_tool(
+                "worktree_create",
+                {"code": live_other["code"]},
+                meta={"sessionId": "ses_live2"},
+            ),
+            "worktree_create rechaza tickets sin worktree",
         )
 
         promoted = handlers.call_tool(
