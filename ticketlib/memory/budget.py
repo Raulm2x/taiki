@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from ..domain import ValidationError
 from ..util import parse_datetime
@@ -119,21 +119,25 @@ def enforce(
 def select_for_budget(
     memories: Iterable[dict[str, Any]],
     limit: int,
+    size: Callable[[dict[str, Any]], int] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
     """Selecciona por prioridad las entradas que caben en el brief.
 
     Devuelve ``(seleccionadas, descartadas, caracteres_usados)``. Si una
     entrada de alta prioridad no cabe, se prueba con las siguientes en vez de
-    detenerse: el brief debe llenarse con lo que quepa.
+    detenerse: el brief debe llenarse con lo que quepa. ``size`` permite medir
+    lo que la entrada ocupará en el brief (por ejemplo la línea índice) en vez
+    del contenido destilado.
     """
+    measure = size or entry_chars
     selected: list[dict[str, Any]] = []
     dropped: list[dict[str, Any]] = []
     used = 0
     for memory in budget_entries(memories):
-        size = entry_chars(memory)
-        if used + size <= limit:
+        chars = measure(memory)
+        if used + chars <= limit:
             selected.append(memory)
-            used += size
+            used += chars
         else:
             dropped.append(memory)
     return selected, dropped, used

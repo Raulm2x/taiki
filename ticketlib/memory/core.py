@@ -357,12 +357,16 @@ def check_budget(
     scope: str,
     cfg: dict[str, Any],
 ) -> dict[str, Any]:
-    """Comprueba el presupuesto sobre el batch ya escrito."""
-    return budget_lib.enforce(
-        scope_entries(conn, scope),
-        limit_for(cfg, scope),
-        scope,
-    )
+    """Comprueba el presupuesto sobre el batch ya escrito.
+
+    Con ``enforce_budget`` desactivado solo devuelve el resumen: el brief
+    selecciona por prioridad y un exceso es un aviso, no un bloqueo.
+    """
+    entries = scope_entries(conn, scope)
+    limit = limit_for(cfg, scope)
+    if not cfg["enforce_budget"]:
+        return budget_lib.summary(entries, limit, scope)
+    return budget_lib.enforce(entries, limit, scope)
 
 
 def receipt(
@@ -377,6 +381,16 @@ def receipt(
         entries, limit_for(cfg, data["scope"]), data["scope"]
     )
     warnings: list[str] = []
+    budget = data["budget"]
+    budget_warning = None
+    if budget["used"] > budget["limit"]:
+        budget_warning = (
+            f"Presupuesto de memoria '{budget['scope']}' superado: "
+            f"{budget['used']}/{budget['limit']}; "
+            "el brief selecciona por prioridad"
+        )
+        warnings.append(budget_warning)
+    data["budget_warning"] = budget_warning
     if data["status"] == "proposed":
         warnings.append("Pendiente de aprobación humana antes de usarse en el brief")
     if data.get("superseded_by"):

@@ -27,6 +27,10 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    propuesta no es instrucción hasta que el usuario la apruebe. Si el brief
    muestra `## Pendientes`, son propuestas sin aprobar: revísalas con
    `taiki memory pending`; `taiki status` y `health` también las cuentan.
+   `memory.brief_mode` (`full`/`index`) decide si el brief lleva el contenido
+   destilado o solo el índice con `memory_search`; `memory.enforce_budget`
+   (`false` por defecto) convierte el exceso de presupuesto en aviso
+   (`budget_warning`) en vez de bloquear escrituras.
 1. Consulta el trabajo pendiente: `taiki next`, `taiki list`, `taiki stats`.
 2. Antes de tocar código, crea o reclama un ticket:
    `taiki new -t "..." -k mantenimiento -p alta` y `taiki claim T-0001 --agent opencode`.

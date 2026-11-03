@@ -358,11 +358,19 @@ caracteres; archivadas y sustituidas no. Controlan el tamaño
 contenido de una entrada), `max_playbook_chars` 12000 (cuerpo y cada apoyo) y
 `playbook_index_chars` 400 (índice en el brief).
 
-Si una escritura deja el scope por encima, falla con total usado, límite y
-entradas que ocupan sitio; no recorta en silencio. Para liberar espacio ejecuta
+Si una escritura deja el scope por encima, por defecto **solo avisa**: con
+`enforce_budget=false` (defecto) el recibo trae `budget_warning` con el total
+usado y el límite, y el brief selecciona por prioridad lo que cabe. Con
+`enforce_budget=true` la escritura falla con total usado, límite y entradas que
+ocupan sitio; no recorta en silencio. Para liberar espacio ejecuta
 `taiki memory curate`, archiva (`rm`) o edita. El curado solo recorta lo no
 protegido y lo deja en el ledger. Los playbooks no consumen el presupuesto del
 scope: solo su índice consume `playbook_index_chars`.
+
+`brief_mode` decide qué lleva el brief: `full` (defecto) vuelca el contenido
+destilado y `index` deja una línea compacta por memoria (código, tipo y título
+con `memory_search <código>`), así el brief no es el depósito completo y el
+detalle se carga bajo demanda.
 
 Prioridad para el brief: fijadas (`pin`), scope `user`, confianza, recencia y
 número de usos.
@@ -542,6 +550,8 @@ al arrancar para no ignorar erratas.
     "project_budget_chars": 3000,
     "user_budget_chars": 1200,
     "brief_budget_chars": 4500,
+    "brief_mode": "full",
+    "enforce_budget": false,
     "max_entry_chars": 600,
     "max_playbook_chars": 12000,
     "playbook_index_chars": 400,
@@ -569,6 +579,9 @@ al arrancar para no ignorar erratas.
 `enabled` apaga la memoria sin borrar datos; `write_policy` es `balanced`
 (defecto) o `manual`; `user_scope` fija el scope de las preferencias (`project`)
 y `skills_sync=false` evita exportar playbooks al sincronizar OpenCode.
+`brief_mode` es `full` (contenido en el brief) o `index` (solo código, tipo y
+título) y `enforce_budget=false` convierte el exceso de presupuesto en aviso en
+vez de bloquear la escritura.
 `archive_after_days >= stale_after_days` y `0` es un umbral inmediato, no un
 interruptor. Resto de claves, en [Presupuesto](#presupuesto), [Umbrales](#umbrales) y
 [Auto-curado](#auto-curado-y-review_command-opt-in).

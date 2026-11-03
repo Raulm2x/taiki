@@ -11,7 +11,7 @@ from ..domain import ValidationError
 from .budget import select_for_budget
 from .config import resolve_memory_config
 from .playbooks import brief_index
-from .render import format_chars, memory_line, percentage
+from .render import escape_text, format_chars, memory_line, percentage
 from .store import list_memories
 
 VERSION = 1
@@ -69,6 +69,18 @@ def _stable_key(memory: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
+def index_line(memory: dict[str, Any]) -> str:
+    """Línea compacta del brief índice: código, tipo y título, sin contenido.
+
+    El contenido se carga bajo demanda con ``memory_search`` para que el brief
+    no sea el depósito completo de la memoria.
+    """
+    code = escape_text(memory.get("code") or "M-?")
+    kind = escape_text(memory.get("kind") or "fact")
+    title = escape_text(memory.get("title") or "")
+    return f"- **{code}** · {kind} · {title} — memory_search {code}"
+
+
 def render_brief(
     conn: Any,
     config: dict[str, Any] | None = None,
@@ -104,9 +116,12 @@ def render_brief(
     reserve = (
         len(pending_short) if pending and section == "all" else 0
     )
+    index_mode = cfg["brief_mode"] == "index"
+    line_for = index_line if index_mode else memory_line
     selected, dropped, used = select_for_budget(
         [memory for memory in memories if memory.get("status") != "proposed"],
         max(0, limit - reserve),
+        size=(lambda memory: len(index_line(memory))) if index_mode else None,
     )
 
     buckets: dict[str, list[dict[str, Any]]] = {
@@ -177,10 +192,10 @@ def render_brief(
         elif name == "pending":
             lines.extend(pending_lines)
         else:
-            lines.extend(memory_line(memory) for memory in buckets[name])
+            lines.extend(line_for(memory) for memory in buckets[name])
         lines.append("")
 
-    warnings = [memory_line(memory) for memory in buckets["warnings"]]
+    warnings = [line_for(memory) for memory in buckets["warnings"]]
     if omitted:
         warnings.append(
             f"- {len(omitted)} entradas omitidas; usa memory_search"
@@ -262,6 +277,7 @@ def write_brief(
 
 __all__ = [
     "VERSION",
+    "index_line",
     "render_brief",
     "write_brief",
 ]

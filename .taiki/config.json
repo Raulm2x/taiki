@@ -8,6 +8,8 @@
     "project_budget_chars": 3000,
     "user_budget_chars": 1200,
     "brief_budget_chars": 4500,
+    "brief_mode": "index",
+    "enforce_budget": false,
     "max_entry_chars": 600,
     "max_playbook_chars": 12000,
     "stale_after_days": 45,

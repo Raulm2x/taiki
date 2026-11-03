@@ -21,6 +21,8 @@ DEFAULT_MEMORY_CONFIG: dict[str, Any] = {
     "project_budget_chars": 3000,
     "user_budget_chars": 1200,
     "brief_budget_chars": 4500,
+    "brief_mode": "full",
+    "enforce_budget": False,
     "max_entry_chars": 600,
     "max_playbook_chars": 12000,
     "playbook_index_chars": 400,
@@ -41,9 +43,11 @@ DEFAULT_MEMORY_CONFIG: dict[str, Any] = {
 
 _BOOL_KEYS = (
     "enabled",
+    "enforce_budget",
     "instructions_sync",
     "skills_sync",
 )
+_BRIEF_MODES = ("full", "index")
 _POSITIVE_KEYS = (
     "project_budget_chars",
     "user_budget_chars",
@@ -167,6 +171,9 @@ def validate_memory_config(raw: Any) -> dict[str, Any]:
 
     if result["user_scope"] not in MEMORY_SCOPES:
         _fail("user_scope", f"uno de {', '.join(MEMORY_SCOPES)}", result["user_scope"])
+
+    if result["brief_mode"] not in _BRIEF_MODES:
+        _fail("brief_mode", f"uno de {', '.join(_BRIEF_MODES)}", result["brief_mode"])
 
     return result
 

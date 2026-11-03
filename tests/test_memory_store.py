@@ -526,7 +526,7 @@ def _dedupe(h: Harness) -> None:
 def _budget(h: Harness) -> None:
     conn = db.connect(h.tmp / "budget.db")
     try:
-        config = {"project_budget_chars": 100}
+        config = {"project_budget_chars": 100, "enforce_budget": True}
         first = add_memory(
             conn,
             title="Entrada grande",
@@ -619,6 +619,36 @@ def _budget(h: Harness) -> None:
             and [item["code"] for item in dropped] == ["M-0001", "M-0004"],
             "la prioridad es pinned > user > confianza y respeta el presupuesto",
         )
+
+        relaxed = {"project_budget_chars": 10, "enforce_budget": False}
+        receipt = add_memory(
+            conn,
+            title="Exceso permitido",
+            content="D" * 5,
+            key="exceso",
+            source="user",
+            config=relaxed,
+        )
+        try:
+            add_memory(
+                conn,
+                title="Exceso estricto",
+                content="E" * 5,
+                key="exceso-estricto",
+                source="user",
+                config={"project_budget_chars": 10, "enforce_budget": True},
+            )
+        except BudgetError:
+            strict_raises = True
+        else:
+            strict_raises = False
+        h.ok(
+            receipt["budget"]["used"] > receipt["budget"]["limit"]
+            and bool(receipt["budget_warning"])
+            and "el brief selecciona por prioridad" in str(receipt["budget_warning"])
+            and strict_raises,
+            "enforce_budget=false deja el exceso como aviso; true lanza BudgetError",
+        )
     finally:
         conn.close()
 
@@ -626,7 +656,7 @@ def _budget(h: Harness) -> None:
 def _rollback_budget(h: Harness) -> None:
     conn = db.connect(h.tmp / "rollback-budget.db")
     try:
-        cfg = {"project_budget_chars": 100}
+        cfg = {"project_budget_chars": 100, "enforce_budget": True}
         first = add_memory(
             conn,
             title="A",

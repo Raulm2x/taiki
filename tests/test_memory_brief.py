@@ -62,6 +62,7 @@ def _seed(conn) -> dict[str, str]:
 def run(h: Harness) -> None:
     conn = h.conn
     codes = _seed(conn)
+    rama_code = codes["rama"]
 
     result = render_brief(conn, {}, budget=5000)
     text = result["text"]
@@ -280,4 +281,15 @@ def run(h: Harness) -> None:
         ]
         == 10,
         "el brief acepta el config raíz sin memory y el bloque memory explícito se valida",
+    )
+
+    index_text = render_brief(conn, {"brief_mode": "index"}, budget=5000)["text"]
+    full_text = render_brief(conn, {"brief_mode": "full"}, budget=5000)["text"]
+    h.ok(
+        rama_code in index_text
+        and "Rama de integración" in index_text
+        and "memory_search" in index_text
+        and "develop integra con --ff-only." not in index_text
+        and "develop integra con --ff-only." in full_text,
+        "brief_mode=index lista código y título sin contenido destilado; full lo conserva",
     )

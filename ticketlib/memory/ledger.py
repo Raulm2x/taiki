@@ -185,7 +185,7 @@ def _check_budget(
     conn: sqlite3.Connection,
     scope: str,
     cfg: dict[str, Any],
-) -> None:
+) -> dict[str, Any]:
     rows = conn.execute(
         "SELECT * FROM memories WHERE scope = ? AND status IN (?, ?, ?)",
         (scope, *BUDGET_STATUSES),
@@ -193,7 +193,10 @@ def _check_budget(
     limit = int(
         cfg["user_budget_chars"] if scope == "user" else cfg["project_budget_chars"]
     )
-    budget_lib.enforce([dict(row) for row in rows], limit, scope)
+    entries = [dict(row) for row in rows]
+    if not cfg["enforce_budget"]:
+        return budget_lib.summary(entries, limit, scope)
+    return budget_lib.enforce(entries, limit, scope)
 
 
 def _snapshot_scopes(snapshot: dict[str, Any] | None) -> set[str]:
