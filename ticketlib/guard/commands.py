@@ -24,6 +24,8 @@ EXEMPT_ROOTS = tuple(
     )
 )
 
+HIGH_RISK_SYSTEM_PATHS = ("/etc", "/usr", "/boot", "/var/lib")
+
 # Comandos que modifican el sistema de ficheros o el estado de la máquina.
 _MUTATING = re.compile(
     r"""
@@ -271,6 +273,39 @@ def risky_git(command: str) -> str | None:
                 return "git checkout -- ."
         elif sub == "restore" and (not args or "." in args):
             return "git restore ."
+    return None
+
+
+def high_risk_command(command: str | None) -> str | None:
+    """Etiqueta del comando que exige autorización explícita del usuario.
+
+    Alto riesgo: ``sudo``, ``systemctl`` de sistema (sin ``--user``), gestores
+    de paquetes y escrituras bajo ``/etc``, ``/usr``, ``/boot`` o ``/var/lib``.
+    Devuelve ``"sudo"``, ``"systemctl"``, ``"paquetes"``, ``"sistema"`` o
+    ``None`` si el comando no es de alto riesgo.
+    """
+    text = command or ""
+    for segment in split_commands(text):
+        tokens = _tokens(segment)
+        if tokens and tokens[0] == "sudo":
+            return "sudo"
+        name, args = _base_command(segment)
+        if name == "sudo":
+            return "sudo"
+        if name == "systemctl":
+            if any(
+                arg == "--user" or arg.startswith("--user=") for arg in args
+            ):
+                continue
+            return "systemctl"
+        if name in {"pacman", "paru", "yay"}:
+            return "paquetes"
+    for item in _ABSOLUTE.findall(text):
+        if any(
+            item == root or item.startswith(root + "/")
+            for root in HIGH_RISK_SYSTEM_PATHS
+        ):
+            return "sistema"
     return None
 
 

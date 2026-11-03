@@ -383,6 +383,70 @@ def heartbeat_ticket(
     return True
 
 
+def authorize_ticket(
+    conn: sqlite3.Connection,
+    code: Any,
+    why: str | None,
+    actor: str = "usuario",
+    actor_type: str = "usuario",
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """Registra la autorización explícita del usuario para un ticket.
+
+    No cambia el estado: deja un evento ``autorizar`` que el guard consulta.
+    Los agentes no pueden autorizar; la acción es del usuario.
+    """
+    if actor_type != "usuario":
+        raise PermissionDenied(
+            "Solo el usuario puede autorizar un ticket; "
+            "un agente debe pedirlo con `taiki authorize T-XXXX --why ...`."
+        )
+    reason = (why or "").strip()
+    if not reason:
+        raise ValidationError("La autorización necesita un motivo (--why)")
+    row = row_by_code(conn, code)
+    with db.tx(conn):
+        event(
+            conn,
+            row["id"],
+            "autorizar",
+            actor,
+            actor_type,
+            session_id,
+            row["status"],
+            row["status"],
+            reason,
+        )
+    return get_ticket(conn, code)
+
+
+def authorization_active(
+    conn: sqlite3.Connection, ticket: Any
+) -> bool:
+    """¿Hay una autorización del usuario posterior al inicio del ticket?
+
+    Sin ``started_at`` (ticket aún no reclamado) vale cualquier autorización.
+    """
+    if isinstance(ticket, dict):
+        ticket_id = ticket.get("id")
+        started = ticket.get("started_at")
+        if ticket_id is None:
+            row = row_by_code(conn, ticket.get("code"))
+            ticket_id, started = row["id"], row["started_at"]
+    else:
+        row = row_by_code(conn, ticket)
+        ticket_id, started = row["id"], row["started_at"]
+    sql = (
+        "SELECT 1 FROM events WHERE ticket_id = ? AND action = 'autorizar' "
+        "AND actor_type = 'usuario'"
+    )
+    params: list[Any] = [ticket_id]
+    if started:
+        sql += " AND ts >= ?"
+        params.append(started)
+    return conn.execute(sql + " LIMIT 1", params).fetchone() is not None
+
+
 def stale_claims(
     conn: sqlite3.Connection, at: str | None = None
 ) -> list[dict[str, Any]]:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 STATUSES = (
@@ -144,6 +145,47 @@ def clean_resources(resources: Any) -> list[str]:
             f"Demasiados recursos ({len(cleaned)}); máximo {MAX_RESOURCES}"
         )
     return cleaned
+
+
+# Rutas de sistema cuyo cambio exige autorización explícita del usuario.
+HIGH_RISK_PATHS = ("/etc", "/usr", "/boot", "/var/lib")
+HIGH_RISK_RESOURCES = ("systemd:system/", "package:")
+MEDIUM_RISK_RESOURCES = ("systemd:user/",)
+MEDIUM_RISK_PATHS = ("~/.config", "~/.local")
+
+
+def _under_prefix(path: str, prefix: str) -> bool:
+    target = str(Path(path).expanduser())
+    root = str(Path(prefix).expanduser())
+    return target == root or target.startswith(root.rstrip("/") + "/")
+
+
+def risk_for(paths: Any, resources: Any) -> str:
+    """Riesgo derivado del alcance: ``high``, ``medium`` o ``low``.
+
+    El riesgo no se declara a mano: se deduce de los paths y recursos del
+    ticket. ``high`` toca el sistema (systemd de sistema, paquetes o rutas
+    como ``/etc``); ``medium`` la configuración del usuario.
+    """
+    path_items = [str(item) for item in (paths or []) if str(item).strip()]
+    resource_items = [str(item) for item in (resources or []) if str(item).strip()]
+    if any(
+        item.startswith(HIGH_RISK_RESOURCES) for item in resource_items
+    ) or any(
+        _under_prefix(item, root)
+        for item in path_items
+        for root in HIGH_RISK_PATHS
+    ):
+        return "high"
+    if any(
+        item.startswith(MEDIUM_RISK_RESOURCES) for item in resource_items
+    ) or any(
+        _under_prefix(item, root)
+        for item in path_items
+        for root in MEDIUM_RISK_PATHS
+    ):
+        return "medium"
+    return "low"
 
 
 def clean_reversal(reversal: Any) -> dict[str, str] | None:

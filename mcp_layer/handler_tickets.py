@@ -186,9 +186,13 @@ def _handle_list(
         detail=bool(args.get("detail", False)),
         fields=args.get("fields"),
     )
-    if not detail and not fields:
+    if not fields:
         for row, item in zip(rows, projected):
-            item["isolation"] = row.get("isolation")
+            item["risk"] = domain.risk_for(
+                row.get("paths"), row.get("resources")
+            )
+            if not detail:
+                item["isolation"] = row.get("isolation")
     return {
         "count": len(rows),
         "total": total,
@@ -238,6 +242,9 @@ def _handle_get(
                 event.pop(key, None)
     if not args.get("fields"):
         ticket["scope"] = workspace.scope_roots()
+        ticket["risk"] = domain.risk_for(
+            ticket.get("paths"), ticket.get("resources")
+        )
     return ticket
 
 

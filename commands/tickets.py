@@ -9,7 +9,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from ticketlib import db, presentation, render, repo, scratch, sessions, workspace
-from ticketlib.domain import OPEN_STATUSES, TicketError
+from ticketlib.domain import OPEN_STATUSES, TicketError, risk_for
 from ticketlib.memory.config import load_memory_config
 from ticketlib.memory.curate import auto_curate
 from ticketlib.util import resolve_scope
@@ -62,7 +62,9 @@ def _tree_rows(tickets: list[dict]) -> list[dict]:
 
 
 def _json_summary(ticket: dict) -> dict:
-    return presentation.summary(ticket)
+    data = presentation.summary(ticket)
+    data["risk"] = risk_for(ticket.get("paths"), ticket.get("resources"))
+    return data
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -128,6 +130,7 @@ def cmd_list(args: argparse.Namespace) -> int:
                 if key not in ("tree_prefix", "display_code")
             }
             item["session_id"] = session_map.get(ticket["code"])
+            item["risk"] = risk_for(ticket.get("paths"), ticket.get("resources"))
             payload.append(item)
         scope = (
             "tree"
@@ -187,6 +190,7 @@ def cmd_show(args: argparse.Namespace) -> int:
         session_id = _annotate(conn, [ticket]).get(ticket["code"])
     roots = workspace.scope_roots()
     ticket["scope"] = roots
+    ticket["risk"] = risk_for(ticket.get("paths"), ticket.get("resources"))
     _show(
         ticket,
         args.json or args.compact,
@@ -196,6 +200,7 @@ def cmd_show(args: argparse.Namespace) -> int:
     if not (args.json or args.compact):
         print(
             f"Aislamiento: {ticket.get('isolation')} · "
+            f"Riesgo: {ticket['risk']} · "
             f"Scope: {', '.join(roots)}"
         )
         if ticket.get("resources"):

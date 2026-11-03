@@ -8,6 +8,8 @@ from pathlib import Path
 
 from ticketlib import commits, guard, repo, scratch
 from ticketlib.guard import policy as guard_policy
+from ticketlib.guard.commands import high_risk_command
+from ticketlib.store.workflow import authorize_ticket
 from tests.seeds import git_repo
 from tests.support import Harness
 
@@ -16,14 +18,14 @@ def run(h: Harness) -> None:
     conn = h.conn
     # ── Guard: ningún cambio sin ticket ──────────────────────────
     os.environ.pop("TICKETS_GUARD", None)
-    h.ok(not guard.is_mutating("read"), "el guard deja pasar las lecturas")
     h.ok(
-        guard.is_mutating("write")
+        not guard.is_mutating("read")
+        and guard.is_mutating("write")
         and guard.is_mutating("edit")
         and guard.is_mutating(
             "bash", command="rm -rf /home/rowlm/.config/tmp"
         ),
-        "el guard vigila escrituras y comandos mutantes",
+        "el guard deja pasar lecturas y vigila escrituras y comandos mutantes",
     )
     h.ok(
         not guard.command_is_mutating("git status")
@@ -151,12 +153,9 @@ def run(h: Harness) -> None:
         ),
     ]
     h.ok(
-        all(len(message) < 180 for message in messages),
-        "los mensajes del guard ocupan menos de 180 caracteres",
-    )
-    h.ok(
-        not any("taiki_" in message for message in messages),
-        "los mensajes usan los nombres reales de las herramientas",
+        all(len(message) < 180 for message in messages)
+        and not any("taiki_" in message for message in messages),
+        "los mensajes son breves y usan los nombres reales de las herramientas",
     )
 
     # ── Modos de aislamiento: none, scope y worktree ─────────────
@@ -549,6 +548,70 @@ def run(h: Harness) -> None:
         empty_ticket["code"],
         "cancelado",
         note="fin del escenario de scope vacío",
+        actor="usuario",
+        actor_type="usuario",
+    )
+
+    h.eq(
+        (
+            high_risk_command("sudo systemctl restart nginx"),
+            high_risk_command("systemctl restart nginx"),
+            high_risk_command("pacman -S jq"),
+            high_risk_command("tee /etc/hosts"),
+            high_risk_command("systemctl --user restart taiki"),
+            high_risk_command("git status"),
+        ),
+        ("sudo", "systemctl", "paquetes", "sistema", None, None),
+        "high_risk_command clasifica sudo, sistema y paquetes",
+    )
+    auth_ticket = repo.create_ticket(
+        conn, title="Alto riesgo", isolation="none", session_id="ses_auth"
+    )
+    repo.claim_ticket(
+        conn, auth_ticket["code"], agent="opencode", session_id="ses_auth"
+    )
+    auth_block = guard.evaluate(
+        tool="bash",
+        session="ses_auth",
+        agent="opencode",
+        command="systemctl restart nginx",
+        cwd=str(base),
+    )
+    h.ok(
+        auth_block["action"] == "authorization"
+        and not auth_block["allow"]
+        and auth_ticket["code"] in auth_block["message"]
+        and "taiki authorize" in auth_block["message"],
+        "el guard bloquea alto riesgo sin autorización",
+    )
+    user_exec = guard.evaluate(
+        tool="bash",
+        session="ses_auth",
+        agent="opencode",
+        command="systemctl --user restart taiki",
+        cwd=str(base),
+    )
+    h.ok(
+        user_exec["allow"] and user_exec["action"] == "active",
+        "systemctl --user no exige autorización",
+    )
+    authorize_ticket(conn, auth_ticket["code"], "reiniciar nginx")
+    auth_ok = guard.evaluate(
+        tool="bash",
+        session="ses_auth",
+        agent="opencode",
+        command="systemctl restart nginx",
+        cwd=str(base),
+    )
+    h.ok(
+        auth_ok["allow"] and auth_ok["action"] == "active",
+        "con autorización el guard sigue el flujo normal",
+    )
+    repo.transition(
+        conn,
+        auth_ticket["code"],
+        "cancelado",
+        note="fin del escenario de alto riesgo",
         actor="usuario",
         actor_type="usuario",
     )

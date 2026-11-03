@@ -6,8 +6,25 @@ import argparse
 import sys
 
 from ticketlib import repo, workspace, worktree
+from ticketlib.store.workflow import authorize_ticket
 
 from .common import _conn, _read_body
+
+
+def cmd_authorize(args: argparse.Namespace) -> int:
+    with _conn() as conn:
+        ticket = authorize_ticket(
+            conn,
+            args.code,
+            args.why,
+            actor="usuario",
+            actor_type="usuario",
+        )
+    print(
+        f"{ticket['code']} autorizado: {args.why.strip()} "
+        "(el guard aceptará comandos de alto riesgo)"
+    )
+    return 0
 
 
 def cmd_transition(args: argparse.Namespace) -> int:

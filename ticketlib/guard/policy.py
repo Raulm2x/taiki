@@ -10,11 +10,13 @@ from typing import Any
 from .. import db, env, repo, scratch, workspace
 from ..commits import PROTECTED_BRANCHES, current_branch, overlaps
 from ..domain import TicketError
+from ..store.workflow import authorization_active
 from ..util import lease_expired, normalize_agent, resolve_scope
 from .commands import (
     command_runs_code,
     command_scope_problem,
     command_touches_home,
+    high_risk_command,
     path_guarded,
     path_in_scope,
     resolve_roots,
@@ -357,6 +359,13 @@ def _serial_message(action: str, others: list[dict[str, Any]]) -> str:
     )
 
 
+def _authorization_message(code: str, risk: str) -> str:
+    return (
+        f"Bloqueado: comando de alto riesgo ({risk}). Pide autorización al "
+        f'usuario: `taiki authorize {code} --why "..."`.'
+    )
+
+
 def _scope_message(detail: str, code: str) -> str:
     return (
         f"Bloqueado: {detail} no está en el scope de {code}. Un agente no "
@@ -552,6 +561,14 @@ def evaluate(
                         _worktree_message(active, others),
                         active["code"],
                     )
+            risk = high_risk_command(command) if command else None
+            if risk and not authorization_active(conn, active):
+                return _blocked(
+                    "authorization",
+                    session,
+                    _authorization_message(active["code"], risk),
+                    active["code"],
+                )
             repo.heartbeat_ticket(
                 conn, active["code"], chain[0] if chain else None
             )

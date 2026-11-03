@@ -65,6 +65,7 @@ from commands import (
     cmd_worktree_merge,
     cmd_worktree_remove,
 )
+from commands.workflow import cmd_authorize
 from ticketlib import domain
 from ticketlib.domain import (
     ISOLATION_MODES,
@@ -282,6 +283,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Cambia el estado aunque el ticket esté reclamado",
     )
     p.set_defaults(func=cmd_transition)
+
+    p = sub.add_parser(
+        "authorize",
+        help="Autoriza comandos de alto riesgo para un ticket (solo usuario)",
+    )
+    p.add_argument("code")
+    p.add_argument(
+        "--why", required=True, help="Motivo de la autorización"
+    )
+    p.set_defaults(func=cmd_authorize)
 
     p = sub.add_parser(
         "confirm",

@@ -22,9 +22,12 @@ def run(h: Harness) -> None:
             conn.execute("INSERT INTO meta(key, value) VALUES ('reentrant_l2', '2')")
             with db.tx(conn):
                 conn.execute("INSERT INTO meta(key, value) VALUES ('reentrant_l3', '3')")
-    h.ok(db.meta_get(conn, "reentrant_l1") == "1", "nivel 1 de tx reentrante persistió")
-    h.ok(db.meta_get(conn, "reentrant_l2") == "2", "nivel 2 de tx reentrante persistió")
-    h.ok(db.meta_get(conn, "reentrant_l3") == "3", "nivel 3 de tx reentrante persistió")
+    h.ok(
+        db.meta_get(conn, "reentrant_l1") == "1"
+        and db.meta_get(conn, "reentrant_l2") == "2"
+        and db.meta_get(conn, "reentrant_l3") == "3",
+        "los tres niveles de tx reentrante persistieron",
+    )
 
     # Reversión completa (ROLLBACK) al lanzar excepción en tx anidada
     try:
@@ -35,8 +38,11 @@ def run(h: Harness) -> None:
                 raise RuntimeError("Fallo provocado en tx anidada")
     except RuntimeError:
         pass
-    h.ok(db.meta_get(conn, "rollback_outer") is None, "excepción en tx anidada hace rollback de outer")
-    h.ok(db.meta_get(conn, "rollback_inner") is None, "excepción en tx anidada hace rollback de inner")
+    h.ok(
+        db.meta_get(conn, "rollback_outer") is None
+        and db.meta_get(conn, "rollback_inner") is None,
+        "una excepción en tx anidada revierte outer e inner",
+    )
 
     # ── El trigger FTS solo reindexa title/body/code ─────────────────────
     fts_ticket = repo.create_ticket(conn, title="índice viejo", body="cuerpo base")
@@ -61,12 +67,9 @@ def run(h: Harness) -> None:
     finally:
         conn.set_trace_callback(None)
     h.ok(
-        not any("tickets_fts" in stmt for stmt in heartbeat_trace),
-        "un update de heartbeat/updated_at no dispara FTS",
-    )
-    h.ok(
-        any("tickets_fts" in stmt for stmt in title_trace),
-        "un update de title sí reindexa FTS",
+        not any("tickets_fts" in stmt for stmt in heartbeat_trace)
+        and any("tickets_fts" in stmt for stmt in title_trace),
+        "solo el update de title reindexa FTS",
     )
     h.ok(
         fts_ticket["code"] in repo.search_codes(conn, "nuevo")
@@ -106,16 +109,11 @@ def run(h: Harness) -> None:
         for key, rows in plans.items()
     }
     h.ok(
-        "idx_events_action" in details["action"],
-        "missing_codes usa idx_events_action",
-    )
-    h.ok(
-        "idx_tickets_updated" in details["updated"],
-        "db_stamp usa idx_tickets_updated",
-    )
-    h.ok(
-        "idx_events_ts" in details["day"] and "SCAN events" not in details["day"],
-        "activity_by_day recorre events por idx_events_ts sin SCAN",
+        "idx_events_action" in details["action"]
+        and "idx_tickets_updated" in details["updated"]
+        and "idx_events_ts" in details["day"]
+        and "SCAN events" not in details["day"],
+        "los planes usan idx_events_action, idx_tickets_updated e idx_events_ts",
     )
     h.ok(
         not any(
@@ -671,6 +669,56 @@ def run(h: Harness) -> None:
         domain.ValidationError,
         lambda: repo.create_ticket(conn, title="Mal", reversal="{no-json}"),
         "una reversión con JSON inválido se rechaza",
+    )
+
+    # ── Riesgo derivado y autorización del usuario ──────────────────────
+    h.eq(
+        (
+            domain.risk_for(["/etc/nginx/nginx.conf"], []),
+            domain.risk_for(["/var/lib/docker"], ["systemd:system/nginx.service"]),
+            domain.risk_for(["/boot/vmlinuz"], ["package:git"]),
+            domain.risk_for(["~/.config/hypr"], ["systemd:user/taiki.service"]),
+            domain.risk_for(["ticketlib/domain.py"], ["service:sshd"]),
+        ),
+        ("high", "high", "high", "medium", "low"),
+        "risk_for deriva high/medium/low de paths y recursos",
+    )
+    risk_ticket = repo.create_ticket(
+        conn,
+        title="Autorizable",
+        isolation="none",
+        paths=["/etc/nginx/nginx.conf"],
+    )
+    risk_claimed = repo.claim_ticket(conn, risk_ticket["code"], agent="opencode")
+    h.ok(
+        not workflow.authorization_active(conn, risk_claimed),
+        "sin evento autorizar no hay autorización",
+    )
+    h.raises(
+        domain.PermissionDenied,
+        lambda: workflow.authorize_ticket(
+            conn, risk_ticket["code"], "reiniciar nginx", actor_type="agente"
+        ),
+        "solo el usuario puede autorizar",
+    )
+    authorized = workflow.authorize_ticket(
+        conn, risk_ticket["code"], "reiniciar nginx"
+    )
+    h.ok(
+        workflow.authorization_active(conn, authorized)
+        and any(
+            event["action"] == "autorizar" and event["note"] == "reiniciar nginx"
+            for event in authorized["events"]
+        ),
+        "authorize deja evento y activa la autorización",
+    )
+    repo.transition(
+        conn,
+        risk_ticket["code"],
+        "cancelado",
+        note="fin del escenario de autorización",
+        actor="usuario",
+        actor_type="usuario",
     )
 
     # ── complete live: exige commit o external enlazado ────────────────

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ticketlib import presentation, workspace
+from ticketlib.domain import risk_for
 from ticketlib.util import normalize_agent
 
 ToolHandler = Callable[
@@ -140,6 +141,7 @@ def _receipt(
         if key == "progress" and not (value or {}).get("total"):
             continue
         data[key] = value
+    data["risk"] = risk_for(ticket.get("paths"), ticket.get("resources"))
     if extra:
         data.update(
             {
@@ -172,6 +174,7 @@ def _project_root() -> Path:
 
 def _summary(ticket: dict[str, Any], *, preview: bool = False) -> dict[str, Any]:
     data = presentation.summary(ticket)
+    data["risk"] = risk_for(ticket.get("paths"), ticket.get("resources"))
     if preview:
         body = str(ticket.get("body") or "").strip()
         data["body_preview"] = (
