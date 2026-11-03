@@ -78,6 +78,26 @@ def _prefix(pattern: str) -> str:
     return cut.rstrip("/")
 
 
+def live_pattern(pattern: str, root: str | Path) -> str:
+    """Traduce un patrón absoluto al root del repositorio live.
+
+    Los tickets de dotfiles declaran rutas como ``~/.config/hypr/``, pero el
+    índice de Git de ``taiki commit --repo ~/.config`` usa rutas relativas a
+    ese repo (``hypr/...``). Un patrón absoluto (o con ``~``) que cae dentro
+    de ``root`` se convierte a su ruta relativa posix; cualquier otro patrón
+    (relativo, glob o fuera del repo) se conserva tal cual.
+    """
+    raw = str(pattern)
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        return raw
+    try:
+        resolved = candidate.resolve()
+        return resolved.relative_to(Path(root).expanduser().resolve()).as_posix()
+    except (OSError, ValueError):
+        return raw
+
+
 def overlaps(left: Iterable[str], right: Iterable[str]) -> list[str]:
     """Pares de patrones que podrían tocar los mismos ficheros."""
     hits: list[str] = []
@@ -232,6 +252,7 @@ def check(
     agent: bool | None = None,
     isolation: str | None = None,
     live_branch: str | None = None,
+    repo_root: str | Path | None = None,
 ) -> dict[str, Any]:
     """Analiza el índice contra el ticket, la rama y otras sesiones.
 
@@ -245,7 +266,13 @@ def check(
 
     ``resources`` se acepta para documentar el alcance del ticket, pero no
     forma parte del índice de Git: no puede validarse aquí. El informe expone
-    ``isolation`` y ``scope_error`` además de las claves históricas.
+    ``isolation``, ``scope_error`` y ``commit_scope`` además de las claves
+    históricas.
+
+    ``repo_root`` traduce los ``paths`` absolutos (``~/.config/hypr/``) al
+    root del repositorio que se commitea cuando ``taiki commit --repo`` apunta
+    a otro árbol (dotfiles). ``scope`` conserva los patrones originales del
+    ticket y ``commit_scope`` refleja los usados para validar el índice.
     """
     files = staged(root)
     name = current_branch(root) if branch is None else branch
@@ -263,6 +290,11 @@ def check(
         worktree=linked,
     )
     scope = list(ticket.get("paths") or [])
+    commit_scope = (
+        [live_pattern(item, repo_root) for item in scope]
+        if repo_root is not None
+        else list(scope)
+    )
     resources = list(ticket.get("resources") or [])
     scope_error: str | None = None
     if mode == "scope":
@@ -273,20 +305,27 @@ def check(
             )
             outside = list(files)
         else:
-            outside = [item for item in files if not matches(item, scope)]
+            outside = [item for item in files if not matches(item, commit_scope)]
     elif mode == "none":
         outside = []
     else:
-        outside = [item for item in files if scope and not matches(item, scope)]
+        outside = [
+            item for item in files if commit_scope and not matches(item, commit_scope)
+        ]
     conflicts: list[dict[str, Any]] = []
     for other in others:
         if other.get("code") == ticket.get("code"):
             continue
-        patterns = list(other.get("paths") or [])
-        if not patterns:
+        raw_patterns = list(other.get("paths") or [])
+        if not raw_patterns:
             continue
+        patterns = (
+            [live_pattern(item, repo_root) for item in raw_patterns]
+            if repo_root is not None
+            else list(raw_patterns)
+        )
         hits = [item for item in files if matches(item, patterns)]
-        shared = overlaps(scope, patterns)
+        shared = overlaps(commit_scope, patterns)
         if hits or shared:
             conflicts.append(
                 {
@@ -303,6 +342,7 @@ def check(
         "isolation": mode,
         "worktree": linked,
         "scope": scope,
+        "commit_scope": commit_scope,
         "resources": resources,
         "scope_error": scope_error,
         "staged": files,

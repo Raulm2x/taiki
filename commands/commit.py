@@ -97,7 +97,14 @@ def cmd_commit(args: argparse.Namespace) -> int:
         ticket = _resolve(conn, args.ticket)
         if ticket is None:
             return 1
-        report = commits.check(root, ticket, _active(conn, ticket["code"]))
+        # Con ``--repo`` los ``paths`` absolutos del ticket (``~/.config/hypr/``)
+        # se traducen al root del repo live antes de validar el índice.
+        report = commits.check(
+            root,
+            ticket,
+            _active(conn, ticket["code"]),
+            repo_root=root if target else None,
+        )
         if not report["staged"]:
             print("Nada en el índice: usa `git add <ruta>` primero", file=sys.stderr)
             return 1

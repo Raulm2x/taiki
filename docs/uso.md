@@ -46,7 +46,7 @@ taiki worktree list
 taiki worktree merge T-0001 --delete  # solo si T-0001 está confirmado
 taiki worktree remove T-0001 --delete-branch
 taiki commit -m "..."          # commitea solo las rutas del ticket activo
-taiki commit --repo ~/dotfiles --ticket T-0001 -m "..."  # otro repo; enlace external
+taiki commit --repo ~/.config --ticket T-0001 -m "..."  # otro repo; enlace external
 taiki complete T-0001 -r "Qué se hizo y cómo se verificó" --commit abc1234
 taiki authorize T-0001 --why "Instalar el paquete x"   # solo usuario
 taiki review T-0001 --why "Revisado el cambio"         # opcional, solo usuario
@@ -276,9 +276,9 @@ taiki new -t "Actualizar la unidad del sistema" -k mantenimiento \
 taiki authorize T-0043 --why "systemctl daemon-reload y enable"  # solo usuario
 taiki sys snapshot T-0043 --packages
 
-# dotfiles: el commit va al repo de dotfiles y se enlaza como external
-taiki new -t "Ajustar Hyprland" --isolation scope --paths ~/dotfiles/hypr/
-taiki commit --repo ~/dotfiles --ticket T-0044 -m "fix: hypr (T-0044)"
+# dotfiles: paths absolutos del ticket; el commit los traduce al repo live
+taiki new -t "Ajustar Hyprland" --isolation scope --paths ~/.config/hypr/
+taiki commit --repo ~/.config --ticket T-0044 -m "fix: hypr (T-0044)"
 ```
 
 - **`none`** no se paraleliza: `schedule` lo manda a `serial`.

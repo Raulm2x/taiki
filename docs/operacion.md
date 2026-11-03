@@ -272,9 +272,11 @@ El aislamiento es por ticket (`--isolation`) y el defecto sale de
   escribir dentro de su alcance. `worktree` exige el worktree. `none` permite
   el árbol vivo pero no se paraleliza.
 - **Commit live**: `taiki commit` en `none`/`scope` valida el índice contra
-  `paths` y commitea en la rama viva. `taiki commit --repo <ruta> --ticket
+  `paths` y commitea en la rama viva. `taiki commit --repo ~/.config --ticket
   T-XXXX` commitea el árbol vivo de otro repositorio (dotfiles) y enlaza
-  `external <repo>@<sha>`: la DB y el ticket no cambian de workspace.
+  `external <repo>@<sha>`: la DB y el ticket no cambian de workspace. Los
+  `paths` absolutos del ticket (`~/.config/hypr/`) se traducen al root del
+  repo live antes de validar el índice; no dupliques la ruta del `--repo`.
 - **Reversión**: `taiki update --reversal '{"kind","ref","command"}'`.
   `reject --revert` (usuario) ejecuta `git revert` solo para `git-revert`; en
   `copy`/sistema imprime el comando y cancela el ticket. `worktree` no aplica.
@@ -460,8 +462,9 @@ ledger de snapshots y registros.
   `pacman -S --needed $(cat …)`.
 - **Dotfiles**: si el fichero vive en el repo de dotfiles detectado, no se
   copia. Se registra una reversión `git-revert` en ese repo y se imprime el
-  comando `taiki commit --repo <dotfiles> --ticket T-XXXX`. El commit de
-  dotfiles se enlaza como `external <repo>@<sha>`.
+  comando `taiki commit --repo ~/.config --ticket T-XXXX`, con los `paths`
+  absolutos del ticket (`~/.config/hypr/`) traducidos al repo live. El commit
+  de dotfiles se enlaza como `external <repo>@<sha>`.
 - **`taiki sys export [T-XXXX]`**: exporta los tickets y escribe
   `records/tickets.json`, `records/tickets.md` y `records/manifest.json` con
   snapshots, hashes y enlaces (`commit` y `external`), y lo commitea. La DB
