@@ -223,3 +223,21 @@ def run(h: Harness) -> None:
         and str(artifact) in write_out,
         "brief --write genera el artefacto y lo anuncia",
     )
+
+    repo = Path(__file__).resolve().parents[1]
+    memory_modules = sorted((repo / "ticketlib" / "memory").rglob("*.py"))
+    memory_modules += sorted((repo / "commands").glob("memory*.py"))
+    line_counts = {
+        path.relative_to(repo).as_posix(): len(
+            path.read_text(encoding="utf-8").splitlines()
+        )
+        for path in memory_modules
+    }
+    oversized = sorted(
+        f"{name} ({lines})" for name, lines in line_counts.items() if lines > 700
+    )
+    h.ok(
+        not oversized,
+        "ningún módulo de memoria supera 700 líneas"
+        + (f": {', '.join(oversized)}" if oversized else ""),
+    )
