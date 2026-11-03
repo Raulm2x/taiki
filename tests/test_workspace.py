@@ -18,12 +18,6 @@ def run(h: Harness) -> None:
     # ── Descubrimiento del workspace ────────────────────────────────────
     (home / ".taiki").mkdir(parents=True)
     (home / "otro").mkdir(parents=True)
-    with h.env(HOME=str(home), TAIKI_DB=None, TICKETS_DB=None):
-        h.eq(
-            workspace.find_workspace(home / "otro"),
-            None,
-            "la búsqueda se detiene antes de $HOME y no hereda ~/.taiki",
-        )
 
     info = workspace.init_workspace(project, name="Proyecto de prueba")
     folder = project / ".taiki"
@@ -43,13 +37,14 @@ def run(h: Harness) -> None:
         h.eq(
             (
                 workspace.find_workspace(nested),
+                workspace.find_workspace(home / "otro"),
                 resolved["source"],
                 resolved["project"],
                 workspace.label(nested),
                 workspace.resolve_db(nested),
             ),
-            (folder, "project", "proyecto", "proyecto", folder / "taiki.db"),
-            "find_workspace sube al .taiki; resolve, label y resolve_db coinciden",
+            (folder, None, "project", "proyecto", "proyecto", folder / "taiki.db"),
+            "find_workspace sube al .taiki y no hereda ~/.taiki; resolve/label/DB coinciden",
         )
 
     # ── Configuración ───────────────────────────────────────────────────
@@ -82,11 +77,6 @@ def run(h: Harness) -> None:
             needs_init = True
         else:
             needs_init = False
-        h.eq(
-            (missing["source"], missing["db"], needs_init),
-            ("missing", None, True),
-            "sin .taiki el origen es missing y resolve_db pide inicializar",
-        )
         with h.env(TAIKI_DB=str(tmp / "explicita.db"), TICKETS_DB=None):
             explicit = workspace.resolve_db(nested)
         with h.env(TAIKI_DB=None, TICKETS_DB=str(tmp / "alias.db")):
@@ -97,14 +87,25 @@ def run(h: Harness) -> None:
         ):
             both = workspace.resolve_db(nested)
         h.eq(
-            (explicit, alias, both, workspace.registry_path()),
             (
+                missing["source"],
+                missing["db"],
+                needs_init,
+                explicit,
+                alias,
+                both,
+                workspace.registry_path(),
+            ),
+            (
+                "missing",
+                None,
+                True,
                 tmp / "explicita.db",
                 tmp / "alias.db",
                 tmp / "nueva.db",
                 tmp / "xdg" / "taiki" / "registry.db",
             ),
-            "TAIKI_DB gana, TICKETS_DB es alias y el registro respeta XDG",
+            "sin .taiki resolve_db pide init; TAIKI_DB gana, alias y registro XDG",
         )
 
     # ── Adopción de una base existente ───────────────────────────────────

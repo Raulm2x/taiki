@@ -12,8 +12,12 @@ from pathlib import Path
 
 import cli
 from commands.sys import (
+    audit_records,
+    cmd_sys_audit,
+    cmd_sys_export,
     cmd_sys_snapshot,
     cmd_sys_status,
+    export_records,
     snapshot_packages,
     snapshot_path,
     status,
@@ -122,18 +126,21 @@ def run(h: Harness) -> None:
             json.dumps({"scope": {"roots": [str(home / ".local" / "share")]}}),
             encoding="utf-8",
         )
-        h.eq(
-            status(system)["scope"]["roots"],
-            [str(system), str(config_home), str(local_bin), str(home / ".local" / "share")],
-            "local.json suma raíces absolutas de la máquina",
-        )
-
         before = report["git"]["dirty"]
         (system / "suelto.txt").write_text("x", encoding="utf-8")
+        after = status(system)
         h.eq(
-            status(system)["git"]["dirty"],
-            before + 1,
-            "sys status cuenta los cambios sin commitear",
+            (after["scope"]["roots"], after["git"]["dirty"]),
+            (
+                [
+                    str(system),
+                    str(config_home),
+                    str(local_bin),
+                    str(home / ".local" / "share"),
+                ],
+                before + 1,
+            ),
+            "local.json suma raíces y git cuenta los cambios sin commitear",
         )
 
     # ── sys snapshot ────────────────────────────────────────────────────
@@ -142,14 +149,13 @@ def run(h: Harness) -> None:
         h.conn, ticket["code"], tool, project=system, timestamp="20260101-000000"
     )
     h.eq(
-        (copy["copied"], (system / copy["snapshot"]).is_file()),
-        (True, True),
-        "sys snapshot copia el fichero al repo de sistema",
-    )
-    h.eq(
-        copy["sha256"],
-        hashlib.sha256(tool.read_bytes()).hexdigest(),
-        "sys snapshot calcula el sha256 del fichero",
+        (
+            copy["copied"],
+            (system / copy["snapshot"]).is_file(),
+            copy["sha256"],
+        ),
+        (True, True, hashlib.sha256(tool.read_bytes()).hexdigest()),
+        "sys snapshot copia el fichero y calcula su sha256",
     )
     h.eq(
         repo.get_ticket(h.conn, ticket["code"])["reversal"],
@@ -190,41 +196,118 @@ def run(h: Harness) -> None:
         timestamp="20260101-000001",
     )
     h.eq(
-        (dot["copied"], "snapshot" in dot),
-        (False, False),
-        "un fichero del repo de dotfiles no se copia",
-    )
-    h.eq(
-        (dot["reversal"]["kind"], dot["hint"].startswith("taiki commit --repo")),
-        ("git-revert", True),
-        "para dotfiles se indica commit cross-repo y reversión git-revert",
+        (
+            dot["copied"],
+            "snapshot" in dot,
+            dot["reversal"]["kind"],
+            dot["hint"].startswith("taiki commit --repo"),
+        ),
+        (False, False, "git-revert", True),
+        "dotfiles: no copia, commit cross-repo y reversión git-revert",
     )
 
     listing = tmp / "paquetes.txt"
     listing.write_text("bash\nvim\n", encoding="utf-8")
     packages = snapshot_packages(h.conn, ticket["code"], source=listing, project=system)
     h.eq(
-        (system / packages["snapshot"]).read_text(encoding="utf-8"),
-        "bash\nvim\n",
-        "sys snapshot --packages guarda la lista pacman -Qqe",
+        (
+            (system / packages["snapshot"]).read_text(encoding="utf-8"),
+            packages["packages"],
+            packages["snapshot"],
+        ),
+        ("bash\nvim\n", 2, f"snapshots/{ticket['code']}/pacman-Qqe.txt"),
+        "sys snapshot --packages guarda pacman -Qqe y reporta recuento y ruta",
+    )
+    # ── sys export / audit ──────────────────────────────────────────────
+    export_records(h.conn, ticket["code"], project=system)
+    records = system / "records"
+    manifest = json.loads((records / "manifest.json").read_text(encoding="utf-8"))
+    h.eq(
+        (
+            (records / "tickets.json").is_file(),
+            (records / "tickets.md").is_file(),
+            (records / "manifest.json").is_file(),
+        ),
+        (True, True, True),
+        "sys export crea tickets.json, tickets.md y manifest.json",
     )
     h.eq(
-        (packages["packages"], packages["snapshot"]),
-        (2, f"snapshots/{ticket['code']}/pacman-Qqe.txt"),
-        "el snapshot de paquetes informa del recuento y la ruta",
-    )
-    parsed_snap = cli.build_parser().parse_args(
-        ["sys", "snapshot", "T-9999", "--path", "/x"]
+        (
+            manifest["tickets"]["count"],
+            len(manifest["snapshots"]) >= 2,
+            len(manifest["paths"]) == 2 + len(manifest["snapshots"]),
+        ),
+        (2, True, True),
+        "el manifiesto cuenta tickets y registra hashes de records y snapshots",
     )
     h.eq(
-        (parsed_snap.func, parsed_snap.path),
-        (cmd_sys_snapshot, "/x"),
-        "el parser enruta sys snapshot --path",
+        subprocess.run(
+            ["git", "-C", str(system), "log", "-1", "--format=%s"],
+            capture_output=True,
+            text=True,
+        ).stdout.strip(),
+        f"chore(sys): export {ticket['code']}",
+        "sys export commitea los registros sin tocar la DB",
+    )
+    clean = audit_records(h.conn, project=system)
+    h.eq(
+        (clean["changes"], clean["checked"] >= 4),
+        ([], True),
+        "sys audit no reporta cambios justo después del export",
+    )
+    changed = next(
+        item["path"]
+        for item in manifest["snapshots"]
+        if item["path"].endswith("/herramienta")
+    )
+    (system / changed).write_text("#!/bin/sh\necho x\n", encoding="utf-8")
+    audit = audit_records(h.conn, project=system)
+    h.eq(
+        [
+            (item["status"], item["path"], item["covered"])
+            for item in audit["changes"]
+        ],
+        [("changed", changed, True)],
+        "sys audit detecta el hash cambiado de un snapshot de ticket abierto",
+    )
+    (records / "tickets.md").write_text("# otro\n", encoding="utf-8")
+    uncovered = audit_records(h.conn, project=system)
+    h.eq(
+        [(item["status"], item["path"]) for item in uncovered["uncovered"]],
+        [("changed", "records/tickets.md")],
+        "sys audit marca los cambios sin ticket abierto",
+    )
+    h.ok(
+        "no escanea ficheros nuevos" in uncovered["note"],
+        "sys audit documenta que no escanea ficheros nuevos",
     )
 
     # ── Contrato de CLI ─────────────────────────────────────────────────
     parsed = cli.build_parser().parse_args(["sys", "status", "--json"])
-    h.eq(parsed.func, cmd_sys_status, "el parser enruta sys status")
+    parsed_snap = cli.build_parser().parse_args(
+        ["sys", "snapshot", "T-9999", "--path", "/x"]
+    )
+    parsed_export = cli.build_parser().parse_args(["sys", "export", "T-0001"])
+    parsed_audit = cli.build_parser().parse_args(["sys", "audit"])
+    h.eq(
+        (
+            parsed.func,
+            parsed_snap.func,
+            parsed_snap.path,
+            parsed_export.func,
+            parsed_export.code,
+            parsed_audit.func,
+        ),
+        (
+            cmd_sys_status,
+            cmd_sys_snapshot,
+            "/x",
+            cmd_sys_export,
+            "T-0001",
+            cmd_sys_audit,
+        ),
+        "el parser enruta sys status/snapshot/export/audit",
+    )
     with h.env(HOME=str(home), TAIKI_DB=str(folder / "taiki.db")):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):

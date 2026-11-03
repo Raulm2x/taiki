@@ -48,6 +48,8 @@ from commands import (
     cmd_scheme_install,
     cmd_servers,
     cmd_scheme_uninstall,
+    cmd_sys_audit,
+    cmd_sys_export,
     cmd_sys_snapshot,
     cmd_sys_status,
     cmd_show,
@@ -846,6 +848,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sys_snap.add_argument("--json", action="store_true")
     sys_snap.set_defaults(func=cmd_sys_snapshot)
+    sys_export = sys_sub.add_parser(
+        "export",
+        help="exporta tickets y manifiesto a records/ en el repo de sistema",
+        description="Escribe records/tickets.json, records/tickets.md y "
+        "records/manifest.json (snapshots, commits/external y hashes) y lo "
+        "commitea. La DB no se versiona.",
+    )
+    sys_export.add_argument("code", nargs="?", help="ticket que firma el commit")
+    sys_export.add_argument("--json", action="store_true")
+    sys_export.set_defaults(func=cmd_sys_export)
+    sys_audit = sys_sub.add_parser(
+        "audit",
+        help="compara los hashes del manifiesto con los ficheros actuales",
+        description="Verifica los paths registrados en records/manifest.json y "
+        "marca los cambios cubiertos por un ticket abierto. No escanea "
+        "ficheros nuevos (follow-up).",
+    )
+    sys_audit.add_argument("--json", action="store_true")
+    sys_audit.set_defaults(func=cmd_sys_audit)
 
     p = sub.add_parser("link", help="Enlaza una referencia a un ticket")
     p.add_argument("code")

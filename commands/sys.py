@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import shutil
 import subprocess
 import sys
@@ -24,9 +25,15 @@ from ticketlib.paths import MARKER
 from .common import _conn
 
 SNAPSHOTS_DIR = "snapshots"
+RECORDS_DIR = "records"
 PACKAGES_FILE = "pacman-Qqe.txt"
 PACKAGES_ROLLBACK = (
     "Rollback manual: `pacman -S --needed $(cat %s)` (no se ejecuta solo)"
+)
+DONE_STATUSES = ("completado", "verificado", "confirmado", "cancelado")
+AUDIT_NOTE = (
+    "sys audit no escanea ficheros nuevos: solo verifica los paths "
+    "registrados en records/manifest.json (follow-up)"
 )
 
 
@@ -277,6 +284,191 @@ def snapshot_packages(
         "packages": len(content.splitlines()),
         "rollback": PACKAGES_ROLLBACK % (root / snapshot),
     }
+
+
+def _snapshot_entries(root: Path) -> list[dict[str, str]]:
+    folder = root / SNAPSHOTS_DIR
+    if not folder.is_dir():
+        return []
+    return [
+        {"path": path.relative_to(root).as_posix(), "sha256": _sha256(path)}
+        for path in sorted(folder.rglob("*"))
+        if path.is_file()
+    ]
+
+
+def _link_entries(tickets: list[dict[str, Any]]) -> dict[str, list[dict[str, str]]]:
+    commits_: list[dict[str, str]] = []
+    external: list[dict[str, str]] = []
+    for ticket in tickets:
+        for link in ticket.get("links") or []:
+            item = {"ticket": ticket["code"], "ref": str(link.get("ref"))}
+            if link.get("kind") == "commit":
+                commits_.append(item)
+            elif link.get("kind") == "external":
+                external.append(item)
+    return {"commits": commits_, "external": external}
+
+
+def _markdown(data: dict[str, Any]) -> str:
+    rows = list(data.get("tickets") or [])
+    table = render.render_table(rows, use_color=False)
+    return "\n".join(
+        ["# Tickets Taiki", "", f"{len(rows)} tickets exportados.", "", "```", table, "```", ""]
+    )
+
+
+def export_records(
+    conn,
+    code: str | None = None,
+    *,
+    project: str | Path | None = None,
+) -> dict[str, Any]:
+    """Exporta tickets y manifiesto a ``records/`` y lo commitea.
+
+    La DB sigue ignorada: solo se versionan los derivados y sus hashes.
+    """
+    root = Path(project) if project is not None else project_root()
+    if code:
+        code = repo.get_ticket(conn, code)["code"]
+    data = repo.export_all(conn)
+    records = root / RECORDS_DIR
+    records.mkdir(parents=True, exist_ok=True)
+    tickets_json = records / "tickets.json"
+    tickets_md = records / "tickets.md"
+    tickets_json.write_text(render.to_json(data) + "\n", encoding="utf-8")
+    tickets_md.write_text(_markdown(data), encoding="utf-8")
+    snapshots = _snapshot_entries(root)
+    files = [
+        {
+            "path": tickets_json.relative_to(root).as_posix(),
+            "sha256": _sha256(tickets_json),
+        },
+        {
+            "path": tickets_md.relative_to(root).as_posix(),
+            "sha256": _sha256(tickets_md),
+        },
+    ]
+    manifest = {
+        "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "tickets": {"count": len(data.get("tickets") or [])},
+        "snapshots": snapshots,
+        "links": _link_entries(list(data.get("tickets") or [])),
+        "paths": files
+        + [
+            {"path": item["path"], "sha256": item["sha256"]}
+            for item in snapshots
+        ],
+        "source": {
+            "db": None,
+            "note": "La DB no se versiona: solo los registros derivados.",
+        },
+    }
+    manifest_path = records / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    message = f"chore(sys): export {code}" if code else "chore(sys): export"
+    commit = _commit_paths(root, [tickets_json, tickets_md, manifest_path], message)
+    return {
+        "tickets": manifest["tickets"]["count"],
+        "files": [item["path"] for item in files],
+        "snapshots": len(snapshots),
+        "manifest": manifest_path.relative_to(root).as_posix(),
+        "commit": commit,
+    }
+
+
+def audit_records(conn, *, project: str | Path | None = None) -> dict[str, Any]:
+    """Compara los hashes del manifiesto con los ficheros actuales."""
+    root = Path(project) if project is not None else project_root()
+    manifest_path = root / RECORDS_DIR / "manifest.json"
+    if not manifest_path.is_file():
+        raise TicketError(
+            "No hay records/manifest.json; ejecuta `taiki sys export` primero"
+        )
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise TicketError(f"Manifiesto ilegible: {exc}") from exc
+    entries = list(manifest.get("paths") or [])
+    open_codes = {
+        row["code"]
+        for row in conn.execute(
+            "SELECT code FROM tickets WHERE archived = 0 "
+            "AND status NOT IN (?, ?, ?, ?)",
+            DONE_STATUSES,
+        )
+    }
+    changes: list[dict[str, Any]] = []
+    for item in entries:
+        rel = str(item.get("path") or "")
+        expected = item.get("sha256")
+        current = root / rel
+        if current.is_file():
+            actual = _sha256(current)
+            status = "changed" if actual != expected else "ok"
+        else:
+            actual = None
+            status = "missing"
+        if status == "ok":
+            continue
+        parts = rel.split("/")
+        ticket = parts[1] if len(parts) > 2 and parts[0] == SNAPSHOTS_DIR else None
+        covered = bool(ticket and ticket in open_codes)
+        changes.append(
+            {
+                "path": rel,
+                "status": status,
+                "expected": expected,
+                "current": actual,
+                "ticket": ticket if covered else None,
+                "covered": covered,
+            }
+        )
+    return {
+        "manifest": manifest_path.relative_to(root).as_posix(),
+        "checked": len(entries),
+        "changes": changes,
+        "uncovered": [item for item in changes if not item["covered"]],
+        "note": AUDIT_NOTE,
+    }
+
+
+def cmd_sys_export(args: argparse.Namespace) -> int:
+    try:
+        with _conn() as conn:
+            report = export_records(conn, getattr(args, "code", None))
+    except TicketError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    if getattr(args, "json", False):
+        print(render.to_json(report))
+        return 0
+    print(f"Tickets exportados: {report['tickets']} → {', '.join(report['files'])}")
+    print(f"Manifiesto: {report['manifest']} ({report['snapshots']} snapshots)")
+    print(f"Commit: {report['commit']}")
+    return 0
+
+
+def cmd_sys_audit(args: argparse.Namespace) -> int:
+    try:
+        with _conn() as conn:
+            report = audit_records(conn)
+    except TicketError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    if getattr(args, "json", False):
+        print(render.to_json(report))
+        return 0
+    print(f"Manifiesto: {report['manifest']} ({report['checked']} paths)")
+    print(f"Cambios: {len(report['changes'])}")
+    for item in report["changes"]:
+        ticket = item["ticket"] or "sin ticket abierto"
+        print(f"  {item['status']}: {item['path']} ({ticket})")
+    print(report["note"])
+    return 0
 
 
 def cmd_sys_snapshot(args: argparse.Namespace) -> int:
