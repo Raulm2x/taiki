@@ -12,6 +12,7 @@ from ..commits import PROTECTED_BRANCHES, current_branch, overlaps
 from ..domain import TicketError
 from ..util import lease_expired, normalize_agent, resolve_scope
 from .commands import (
+    command_runs_code,
     command_scope_problem,
     command_touches_home,
     path_guarded,
@@ -331,7 +332,11 @@ def _scope_base(workspace_dir: Path | None, session_base: Path) -> Path:
 def _guard_roots(
     workspace_dir: Path | None, scope_base: Path, config: dict[str, Any]
 ) -> list[Path]:
-    """HOME + ``scope.roots`` del proyecto, resueltas contra su raíz."""
+    """HOME + raíz del proyecto + ``scope.roots``, resueltas contra la raíz.
+
+    La raíz del proyecto se incluye siempre: una config con ``["/etc"]`` no
+    debe dejar el repositorio fuera del guard.
+    """
     configured: list[str] = []
     try:
         configured = workspace.scope_roots(
@@ -339,7 +344,7 @@ def _guard_roots(
         )
     except TicketError:
         configured = ["."]
-    values: list[str | Path] = [Path.home(), *configured]
+    values: list[str | Path] = [Path.home(), scope_base, *configured]
     return list(resolve_roots(values, scope_base))
 
 
@@ -388,16 +393,28 @@ def _scope_problem(
     path: str | None,
     command: str | None,
     base: Path,
+    cwd: Path | None = None,
 ) -> str | None:
-    """Detalle de la escritura que se sale del scope, o ``None`` si cabe."""
+    """Detalle de la escritura que se sale del scope, o ``None`` si cabe.
+
+    ``base`` resuelve los ``paths`` del ticket (raíz del proyecto); ``cwd``
+    resuelve destinos relativos de comandos (directorio real de la sesión).
+
+    Decisión fail-closed: ``isolation=scope`` sin ``paths`` no permite nada.
+    ``commits.check`` aún trata el scope vacío como "sin restricción"; unificar
+    exige tocar ``store/mutations.py`` (validar en create/update) o
+    ``commits.py``, fuera de los paths de este ticket.
+    """
     scopes = ticket_paths(active)
     resources = ticket_resources(active)
+    if not scopes:
+        return "el ticket no declara paths (scope vacío)"
     if path:
-        if path_in_scope(path, scopes, base):
+        if path_in_scope(path, scopes, base, cwd):
             return None
         return f"la ruta {path!r}"
     if command:
-        return command_scope_problem(command, scopes, resources, base)
+        return command_scope_problem(command, scopes, resources, base, cwd)
     return "la escritura sin ruta"
 
 
@@ -423,7 +440,12 @@ def evaluate(
     if command and "git" in command:
         branch = current_branch(cwd or ".")
         protected = protected_git(command, branch)
-    if not mutating and not risky and not protected:
+    if (
+        not mutating
+        and not risky
+        and not protected
+        and not (command and command_runs_code(command))
+    ):
         return _allowed("skipped", session)
     session_base = Path(cwd).expanduser() if cwd else Path.cwd()
     # El guard es opt-in: solo actúa si el proyecto lo activa en .taiki/config.json.
@@ -460,6 +482,16 @@ def evaluate(
     try:
         chain = session_chain(session)
         active = find_active(conn, chain, agent)
+        # En scope, ejecutar código pegado (``python -c``, ``sh -c``) cuenta
+        # como escritura aunque no se pueda leer el cuerpo: el guard no adivina.
+        if (
+            not mutating
+            and command
+            and active is not None
+            and ticket_isolation(active) == "scope"
+            and command_runs_code(command)
+        ):
+            mutating = True
         others = other_active_sessions(conn, chain, agent) if mutating or risky else []
         if active is not None:
             # El ticket propio nunca es "otra sesión", aunque no tenga sesión
@@ -494,7 +526,11 @@ def evaluate(
                             active["code"],
                         )
                     problem = _scope_problem(
-                        active, path=path, command=command, base=scope_base
+                        active,
+                        path=path,
+                        command=command,
+                        base=scope_base,
+                        cwd=session_base,
                     )
                     if problem is not None:
                         return _blocked(

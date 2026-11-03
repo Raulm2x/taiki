@@ -68,8 +68,10 @@
 # del techo por el comportamiento nuevo; a partir de aquí, podar.
 # Medido 12.2-12.5s con carga alta (load 3.5) en el gate de merge; se amplía
 # el margen local y el de CI una sola vez y no se sube el benchmark de export.
+# Revisión especial: +15 checks de regresión (prefijos, sed --in-place,
+# -t/--target-directory, git en scope, redirecciones fd, chmod/chown/dd y cwd).
 max_seconds = 12.6
-baseline_checks = 2026
+baseline_checks = 2041
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
 

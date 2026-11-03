@@ -13,6 +13,7 @@ from .commands import (
     EXEMPT_ROOTS,
     HOME,
     command_is_mutating,
+    command_runs_code,
     command_scope_problem,
     command_touches_home,
     path_guarded,
@@ -36,6 +37,7 @@ from .policy import auto_mode, disabled, evaluate
 
 __all__ = [
     "command_is_mutating",
+    "command_runs_code",
     "command_scope_problem",
     "command_touches_home",
     "risky_git",

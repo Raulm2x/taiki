@@ -401,4 +401,21 @@ def run(h: Harness) -> None:
         and guard.ticket_resources(row) == ["systemd:user/foo.service"],
         "find_active devuelve filas que el guard decodifica",
     )
+    parsed_cwd = guard.parse_hook_input(
+        {
+            "tool_name": "bash",
+            "tool_input": {"command": "rm x", "cwd": str(Path(h.tmp))},
+            "session_id": "ses_hook_cwd",
+        }
+    )
+    h.eq(
+        parsed_cwd["cwd"],
+        str(Path(h.tmp)),
+        "parse_hook_input extrae el cwd del payload",
+    )
+    h.eq(
+        guard.parse_hook_input({"tool_input": {"command": "rm x"}})["cwd"],
+        None,
+        "sin cwd el payload queda en None",
+    )
 

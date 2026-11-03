@@ -287,6 +287,17 @@ def run(h: Harness) -> None:
         ambiguous["action"] == "scope" and not ambiguous["allow"],
         "scope bloquea comandos ambiguos",
     )
+    runs_code = guard.evaluate(
+        tool="bash",
+        session="ses_scope",
+        agent="opencode",
+        command="python3 -c \"print(1)\"",
+        cwd=str(base),
+    )
+    h.ok(
+        runs_code["action"] == "scope" and not runs_code["allow"],
+        "scope bloquea python -c aunque el cuerpo parezca inocuo",
+    )
     rival_scope = repo.create_ticket(
         conn,
         title="Scope solapado",
@@ -426,6 +437,17 @@ def run(h: Harness) -> None:
         wt_free["allow"] and wt_free["action"] == "active",
         "worktree no valida paths en la escritura",
     )
+    wt_code = guard.evaluate(
+        tool="bash",
+        session="ses_wt",
+        agent="opencode",
+        command="python3 -c \"print(1)\"",
+        cwd=str(base),
+    )
+    h.ok(
+        wt_code["allow"] and wt_code["action"] == "active",
+        "worktree mantiene python -c permitido como hasta ahora",
+    )
     repo.transition(
         conn,
         wt_ticket["code"],
@@ -441,7 +463,7 @@ def run(h: Harness) -> None:
     extra = base / "etc-simulado"
     extra.mkdir()
     (ws / ".taiki" / "config.json").write_text(
-        json.dumps({"guard": True, "scope": {"roots": [".", str(extra)]}}),
+        json.dumps({"guard": True, "scope": {"roots": [str(extra)]}}),
         encoding="utf-8",
     )
     root_ticket = repo.create_ticket(
@@ -478,11 +500,55 @@ def run(h: Harness) -> None:
         in_extra["action"] == "scope" and not in_extra["allow"],
         "una raíz configurada no es outside y aun así valida scope",
     )
+    cwd_command = guard.evaluate(
+        tool="bash",
+        session="ses_root",
+        agent="opencode",
+        command="sed -i 's/a/b/' a.py",
+        cwd=str(ws / "src"),
+    )
+    h.ok(
+        cwd_command["allow"] and cwd_command["action"] == "active",
+        "las rutas relativas se resuelven contra el cwd real",
+    )
     repo.transition(
         conn,
         root_ticket["code"],
         "cancelado",
         note="fin del escenario de raíces",
+        actor="usuario",
+        actor_type="usuario",
+    )
+
+    empty_ticket = repo.create_ticket(
+        conn,
+        title="Scope sin paths",
+        isolation="scope",
+        created_by="opencode",
+        actor_type="agente",
+        session_id="ses_empty",
+    )
+    repo.claim_ticket(
+        conn, empty_ticket["code"], agent="opencode", session_id="ses_empty"
+    )
+    empty_block = guard.evaluate(
+        tool="write",
+        session="ses_empty",
+        agent="opencode",
+        path=str(ws / "cualquiera.txt"),
+        cwd=str(ws),
+    )
+    h.ok(
+        empty_block["action"] == "scope"
+        and "paths" in empty_block["message"]
+        and "taiki update" in empty_block["message"],
+        "scope sin paths es fail-closed y sugiere taiki update",
+    )
+    repo.transition(
+        conn,
+        empty_ticket["code"],
+        "cancelado",
+        note="fin del escenario de scope vacío",
         actor="usuario",
         actor_type="usuario",
     )

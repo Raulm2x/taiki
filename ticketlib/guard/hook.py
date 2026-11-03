@@ -65,6 +65,12 @@ def parse_hook_input(payload: Any) -> dict[str, Any]:
         or data.get("sessionId")
         or data.get("conversation_id")
     )
+    cwd = (
+        raw.get("cwd")
+        or raw.get("working_dir")
+        or raw.get("workingDirectory")
+        or data.get("cwd")
+    )
     agent = (
         data.get("agent")
         or data.get("agent_name")
@@ -76,6 +82,7 @@ def parse_hook_input(payload: Any) -> dict[str, Any]:
         "path": path if isinstance(path, str) else None,
         "command": command if isinstance(command, str) else None,
         "session": session if isinstance(session, str) else None,
+        "cwd": cwd if isinstance(cwd, str) else None,
         "agent": str(agent),
     }
 

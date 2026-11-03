@@ -493,3 +493,169 @@ def run(h: Harness) -> None:
         is None,
         "git se delega a la capa de commits",
     )
+
+    # ── Bypasses de prefijos y sed --in-place ────────────────────
+    h.ok(
+        guard.command_is_mutating("sudo -u root rm -rf /x")
+        and guard.command_is_mutating("env -i rm x")
+        and guard.command_is_mutating("time rm x")
+        and guard.command_is_mutating("timeout 5 rm x")
+        and guard.command_is_mutating("sed --in-place 's/a/b/' f")
+        and guard.command_is_mutating("sed --in-place=.bak 's/a/b/' f"),
+        "los prefijos y sed --in-place no ocultan el comando real",
+    )
+    h.ok(
+        guard.command_scope_problem(
+            "sudo -u root rm other/a.py", scopes, resources, project
+        )
+        == "la ruta 'other/a.py'",
+        "sudo con opciones valida el destino real",
+    )
+    h.ok(
+        guard.command_scope_problem(
+            "python3 -c \"print(1)\"", scopes, resources, project
+        )
+        is not None
+        and guard.command_scope_problem(
+            "python3 -m pytest", scopes, resources, project
+        )
+        is None,
+        "scope bloquea python -c por defecto pero no python -m",
+    )
+
+    # ── -t/--target-directory y enlaces ──────────────────────────
+    h.ok(
+        guard.command_scope_problem(
+            "cp -t /etc src/a.py", scopes, resources, project
+        )
+        == "la ruta '/etc'"
+        and guard.command_scope_problem(
+            "mv -t /etc src/a.py", scopes, resources, project
+        )
+        == "la ruta '/etc'"
+        and guard.command_scope_problem(
+            "install -t /etc src/a.py", scopes, resources, project
+        )
+        == "la ruta '/etc'",
+        "cp, mv e install validan -t DIR",
+    )
+    h.ok(
+        guard.command_scope_problem(
+            "cp --target-directory=/etc src/a.py", scopes, resources, project
+        )
+        == "la ruta '/etc'"
+        and guard.command_scope_problem(
+            "ln src/a.py /etc/x", scopes, resources, project
+        )
+        == "la ruta '/etc/x'"
+        and guard.command_scope_problem(
+            "ln -t /etc src/a.py", scopes, resources, project
+        )
+        == "la ruta '/etc'",
+        "ln y --target-directory validan el destino",
+    )
+    h.ok(
+        guard.command_scope_problem(
+            "cp -t src other/a.py", scopes, resources, project
+        )
+        is None
+        and guard.command_scope_problem(
+            "ln src/a.py src/b.py", scopes, resources, project
+        )
+        is None,
+        "los destinos dentro del scope no se bloquean",
+    )
+
+    # ── git que escribe el árbol vivo en scope ──────────────────
+    h.ok(
+        all(
+            problem is not None and sub in problem
+            for sub, problem in (
+                (
+                    "git checkout",
+                    guard.command_scope_problem(
+                        "git checkout -- docs/x", scopes, resources, project
+                    ),
+                ),
+                (
+                    "git restore",
+                    guard.command_scope_problem(
+                        "git restore docs/x", scopes, resources, project
+                    ),
+                ),
+                (
+                    "git apply",
+                    guard.command_scope_problem(
+                        "git apply fuera.patch", scopes, resources, project
+                    ),
+                ),
+                (
+                    "git clean",
+                    guard.command_scope_problem(
+                        "git clean -fd", scopes, resources, project
+                    ),
+                ),
+            )
+        )
+        and guard.command_scope_problem("git status", scopes, resources, project)
+        is None,
+        "scope bloquea git que escribe el árbol y deja pasar la lectura",
+    )
+
+    # ── Redirecciones con fd y falsos positivos ─────────────────
+    h.ok(
+        guard.command_scope_problem(
+            "echo hola 1> other/a", scopes, resources, project
+        )
+        == "la redirección a 'other/a'"
+        and guard.command_scope_problem(
+            "echo hola 2> other/a", scopes, resources, project
+        )
+        == "la redirección a 'other/a'"
+        and guard.command_scope_problem(
+            "echo hola 1> src/a", scopes, resources, project
+        )
+        is None,
+        "las redirecciones 1> y 2> validan su destino",
+    )
+    h.ok(
+        guard.command_scope_problem(
+            "echo hola 2>&1", scopes, resources, project
+        )
+        is None
+        and guard.command_scope_problem(
+            "echo hola >&2", scopes, resources, project
+        )
+        is None,
+        "las duplicaciones de fd no se confunden con ficheros",
+    )
+    h.ok(
+        guard.command_scope_problem(
+            "chmod 644 src/a.py", scopes, resources, project
+        )
+        is None
+        and guard.command_scope_problem(
+            "chmod +x src/a.py", scopes, resources, project
+        )
+        is None
+        and guard.command_scope_problem(
+            "chown u:g src/a.py", scopes, resources, project
+        )
+        is None
+        and guard.command_scope_problem(
+            "truncate -s 0 src/a.py", scopes, resources, project
+        )
+        is None,
+        "modo, tamaño y propietario no se confunden con rutas",
+    )
+    h.ok(
+        guard.command_scope_problem(
+            "dd if=/tmp/entrada of=src/a.py", scopes, resources, project
+        )
+        is None
+        and guard.command_scope_problem(
+            "dd if=/tmp/entrada of=/etc/x", scopes, resources, project
+        )
+        == "la ruta '/etc/x'",
+        "dd valida solo el destino of=",
+    )
