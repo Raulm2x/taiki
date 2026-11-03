@@ -302,9 +302,11 @@ anuncio con el tag publicado sin cambios propios.
 - **Worker**: crea la rama del ticket desde `develop`, commitea, ejecuta los
   gates y marca `completado`.
 - **Conductor**: revisa, verifica con `--verify`, marca `verificado` y mergea a
-  `develop` en orden de dependencias.
-- **Usuario**: confirma los tickets y ejecuta la release (`taiki release`) sobre
-  `main`.
+  `develop` en orden de dependencias. No confirma: eso es del usuario.
+  `taiki review` es opcional y no bloquea `verificado`.
+- **Usuario**: confirma los tickets (revisión especial) y ejecuta la release
+  (`taiki release`) sobre `main`; también autoriza comandos de alto riesgo con
+  `taiki authorize`.
 
 ### Migración
 
@@ -333,6 +335,32 @@ Después:
    `Rama de integración: develop` sin aviso.
 
 `main` queda congelada hasta la primera release (`taiki release`).
+
+### Esquema v7 y migración de datos
+
+La DB se actualiza sola al abrir: `SCHEMA_VERSION = 7` y `PRAGMA user_version`
+es la única fuente de versión. La migración es incremental y aditiva; no hay
+paso manual ni pérdida de tickets.
+
+- **v7** añade a `tickets` las columnas `isolation` (defecto `worktree`),
+  `resources` (JSON) y `reversal` (JSON). Los tickets existentes quedan en
+  `worktree`, que es el comportamiento anterior.
+- El bloque `isolation` de `.taiki/config.json` se lee con defaults seguros
+  (`default=worktree`, `live_branch=main`); `scope.roots` cae en `["."]` si
+  falta.
+- Tras actualizar, `taiki sys status` (workspace de sistema) y
+  `taiki status` muestran el aislamiento resuelto. Los tickets nuevos usan el
+  defecto del proyecto salvo que `--isolation` diga otra cosa.
+- Si la DB tiene una versión **mayor** que el código, Taiki se niega a abrirla y
+  pide actualizar; nunca degrada el esquema.
+- Los worktrees y ramas `agent/T-XXXX-*` no cambian: el modo `worktree` sigue
+  siendo el flujo por defecto.
+
+La épica de aislamiento y sistema se integró en este orden: contrato y esquema
+(.01–.04), workspace de sistema y snapshots (.05), riesgo y autorización (.09),
+revisión especial (.10), `reject --revert` (.11), confirmación como revisión
+(.12), perfil `system-admin` (.07) y esta documentación (.08). El release de
+cierre es **v0.4.0**.
 
 ## Desarrollo
 

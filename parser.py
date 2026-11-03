@@ -287,6 +287,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser(
         "authorize",
         help="Autoriza comandos de alto riesgo para un ticket (solo usuario)",
+        description="Registra la autorización explícita del usuario para que "
+        "el guard acepte comandos de alto riesgo (sudo, systemctl de sistema, "
+        "gestores de paquetes, escrituras en /etc, /usr, /boot o /var/lib). "
+        "No cambia el estado del ticket. Solo el usuario puede autorizar: los "
+        "agentes deben pedirlo.",
     )
     p.add_argument("code")
     p.add_argument(
@@ -296,9 +301,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser(
         "review",
-        help="Revisa un ticket sensible (solo usuario)",
-        description="Deja constancia de que el usuario revisó un ticket que "
-        "toca rutas sensibles; sin esto no puede pasar a 'verificado'.",
+        help="Deja constancia de la revisión de un ticket sensible (solo usuario)",
+        description="Registra que el usuario revisó un ticket que toca rutas "
+        "sensibles. Es opcional y ya no bloquea el paso a 'verificado': "
+        "`taiki confirm` es la revisión especial. Solo el usuario puede "
+        "revisar.",
     )
     p.add_argument("code")
     p.add_argument(

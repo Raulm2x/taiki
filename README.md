@@ -37,6 +37,28 @@ Comandos imprescindibles: `list`, `show`, `new`, `claim`, `complete`,
 `confirm`, `status`, `next` y `tui`. `--json`, `--compact` y `--json-summary`
 están pensados para agentes.
 
+## Novedades v0.4.0
+
+- **Aislamiento configurable por ticket**: `--isolation none|scope|worktree`.
+  El defecto sigue siendo `worktree`; `scope` acota por `paths`/`resources` y
+  `none` trabaja en el árbol vivo en serie. `schedule` reparte paralelo/serial
+  según esos límites. Detalle: [Uso](docs/uso.md#aislamiento-por-ticket).
+- **Commit live y cross-repo**: `taiki commit --repo <ruta>` commitea otro
+  árbol (dotfiles) y enlaza `external repo@sha`.
+- **Agente de sistema**: `taiki sys status|snapshot|export|audit` sobre
+  `~/.local/share/taiki-sys`, con snapshots, manifiesto y límites explícitos.
+  Detalle: [Operación](docs/operacion.md#workspace-de-sistema-taiki-sys).
+- **Riesgo y autorización**: `risk` se deriva de paths y resources; el guard
+  bloquea `sudo`, `systemctl` de sistema, paquetes y escrituras en `/etc` sin
+  `taiki authorize` (solo usuario).
+- **Revisión simplificada**: `taiki confirm` es la revisión especial;
+  `taiki review` es opcional y ya no bloquea `verificado`. `requires_review` es
+  un aviso, no un gate.
+- **Reversión**: `taiki reject --revert` hace `git revert` de un cambio live;
+  con `copy`/sistema solo imprime el comando.
+- **Esquema v7** (migración automática) y perfil `system-admin` para el
+  conductor live.
+
 ## Memoria operativa
 
 `taiki` puede destilar lo aprendido en memorias pequeñas y revisables, sin

@@ -195,10 +195,12 @@ def _sensitive_match(path: str, sensitive: str) -> bool:
 
 
 def requires_review(paths: Any) -> bool:
-    """¿El ticket posee rutas que exigen revisión explícita del usuario?
+    """¿El ticket posee rutas que exigen la revisión especial del usuario?
 
-    Acepta rutas exactas, directorios con ``/`` final y globs. No cambia el
-    estado del ticket: solo marca la necesidad de ``taiki review``.
+    Aviso, no gate: marca ``requires_review`` en el ticket para que el usuario
+    sepa que toca rutas sensibles, pero **no bloquea** ``transition`` a
+    ``verificado``. ``taiki review`` es opcional y solo deja constancia; la
+    revisión especial es ``taiki confirm``, exclusiva del usuario.
     """
     return any(
         _sensitive_match(str(item), sensitive)
