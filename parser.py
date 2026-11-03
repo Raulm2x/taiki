@@ -411,6 +411,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=KINDS,
         help="Tipos de ticket aplicables; sin la opción, la memoria es general",
     )
+    m.add_argument(
+        "--tags",
+        nargs="*",
+        help="Etiquetas de dominio en minúsculas (slug corto)",
+    )
     m.add_argument("--pin", action="store_true")
     m.add_argument("--json", action="store_true")
     m.set_defaults(func=cmd_memory)
@@ -577,6 +582,11 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--kind", choices=MEMORY_KINDS)
     m.add_argument("--confidence", type=float)
     m.add_argument("--paths", nargs="+")
+    m.add_argument(
+        "--tags",
+        nargs="*",
+        help="Reemplaza las etiquetas de dominio de la memoria",
+    )
     m.add_argument(
         "--ticket-kinds",
         nargs="+",

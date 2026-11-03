@@ -208,6 +208,12 @@ MEMORY_SPECS = [
                                 "significa general"
                             ),
                         },
+                        "tags": {
+                            "type": "array",
+                            "items": {"type": "string", "maxLength": 33},
+                            "maxItems": 20,
+                            "description": "Etiquetas de dominio en minúsculas (slug corto)",
+                        },
                         "key": {
                             "type": "string",
                             "maxLength": 200,

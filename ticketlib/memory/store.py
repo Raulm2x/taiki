@@ -63,6 +63,7 @@ def add_memory(
     paths: Iterable[object] | None = None,
     kinds: Iterable[object] | None = None,
     ticket_kinds: Iterable[object] | None = None,
+    tags: Iterable[object] | None = None,
     confidence: float = 0.5,
     source: str = "agent",
     actor: str | None = None,
@@ -131,6 +132,7 @@ def add_memory(
     project_paths = core.clean_project_paths(paths)
     kind_list = core.clean_kinds(kinds)
     ticket_kind_list = core.clean_ticket_kinds(ticket_kinds)
+    tag_list = core.clean_tags(tags)
     evidence_rows = core.clean_evidence(evidence)
     file_rows = core.clean_files(files, cfg)
     ticket = core.ticket_id(ticket_id)
@@ -180,11 +182,11 @@ def add_memory(
         cursor = conn.execute(
             "INSERT INTO memories("
             "code, scope, kind, \"key\", title, description, content, paths, kinds, "
-            "ticket_kinds, "
+            "ticket_kinds, tags, "
             "status, confidence, source, actor, session_id, ticket_id, "
             "supersedes_id, pinned, locked, created_at, updated_at, archived_at, "
             "fingerprint"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 code,
                 scope,
@@ -200,6 +202,7 @@ def add_memory(
                 json.dumps(ticket_kind_list, ensure_ascii=False)
                 if ticket_kind_list
                 else None,
+                json.dumps(tag_list, ensure_ascii=False) if tag_list else None,
                 final_status,
                 level,
                 source,

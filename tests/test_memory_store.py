@@ -56,14 +56,14 @@ def _migration(h: Harness) -> None:
         assert db.schema_version(old) == 4
         db.migrate(old)
         h.ok(
-            db.schema_version(old) == 7
+            db.schema_version(old) == 8
             and repo.get_ticket(old, ticket["code"])["title"]
             == "Sobrevive a la migración"
             and old.execute(
                 "SELECT 1 FROM comments WHERE ticket_id = ?", (ticket["id"],)
             ).fetchone()
             is not None,
-            "v4→v7 migra memorias y conserva tickets y comentarios",
+            "v4→v8 migra memorias y conserva tickets y comentarios",
         )
         migrated = add_memory(
             old,
@@ -100,11 +100,11 @@ def _ticket_kinds(h: Harness) -> None:
         old.execute("PRAGMA user_version = 5")
         db.migrate(old)
         h.ok(
-            db.schema_version(old) == 7
+            db.schema_version(old) == 8
             and "ticket_kinds"
             in {row["name"] for row in old.execute("PRAGMA table_info(memories)")}
             and get_memory(old, seeded["code"])["ticket_kinds"] == [],
-            "v5→v6 añade ticket_kinds y las memorias antiguas quedan generales",
+            "v5→v8 añade ticket_kinds y las memorias antiguas quedan generales",
         )
     finally:
         old.close()
@@ -131,12 +131,14 @@ def _ticket_kinds(h: Harness) -> None:
         title="Riesgo zeta general",
         content="El riesgo zeta aplica a cualquier ticket.",
         kind="pitfall",
+        tags=["security"],
         source="user",
     )
     h.ok(
         bug["ticket_kinds"] == ["bug", "funcionalidad"]
         and docs["ticket_kinds"] == ["documentacion"]
         and general["ticket_kinds"] == []
+        and general["tags"] == ["security"]
         and {item["code"] for item in list_memories(conn, ticket_kinds=["bug"])}
         == {bug["code"], general["code"]}
         and {
@@ -156,10 +158,13 @@ def _ticket_kinds(h: Harness) -> None:
         {bug["code"], general["code"]},
         "search_memories filtra por ticket_kinds con la misma compatibilidad",
     )
-    patched = patch_memory(conn, bug["code"], ticket_kinds=["seguridad"])
+    patched = patch_memory(
+        conn, bug["code"], ticket_kinds=["seguridad"], tags=["security"]
+    )
     cleared = patch_memory(conn, bug["code"], ticket_kinds=[])
     h.ok(
         patched["ticket_kinds"] == ["seguridad"]
+        and patched["tags"] == ["security"]
         and cleared["ticket_kinds"] == []
         and bug["code"]
         in {item["code"] for item in list_memories(conn, ticket_kinds=["bug"])},

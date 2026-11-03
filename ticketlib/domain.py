@@ -76,7 +76,7 @@ TRANSITIONS: dict[str, set[str]] = {
 
 REOPEN_FROM = {"completado", "verificado", "confirmado", "cancelado"}
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # Aislamiento del trabajo por ticket. ``worktree`` es el default
 # retrocompatible; ``none`` trabaja en el árbol vivo de forma serial y ``scope``

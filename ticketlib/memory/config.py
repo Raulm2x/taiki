@@ -7,7 +7,7 @@ from typing import Any
 
 from ..domain import ValidationError
 from ..workspace import load_config
-from .models import MEMORY_SCOPES, WRITE_POLICIES
+from .models import MEMORY_SCOPES, TAG_RE, WRITE_POLICIES
 
 DEFAULT_AUTO_CURATE: dict[str, Any] = {
     "enabled": False,
@@ -22,6 +22,7 @@ DEFAULT_MEMORY_CONFIG: dict[str, Any] = {
     "user_budget_chars": 1200,
     "brief_budget_chars": 4500,
     "brief_mode": "full",
+    "layer0_tags": ["security", "seguridad", "scope", "sudo", "confirm"],
     "enforce_budget": False,
     "max_entry_chars": 600,
     "max_playbook_chars": 12000,
@@ -176,6 +177,25 @@ def validate_memory_config(raw: Any) -> dict[str, Any]:
 
     if result["brief_mode"] not in _BRIEF_MODES:
         _fail("brief_mode", f"uno de {', '.join(_BRIEF_MODES)}", result["brief_mode"])
+
+    layer0 = result["layer0_tags"]
+    if not isinstance(layer0, list) or not all(
+        isinstance(item, str) for item in layer0
+    ):
+        _fail("layer0_tags", "una lista de textos", layer0)
+    normalized: list[str] = []
+    for item in layer0:
+        value = item.strip().lower()
+        if not value:
+            continue
+        if not TAG_RE.fullmatch(value):
+            _fail(
+                "layer0_tags",
+                "tags en minúsculas (1-33 caracteres: a-z 0-9 . _ / -)",
+                item,
+            )
+        normalized.append(value)
+    result["layer0_tags"] = normalized
 
     return result
 

@@ -34,6 +34,7 @@ def patch_memory(
     paths: Any = UNSET,
     kinds: Any = UNSET,
     ticket_kinds: Any = UNSET,
+    tags: Any = UNSET,
     files: Any = UNSET,
     actor: str | None = None,
     session_id: str | None = None,
@@ -104,6 +105,11 @@ def patch_memory(
             json.dumps(ticket_kind_list, ensure_ascii=False)
             if ticket_kind_list
             else None
+        )
+    if tags is not UNSET:
+        tag_list = core.clean_tags(tags)
+        updates["tags"] = (
+            json.dumps(tag_list, ensure_ascii=False) if tag_list else None
         )
     file_rows = None if files is UNSET else core.clean_files(files, cfg)
 

@@ -39,6 +39,7 @@ LIVE_STATUSES = ("active", "proposed", "stale")
 MEMORY_COUNTER = "next_memory_number"
 MEMORY_CODE_RE = re.compile(r"^M-\d{4,}$")
 TICKET_CODE_RE = re.compile(r"^[TS]-\d+(?:\.\d+)?$")
+TAG_RE = re.compile(r"^[a-z0-9][a-z0-9._/-]{0,32}$")
 
 NEGATIVE_RULE_RE = re.compile(
     r"\b(nunca|prohibido|no\s+uses|no\s+usar|never|do\s+not\s+use|don't\s+use)\b",

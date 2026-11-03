@@ -299,11 +299,25 @@ def run(h: Harness) -> None:
         scope="project",
         source="user",
     )
+    layer_code = add_memory(
+        conn,
+        title="Política de scope",
+        content="El scope live exige paths.",
+        kind="convention",
+        key="scope-policy",
+        tags=["security"],
+        scope="project",
+        source="user",
+    )["code"]
     index_text = render_brief(conn, {"brief_mode": "index"}, budget=5000)["text"]
     grouped_text = render_brief(conn, {"brief_mode": "grouped"}, budget=5000)["text"]
     full_text = render_brief(conn, {"brief_mode": "full"}, budget=5000)["text"]
     h.ok(
         rama_code in index_text
+        and layer_code in index_text
+        and "## Capa 0" in index_text
+        and "tags=security" in index_text
+        and index_text.index(layer_code) < index_text.index("## Proyecto")
         and "Rama de integración" in index_text
         and "memory_search" in index_text
         and "key=rama-integracion" in index_text

@@ -19,6 +19,7 @@ VERSION = 1
 _PENDING_CODES = 5
 _SECTION_ORDER = ("project", "user", "routing", "playbooks", "pending")
 _SECTION_TITLES = {
+    "layer0": "Capa 0",
     "project": "Proyecto",
     "user": "Usuario",
     "routing": "Routing observado",
@@ -32,6 +33,8 @@ _KEY_CHARS = 40
 _TICKET_KINDS_CHARS = 60
 _PATH_CHARS = 60
 _INDEX_PATHS = 2
+_TAG_CHARS = 60
+_INDEX_TAGS = 3
 # Dominios abreviados o en español que se normalizan en el brief agrupado.
 _DOMAIN_ALIASES = {
     "red": "network",
@@ -79,6 +82,20 @@ def _is_routing(memory: dict[str, Any]) -> bool:
     return memory.get("kind") == "workflow" or "routing" in (
         memory.get("kinds") or []
     )
+
+
+def _layer0(memory: dict[str, Any], cfg: dict[str, Any]) -> bool:
+    """Capa 0: un tag o la clave menciona alguno de los términos fijados."""
+    words = [
+        str(item).strip().lower()
+        for item in cfg.get("layer0_tags") or []
+        if str(item).strip()
+    ]
+    if not words:
+        return False
+    values = [str(item).lower() for item in memory.get("tags") or []]
+    values.append(str(memory.get("key") or "").lower())
+    return any(word in value for value in values for word in words)
 
 
 def _pending_line(codes: list[str], total: int) -> str:
@@ -145,6 +162,17 @@ def index_line(memory: dict[str, Any]) -> str:
         if extra > 0:
             shown = f"{shown} +{extra}"
         parts.append(f"· paths={shown}")
+    tags = [
+        _clip(item, _TAG_CHARS)
+        for item in (memory.get("tags") or [])
+        if str(item).strip()
+    ]
+    if tags:
+        shown_tags = ", ".join(tags[:_INDEX_TAGS])
+        extra_tags = len(tags) - _INDEX_TAGS
+        if extra_tags > 0:
+            shown_tags = f"{shown_tags} +{extra_tags}"
+        parts.append(f"· tags={_clip(shown_tags, _TAG_CHARS)}")
     parts.append(f"— memory_search {code}")
     return " ".join(parts)
 
@@ -204,7 +232,18 @@ def render_brief(
     buckets: dict[str, list[dict[str, Any]]] = {
         name: [] for name in (*_SECTION_ORDER, "warnings")
     }
-    for memory in selected:
+    layer0 = [
+        memory
+        for memory in selected
+        if memory.get("status") != "stale" and _layer0(memory, cfg)
+    ]
+    layer0_ids = {id(memory) for memory in layer0}
+    if grouped_mode and section == "all":
+        # En el modo agrupado no hay select_for_budget: la capa 0 se descuenta
+        # aquí para que los grupos no rebasen el presupuesto.
+        used += sum(len(line_for(memory)) for memory in layer0)
+    rest = [memory for memory in selected if id(memory) not in layer0_ids]
+    for memory in rest:
         if memory.get("status") == "stale":
             buckets["warnings"].append(memory)
         elif _is_routing(memory):
@@ -214,13 +253,14 @@ def render_brief(
             buckets[scope if scope in ("project", "user") else "project"].append(
                 memory
             )
+    layer0.sort(key=_stable_key)
     for items in buckets.values():
         items.sort(key=_stable_key)
 
     group_members: dict[str, list[dict[str, Any]]] = {}
     group_lines: dict[str, str] = {}
     if grouped_mode:
-        for memory in selected:
+        for memory in rest:
             if memory.get("status") == "stale":
                 continue
             group_members.setdefault(_domain(memory), []).append(memory)
@@ -267,8 +307,15 @@ def render_brief(
             used += int(playbook_index["chars"])
     show_playbooks = bool(playbook_index["text"])
     data_sections = []
+    layer0_visible = [
+        memory
+        for memory in layer0
+        if section == "all" or memory.get("scope") == section
+    ]
+    if layer0_visible:
+        data_sections.append("layer0")
     if grouped_mode:
-        data_sections = sorted(group_lines)
+        data_sections.extend(sorted(group_lines))
         if pending_lines:
             data_sections.append("pending")
         if show_playbooks:
@@ -294,6 +341,11 @@ def render_brief(
         "",
     ]
     for name in data_sections:
+        if name == "layer0":
+            lines.append(f"## {_SECTION_TITLES[name]}")
+            lines.extend(line_for(memory) for memory in layer0_visible)
+            lines.append("")
+            continue
         if grouped_mode and name in group_lines:
             lines.append(f"## {name.title()}")
             lines.append(group_lines[name])
@@ -324,7 +376,11 @@ def render_brief(
 
     sections: dict[str, list[str]] = {}
     for name in data_sections:
-        if grouped_mode and name in group_lines:
+        if name == "layer0":
+            sections[name] = [
+                str(memory.get("code") or "") for memory in layer0_visible
+            ]
+        elif grouped_mode and name in group_lines:
             sections[name] = [
                 str(memory.get("code") or "") for memory in group_members[name]
             ]

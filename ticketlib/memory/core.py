@@ -26,6 +26,7 @@ from .models import (
     MEMORY_SCOPES,
     MEMORY_SOURCES,
     MEMORY_STATUSES,
+    TAG_RE,
     TICKET_CODE_RE,
     default_key,
     evidence_kind_for_ref,
@@ -67,6 +68,7 @@ def row_to_memory(
     data["paths"] = load_list(data.get("paths"))
     data["kinds"] = load_list(data.get("kinds"))
     data["ticket_kinds"] = load_list(data.get("ticket_kinds"))
+    data["tags"] = load_list(data.get("tags"))
     if details and conn is not None:
         data["evidence"] = [
             dict(item)
@@ -281,6 +283,31 @@ def clean_kinds(kinds: Iterable[object] | None) -> list[str]:
                 f"Valores permitidos: {', '.join(MEMORY_KINDS)}"
             )
         if value and value not in out:
+            out.append(value)
+    return out
+
+
+def clean_tags(tags: Iterable[object] | None) -> list[str]:
+    """Valida etiquetas de dominio como slugs cortos, sin duplicados.
+
+    Acepta un string suelto o una lista; el vacío se normaliza a una lista
+    vacía para que una memoria sin tags no arrastre valores falsos.
+    """
+    if tags is None:
+        return []
+    if isinstance(tags, str):
+        tags = [tags]
+    out: list[str] = []
+    for item in tags:
+        value = str(item or "").strip().lower()
+        if not value:
+            continue
+        if not TAG_RE.fullmatch(value):
+            raise ValidationError(
+                f"tag de memoria inválido: {value!r} "
+                "(minúsculas, 1-33 caracteres: a-z 0-9 . _ / -)"
+            )
+        if value not in out:
             out.append(value)
     return out
 
@@ -590,6 +617,7 @@ __all__ = [
     "clean_kinds",
     "clean_project_paths",
     "clean_short",
+    "clean_tags",
     "clean_text",
     "clean_ticket_kinds",
     "config",

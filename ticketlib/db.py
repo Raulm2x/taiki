@@ -159,6 +159,7 @@ CREATE TABLE IF NOT EXISTS memories (
     paths           TEXT,
     kinds           TEXT,
     ticket_kinds    TEXT,
+    tags            TEXT,
     status          TEXT NOT NULL DEFAULT 'proposed',
     confidence      REAL NOT NULL DEFAULT 0.5,
     source          TEXT NOT NULL DEFAULT 'agent',
@@ -437,6 +438,12 @@ def _migrate_v7(conn: sqlite3.Connection, force: bool = False) -> None:
         conn.execute("ALTER TABLE tickets ADD COLUMN reversal TEXT")
 
 
+def _migrate_v8(conn: sqlite3.Connection, force: bool = False) -> None:
+    """Tags libres de dominio en la memoria (aditiva, sin backfill)."""
+    if "tags" not in _table_columns(conn, "memories"):
+        conn.execute("ALTER TABLE memories ADD COLUMN tags TEXT")
+
+
 MIGRATIONS = {
     2: _migrate_v2,
     3: _migrate_v3,
@@ -444,6 +451,7 @@ MIGRATIONS = {
     5: _migrate_v5,
     6: _migrate_v6,
     7: _migrate_v7,
+    8: _migrate_v8,
 }
 
 

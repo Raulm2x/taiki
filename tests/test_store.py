@@ -573,8 +573,8 @@ def run(h: Harness) -> None:
                 (migrated["isolation"], migrated["resources"], migrated["reversal"]),
                 db.schema_version(legacy),
             ),
-            (7, ("worktree", [], None), 7),
-            "la migración sube a v7, deja worktree sin recursos y es idempotente",
+            (8, ("worktree", [], None), 8),
+            "la migración sube a v8, deja worktree sin recursos y es idempotente",
         )
     finally:
         legacy.close()

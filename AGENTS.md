@@ -325,3 +325,5 @@ python3 tests/run.py --audit  # ruido, presupuesto y línea base
 - `TAIKI_DB` o `--db` permiten apuntar a otra DB explícitamente.
 - Cada proyecto arranca su propia instancia MCP; el registro de procesos en
   `~/.local/share/taiki/registry.db` es solo inventario, no contiene tickets.
+- El índice muestra `tags=` y el brief reserva `## Capa 0` para seguridad,
+  scope, sudo y confirmación; mantenlas ahí para que no se pierdan.

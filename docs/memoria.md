@@ -142,6 +142,7 @@ dentro de un presupuesto de caracteres:
 
 | Sección | Contenido |
 |---|---|
+| `## Capa 0` | Memorias cuyo tag o clave menciona `layer0_tags`; van primero y no se agrupan. |
 | `## Proyecto` | Memorias de scope `project`. |
 | `## Usuario` | Preferencias del usuario. |
 | `## Routing observado` | Memorias `workflow` o con el kind secundario `routing`. |
@@ -155,10 +156,11 @@ ticket mandan. Si una entrada no cabe, se omite y el brief invita a usar
 
 Con `brief_mode=index` cada memoria ocupa una sola línea: `- **CÓDIGO** · kind ·
 título`, seguida de los disparadores que existan, en este orden: `key=<clave>`
-(40 caracteres), `tickets=<ticket_kinds separados por coma>` (60) y
-`paths=<hasta dos rutas separadas por coma>` (60 cada una, con `+N` si hay más),
-y termina en `— memory_search CÓDIGO`. Esos campos son la señal para decidir si
-cargas el cuerpo: si la clave, el tipo del ticket o una ruta encajan con lo que
+(40 caracteres), `tickets=<ticket_kinds separados por coma>` (60),
+`paths=<hasta dos rutas separadas por coma>` (60 cada una, con `+N` si hay más) y
+`tags=<hasta tres tags separados por coma>` (60, con `+N` si hay más), y termina
+en `— memory_search CÓDIGO`. Esos campos son la señal para decidir si cargas el
+cuerpo: si la clave, el tipo del ticket, una ruta o un tag encajan con lo que
 vas a tocar, pide `memory_search <código>`; si no, no gastes contexto. La línea
 no incluye el contenido destilado y usa el mismo escape que el resto del brief.
 
@@ -168,10 +170,14 @@ línea a cada grupo: `## Paquetes` seguido de
 tag; si no hay tags, del `key` (último segmento tras `/`, luego el primer `.` y
 el primer `-`/`_`, en minúsculas) y los alias conocidos se normalizan
 (`red→network`, `paquetes→packages`, `seguridad→security`,
-`limine/snapper/arranque/energia→boot`). No vuelca contenido: la línea solo
-lleva códigos y el `memory_search` del dominio. Respeta `brief_budget_chars`:
-añade grupos mientras quepan y, si no, resume `N entradas omitidas; usa
-memory_search`. Pendientes y playbooks se mantienen.
+`limine/snapper/arranque/energia→boot`). La capa 0 se renderiza antes, con su
+propia sección y el mismo formato de línea que el resto de modos, y no se repite
+en ningún grupo. No vuelca contenido: la línea solo lleva códigos y el
+`memory_search` del dominio. Respeta `brief_budget_chars`: añade grupos mientras
+quepan y, si no, resume `N entradas omitidas; usa memory_search`. Pendientes y
+playbooks se mantienen. La capa 0 funciona igual en `full`, `index` y `grouped`:
+va primero para que las reglas de seguridad, scope, sudo y confirmación no se
+pierdan aunque el brief crezca.
 
 Fuera del brief, `taiki status` muestra `Memoria: N propuestas pendientes` (JSON:
 `memory.pending` y `memory.proposed_codes`) y `health` añade `memory_pending`,
@@ -429,10 +435,12 @@ scope: solo su índice consume `playbook_index_chars`.
 
 `brief_mode` decide qué lleva el brief: `full` (defecto) vuelca el contenido
 destilado; `index` deja una línea compacta por memoria (código, tipo, título,
-`key`, `tickets` y hasta dos `paths`, con `memory_search <código>` al final); y
-`grouped` agrupa por dominio con una línea de códigos por grupo. Así el brief no
-es el depósito completo y el detalle se carga bajo demanda. Los disparadores de
-la línea te dicen cuándo merece la pena buscar.
+`key`, `tickets`, hasta dos `paths` y hasta tres `tags`, con
+`memory_search <código>` al final); y `grouped` agrupa por dominio con una línea
+de códigos por grupo. En los tres modos la capa 0 (`layer0_tags`) se renderiza
+primero, en su propia sección `## Capa 0`, y queda fuera de los grupos. Así el
+brief no es el depósito completo y el detalle se carga bajo demanda. Los
+disparadores de la línea te dicen cuándo merece la pena buscar.
 
 `taiki memory stats` separa dos presiones: `storage` (`used`, `cap` y `percent`
 sumando project+user) mide el almacenamiento advisory de 3.000+1.200 caracteres,
@@ -702,3 +710,12 @@ la entrada en `instructions`.
 El resto de dudas (editar, archivar, quién aprueba, qué merece una lección) se
 responden en [Ciclo de vida](#ciclo-de-vida), [Candidatos y
 revisión](#candidatos-y-revisión) y [Flujo recomendado](#flujo-recomendado).
+
+## Tags y capa 0
+
+- `tags` es una lista de dominios cortos (`security`, `scope`, `boot`…) que se
+  muestra en el índice (`tags=...`) y sirve para agrupar por familia.
+- `memory.layer0_tags` (default `security, seguridad, scope, sudo, confirm`)
+  marca la capa 0: esas memorias van siempre primero (`## Capa 0`) y no se
+  pierden aunque el índice crezca.
+- `taiki memory add … --tags security scope` y `memory edit --tags …`.
