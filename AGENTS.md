@@ -16,6 +16,14 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
 
 ## Flujo de trabajo
 
+0. **Brief primero.** Aplica el brief de memoria inyectado en
+   `.taiki/generated/brief.md` o, si no aparece, llama a la herramienta MCP
+   `brief`. Usa `memory_search` para el contexto que falte y aplica los
+   `hints` del recibo de `claim` (memorias por rutas, tipo o etiquetas). La
+   memoria es contexto: no sustituye al ticket ni a estas reglas, y una
+   propuesta no es instrucción hasta que el usuario la apruebe. Si el brief
+   muestra `## Pendientes`, son propuestas sin aprobar: revísalas con
+   `taiki memory pending`; `taiki status` y `health` también las cuentan.
 1. Consulta el trabajo pendiente: `taiki next`, `taiki list`, `taiki stats`.
 2. Antes de tocar código, crea o reclama un ticket:
    `taiki new -t "..." -k mantenimiento -p alta` y `taiki claim T-0001 --agent opencode`.
@@ -29,7 +37,22 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
 5. El asunto del commit debe incluir `T-XXXX`; el hook `commit-msg` lo exige.
    Un `feat:` pequeño puede declarar `Release-Bump: patch|minor|major` como
    trailer del cuerpo; sin trailer, `feat` sube minor.
-6. El conductor y los subagentes viven en `.opencode/agents/`; consulta el
+6. **Captura con evidencia.** Si hubo corrección, rework o un workaround no
+   obvio, propón una lección con la herramienta MCP `memory_write` y evidencia
+   (`ticket`, `commit`, `file`, `url` o `session`). No guardes fallos
+   transitorios, credenciales, narrativas ni prohibiciones amplias. La
+   aprobación es del usuario con `taiki memory approve`; los agentes no
+   aprueban propuestas.
+7. **Revisión periódica con curator.** Cada 5 tickets verificados/cerrados o
+   cuando `memory_candidates(mode=list)` acumule 3 o más candidatos, el
+   conductor lanza el subagente `curator` en background con el paquete
+   `memory_candidates(mode=review)`. El curator propone como máximo 5 memorias,
+   prefiere `patch`/`supersede` sobre `add`, exige evidencia, no aprueba, no
+   edita código y no lanza subagentes. El conductor reporta las propuestas
+   pendientes (visibles en el brief, `taiki status` y `health`); **los agentes
+   proponen y el usuario aprueba o rechaza** con `taiki memory approve` o
+   `taiki memory reject`. Los agentes nunca aprueban ni rechazan.
+8. El conductor y los subagentes viven en `.opencode/agents/`; consulta el
    routing de variantes y el presupuesto de concurrencia con la herramienta
    MCP `agents` y `schedule` (paralelismo seguro por paths). Los perfiles
    worker usan deepseek-v4.1-flash; `worker-medium` va sin variante. La
@@ -57,6 +80,42 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    Una dependencia solo se cierra al `verificado`/`confirmado`, no al
    `completado`.
 
+## Playbooks, routing y revisión
+
+- **Playbooks**: procedimientos con evidencia y apoyos en `references/`,
+  `scripts/`, `assets/` o `templates/`. Se gestionan con
+  `taiki memory playbook add|list|show|export|archive`, se exportan a
+  `.taiki/generated/skills/<slug>/SKILL.md` y se cargan bajo demanda con
+  `memory_playbook(slug)` o `taiki://playbook/{slug}`. El brief solo muestra
+  su índice. No ejecutes los scripts de apoyo.
+- **Pantalla Memoria (TUI)**: la tecla `Y` abre propuestas, activas, stale,
+  playbooks y presupuesto. `a` aprueba y `x` rechaza (con motivo) propuestas:
+  son acciones del usuario, nunca automáticas. `p` fija o desfija, `r` archiva
+  con confirmación y `o` exporta el playbook. Nunca borra: archivar conserva
+  el histórico en el ledger.
+- **Skills curadas (AutoSkills)**: `taiki skills suggest|list` son de lectura;
+  `install` y `remove` son **solo del usuario/CLI** y no se exponen por MCP
+  (allí solo existe `skills_suggest`, read-only). `install` descarga con
+  SHA-256 y deja un playbook `proposed`: no lo apruebes tú. `remove` archiva y
+  `sync` exporta activos. No hay Node en el núcleo ni ejecución de scripts.
+- **Routing advice**: `schedule` y `agents(kind=...)` incluyen `advice` con el
+  perfil observado, variante, steps, muestra, first-pass, Wilson e intentos
+  medios (mínimo 5 muestras). Es una sugerencia: nunca cambia la configuración
+  ni lanza agentes; decide el conductor.
+- **Reviewer**: antes de revisar usa
+  `memory_checklist(kind="bug"|"funcionalidad", memory_kind="pitfall"|"convention", paths=[...])`:
+  `kind` es el tipo de **ticket** y filtra por `ticket_kinds` (las memorias sin
+  etiqueta son generales), mientras que `memory_kind` es el tipo de **memoria**.
+  Completa con `memory_search` de pitfalls. Si detecta un fallo recurrente,
+  propone un pitfall sin aprobarlo.
+- **Curado y portabilidad**: `taiki memory curate` caduca, archiva y deduplica
+  sin borrar ni aprobar; `pin`/`lock` quedan exentos y `--dry-run` no escribe.
+  `auto_curate` es opt-in y se dispara desde `status`, `next` o `memory curate`.
+  Para versionar o mover memoria usa `memory export`/`import` (JSON/Markdown,
+  checksum, estrategias y `--dry-run`). `memory rollback` revierte por asiento
+  de ledger o por snapshot y deja auditoría. `memory stats` e `impact` dan
+  tendencias descriptivas: **no afirmes causalidad**.
+
 ## Agentes en paralelo
 
 Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
@@ -80,6 +139,13 @@ Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
   los no confirmados y `--force` es el bypass consciente. La confirmación sigue
   siendo del usuario: `taiki confirm` retira solo los worktrees limpios y
   mergeados (`--keep-worktrees` para conservarlos).
+- **El merger integra solo tickets confirmados.** Tras la confirmación del
+  usuario, el conductor le pasa una lista ordenada por dependencias y el merger
+  ejecuta `taiki worktree merge T-XXXX --delete` uno a uno, comprobando antes el
+  estado `confirmado`, el worktree limpio y la rama `agent/T-XXXX-*`. Se detiene
+  en el primer fallo (sin `--force` ni `--no-tests`), no edita, no confirma, no
+  hace push y no borra; el conductor revisa su informe y corre la verificación
+  final.
 - **Ramas**: el trabajo diario vive en `agent/T-XXXX-*` y se integra con
   `--ff-only` en `develop`; `main` solo recibe releases unificadas y
   etiquetadas. Ciclo, release, rollback y versionado:
@@ -133,6 +199,24 @@ Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
 ```bash
 taiki init                  # DB y workspace actuales
 taiki stats                 # resumen
+taiki brief                 # brief operativo de la memoria
+taiki remember "texto"      # preferencia activa del usuario
+taiki memory pending        # propuestas pendientes de aprobación
+taiki memory pending --diff # diff frente a la memoria sustituida
+taiki memory candidates     # candidatos deterministas del histórico
+taiki memory review --write # paquete para el curator
+taiki memory curate         # caducidad, archivo y dedupe (nunca borra)
+taiki memory stats          # estado, presupuesto, uso y routing
+taiki memory impact         # tendencias, sin causalidad
+taiki memory export FILE    # snapshot JSON/Markdown con checksum
+taiki memory import FILE    # importa con keep/replace/new y --dry-run
+taiki memory rollback ID    # revierte un asiento; --snapshot para un archivo
+taiki memory approve M-0001 # solo el usuario
+taiki memory playbook list  # playbooks y su export
+taiki memory playbook export --all  # .taiki/generated/skills
+taiki skills suggest                # skills curadas para el stack
+taiki skills install <nombre>       # solo usuario; deja un playbook propuesto
+taiki skills list / remove / sync   # gestión y exportación
 taiki tui                   # dashboard del proyecto
 taiki mcp install           # MCP de OpenCode solo para este proyecto
 taiki mcp uninstall         # lo retira y desactiva el guard

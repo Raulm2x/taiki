@@ -37,6 +37,55 @@ Comandos imprescindibles: `list`, `show`, `new`, `claim`, `complete`,
 `confirm`, `status`, `next` y `tui`. `--json`, `--compact` y `--json-summary`
 están pensados para agentes.
 
+## Memoria operativa
+
+`taiki` puede destilar lo aprendido en memorias pequeñas y revisables, sin
+guardar transcripciones. El **brief** recupera el contexto vigente al empezar;
+las lecciones de los agentes nacen como propuestas y solo el usuario las
+aprueba.
+
+```bash
+taiki brief                    # brief operativo (datos, no instrucciones)
+taiki remember "Prefiero commits en español"
+taiki memory candidates        # qué merece revisión (rework, rechazos, hotspots…)
+taiki memory review --write    # paquete para el subagente curator
+taiki memory pending           # propuestas de los agentes
+taiki memory pending --diff    # cambio frente a la memoria sustituida
+taiki memory approve M-0001    # solo el usuario
+taiki memory playbook list     # playbooks exportables como skills
+taiki memory playbook export --all   # .taiki/generated/skills
+taiki skills suggest           # skills curadas para el stack del proyecto
+taiki skills install <nombre>  # playbook propuesto, requiere tu aprobación
+taiki skills list              # instaladas, estado y origen
+taiki skills remove <nombre>   # archiva; nunca borra
+taiki memory curate            # caduca, archiva y deduplica sin borrar
+taiki memory stats             # estado, presupuesto, uso y routing
+taiki memory impact            # tendencias, sin afirmar causalidad
+taiki memory export FILE       # snapshot JSON/Markdown con checksum
+taiki memory import FILE       # importa con keep/replace/new y --dry-run
+taiki memory rollback ID       # revierte por asiento o --snapshot
+```
+
+Las memorias llevan evidencia (ticket, commit, archivo…), respetan un
+presupuesto de caracteres y se archivan en vez de borrarse. El motor de
+candidatos es determinista: no usa LLM ni escribe memoria. El subagente
+**curator** lee el paquete de revisión y propone como máximo 5 memorias; el
+conductor lo lanza cada 5 tickets cerrados o con 3+ candidatos. Los agentes
+proponen y **solo el usuario aprueba**. El curado (`curate`) y el auto-curado
+opt-in mantienen la memoria sana con ledger y sin borrar; `export`/`import` y
+`rollback` permiten versionar, mover y deshacer con checksum y auditoría.
+`stats` e `impact` son métricas descriptivas: no demuestran causalidad.
+
+Los **playbooks** guardan procedimientos completos con evidencia y ficheros de
+apoyo, se exportan como skills de OpenCode (`.taiki/generated/skills`) y se
+cargan bajo demanda; el brief solo muestra su índice. `taiki skills` sugiere e
+instala skills curadas de [AutoSkills](https://www.autoskills.sh/) para el stack
+real: verifica SHA-256, las deja como playbooks propuestos y exige tu
+aprobación; no ejecuta scripts ni necesita Node. `schedule` y `agents` incluyen
+un routing advice con muestra y confianza que nunca cambia la configuración
+solo. Detalle: [Memoria](docs/memoria.md) y
+[Uso](docs/uso.md#skills-curadas-de-autoskills).
+
 ## Estados
 
 ```
@@ -76,6 +125,8 @@ El borrado requiere OK del conductor y una ruta exacta:
   proyecto y migración desde `ticket`.
 - [Uso](docs/uso.md) — CLI diario, épicas y numeración, TUI, revisión y
   confirmación.
+- [Memoria](docs/memoria.md) — brief, propuestas, aprobación, presupuesto,
+  evidencia y seguridad.
 - [MCP](docs/mcp.md) — herramientas, envelopes, recursos, prompts y sesiones.
 - [Operación](docs/operacion.md) — workspaces, orquestación, guard, worktrees,
   tickets temporales, servidores MCP, datos y aislamiento.

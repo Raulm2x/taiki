@@ -4,7 +4,7 @@ Volver a [README](../README.md) · [Índice de documentación](README.md)
 
 ## Herramientas MCP
 
-El servidor expone 19 herramientas. El nombre real no lleva prefijo (`list`,
+El servidor expone 32 herramientas. El nombre real no lleva prefijo (`list`,
 `claim`…), aunque algunos clientes las muestren como `taiki_*`.
 
 | Herramienta | Uso |
@@ -19,7 +19,15 @@ El servidor expone 19 herramientas. El nombre real no lleva prefijo (`list`,
 | `worktree_create`, `worktree_list` | Aislan la escritura por tarea |
 | `promote` | Convierte un scratch `S-####` en `T-####` |
 | `scratch_drop` | Archiva y cancela un scratch sin consumir `T-####` |
-| `health` | MCP, hooks, claims caducados, solapamientos y worktrees |
+| `health` | MCP, hooks, claims caducados, solapamientos, worktrees e integridad de memoria (`memory`) |
+| `brief` | Brief operativo de memoria; `section`, `budget` y `write` |
+| `memory_search` | Busca memorias por texto, scope, tipo, estado, rutas o kinds; snippets salvo `include_content=true` |
+| `memory_write` | Operaciones `add`, `patch`, `remove`, `supersede` y `feedback` con evidencia y aprobación humana; con `kind=playbook` acepta `description` y `files [{path, content}]` |
+| `memory_playbook` | Solo lectura: carga un playbook por `slug`; `path` devuelve un fichero de apoyo concreto |
+| `memory_checklist` | Solo lectura: checklist de pitfalls y convenciones por tipo de memoria (`pitfall`/`convention`) y rutas |
+| `memory_candidates` | Solo lectura: `mode=list` lista candidatos; `mode=review` devuelve el paquete del curator. Acepta `since`, `kind` y `limit` |
+| `memory_stats` | Solo lectura: `mode=stats`, `mode=impact` o `mode=all`; `days` ajusta la ventana de tendencias |
+| `skills_suggest` | Solo lectura: sugiere skills curadas de AutoSkills para el stack o `techs`; `limit` acota. Nunca instala |
 
 Los errores llegan como `{code, message, hint, retryable}` y las herramientas
 de lectura llevan `readOnlyHint`. Si el código del MCP cambia, las escrituras
@@ -37,24 +45,46 @@ cualquier worktree; no se crea una DB vacía dentro de `.worktrees/`.
 
 ## Recursos y prompts MCP
 
-El catálogo de 19 herramientas está en [Herramientas MCP](#herramientas-mcp) y
+El catálogo de 32 herramientas está en [Herramientas MCP](#herramientas-mcp) y
 se genera desde `mcp_layer/schemas.py`. Aquí solo quedan los recursos y prompts:
 
-Recursos: `taiki://inbox`, `taiki://stats`, `taiki://ticket/{code}`.
-Prompts: `taiki:next`, `taiki:review`.
+Recursos: `taiki://inbox`, `taiki://stats`, `taiki://ticket/{code}`,
+`taiki://brief`, `taiki://memory/{code}`, `taiki://playbook/{slug}` y
+`taiki://memory/candidates`.
+Prompts: `taiki:next`, `taiki:review`, `taiki:brief`, `taiki:playbook` y
+`taiki:curate`.
+
+`taiki:playbook` recibe el `slug`, carga el procedimiento y recuerda consultar
+los pitfalls; los scripts de apoyo no se ejecutan automáticamente.
 
 Resolución de sesiones automática compatible con `sessionId`, `session_id`, `AGY_SESSION_ID` y `ai.opencode/sessionID`.
 
 ## Flujo recomendado para agentes
 
-1. Al empezar: `list` con `statuses=["pendiente"]` o `next`.
+1. Al empezar: aplica `brief` (o el recurso `taiki://brief`) y usa
+   `memory_search` para el contexto que falte; después `list` con
+   `statuses=["pendiente"]` o `next`.
 2. Antes de tocar código: `claim`. Si no hay ticket, créalo primero: el guard
    (cuando el proyecto lo tiene activado) bloquea la primera escritura y deja
-   un ticket automático reclamado.
-3. Trabajo nuevo descubierto: `create` **pasando `agent`**; el ticket queda
+   un ticket automático reclamado. Si el recibo trae `hints`, úsalos como
+   contexto; los hints de playbook llevan `slug` y `reason` para cargarlo con
+   `memory_playbook`.
+3. Si el índice del brief apunta a un playbook relevante, carga su cuerpo y
+   apoyos con `memory_playbook(slug, path?)`; no vuelques todo el skill.
+4. Trabajo nuevo descubierto: `create` **pasando `agent`**; el ticket queda
    asignado desde su creación.
-4. Al terminar: `complete` con resolución y commit.
-5. Nunca `confirmado`: eso lo hace el usuario con `taiki confirm`.
+5. Al terminar: `complete` con resolución y commit. Si hubo corrección, rework
+   o un workaround no obvio, propón una lección con `memory_write` y evidencia;
+   el recibo puede traer `learning`.
+6. Antes de revisar un cambio, pide `memory_checklist(kind="pitfall"|"convention",
+   paths=[...])` y completa con `memory_search`; `kind` es el tipo de memoria.
+7. Nunca `confirmado`: eso lo hace el usuario con `taiki confirm`. Tampoco
+   apruebes propuestas: `taiki memory approve` es del usuario.
+8. Cada 5 tickets verificados/cerrados o al acumular 3+ candidatos, usa
+   `memory_candidates(mode=review)` y el prompt `taiki:curate`. El curator
+   propone como máximo 5 memorias, prefiere `patch`/`supersede`, exige
+   evidencia y no aprueba ni edita código. El conductor lo lanza en background
+   y publica las propuestas para el usuario.
 
 En clientes que prefijan el servidor verás `taiki_list`, `taiki_claim`, etc.;
 el nombre real de la herramienta es el que aparece en `tools/list`.
@@ -74,3 +104,14 @@ el nombre real de la herramienta es el que aparece en `tools/list`.
   `--json-summary` no calcula sesiones ni `hidden_children` (solo el resumen
   lean).
 - `taiki://inbox` devuelve como máximo 20 tickets en resumen.
+- `brief` respeta `brief_budget_chars` (4500 por defecto) y omite lo que no
+  cabe; el índice de playbooks se acota con `playbook_index_chars` (400) y
+  nunca incluye el cuerpo.
+- `memory_playbook` devuelve el cuerpo del playbook solo cuando se pide; usa
+  `path` para un apoyo concreto. `memory_checklist` devuelve como máximo 20
+  entradas, 5 por defecto, y no incluye el contenido completo.
+- `memory_search` devuelve snippets de 240 caracteres salvo
+  `include_content=true`.
+- `memory_stats` devuelve agregados y tendencias, no contenido de memorias.
+  Usa `mode=stats` o `mode=impact` para acotar la respuesta; `days` solo aplica
+  a impacto.

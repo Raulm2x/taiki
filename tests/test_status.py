@@ -5,12 +5,15 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import json
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from commands.status import cmd_status
+from mcp_layer import handlers as mcp_handlers
 from ticketlib import repo, status
+from ticketlib.memory import add_memory
 from tests.support import Harness
 
 
@@ -89,6 +92,91 @@ def run(h: Harness) -> None:
         code == 0 and first["code"] in out.getvalue(),
         "taiki status --sessions responde por CLI",
     )
+
+    # ── Propuestas de memoria visibles en status y health ─────────────
+    h.eq(
+        status.snapshot(with_servers=False)["memory"]["pending"],
+        0,
+        "sin propuestas status informa cero",
+    )
+    proposal = add_memory(
+        conn,
+        title="Propuesta visible",
+        content="No debe aprobarse automáticamente.",
+        kind="decision",
+        source="agent",
+        evidence=[{"kind": "ticket", "ref": "T-0053"}],
+    )
+    data = status.snapshot(with_servers=False)
+    h.eq(
+        data["memory"],
+        {"pending": 1, "proposed_codes": [proposal["code"]]},
+        "status JSON expone la propuesta pendiente y su código",
+    )
+    h.ok(
+        "Memoria: 1 propuesta pendiente"
+        in "\n".join(status.lines(data)),
+        "status humano avisa de una propuesta pendiente",
+    )
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        cmd_status(
+            argparse.Namespace(
+                window=600, json=True, sessions=False, no_servers=True
+            )
+        )
+    h.eq(
+        json.loads(out.getvalue())["memory"]["proposed_codes"],
+        [proposal["code"]],
+        "taiki status --json incluye las propuestas",
+    )
+    second = add_memory(
+        conn,
+        title="Propuesta segunda",
+        content="Tampoco se aprueba sola.",
+        kind="decision",
+        source="agent",
+        evidence=[{"kind": "ticket", "ref": "T-0053"}],
+    )
+    data = status.snapshot(with_servers=False)
+    h.ok(
+        data["memory"]["pending"] == 2
+        and "Memoria: 2 propuestas pendientes"
+        in "\n".join(status.lines(data)),
+        "status cuenta varias propuestas",
+    )
+    health = mcp_handlers.call_tool(
+        "health", {"servers": False}, meta={"sessionId": "ses_health"}
+    )
+    health_ok = health["ok"]
+    h.ok(
+        health["memory_pending"]["count"] == 2
+        and health["memory_pending"]["proposed_codes"]
+        == [proposal["code"], second["code"]]
+        and health["memory_pending"]["old"] == []
+        and health["memory_pending"]["stale_days"] == 7,
+        "health informa de las propuestas sin bloquear",
+    )
+    conn.execute(
+        "UPDATE memories SET created_at = ? WHERE code = ?",
+        (
+            (datetime.now().astimezone() - timedelta(days=8)).isoformat(
+                timespec="seconds"
+            ),
+            proposal["code"],
+        ),
+    )
+    conn.commit()
+    health = mcp_handlers.call_tool(
+        "health", {"servers": False}, meta={"sessionId": "ses_health"}
+    )
+    h.ok(
+        health["memory_pending"]["old"] == [proposal["code"]]
+        and "taiki memory pending" in health["memory_pending"]["warnings"][0]
+        and health["ok"] == health_ok,
+        "health avisa de propuestas antiguas sin cambiar ok",
+    )
+
     from tui import view
 
     h.ok(

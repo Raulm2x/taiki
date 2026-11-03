@@ -58,6 +58,17 @@ def _queue(conn: Any) -> dict[str, int]:
     }
 
 
+def _memory(conn: Any) -> dict[str, Any]:
+    """Propuestas de memoria pendientes de aprobación humana."""
+    codes = [
+        str(row["code"])
+        for row in conn.execute(
+            "SELECT code FROM memories WHERE status = 'proposed' ORDER BY id"
+        ).fetchall()
+    ]
+    return {"pending": len(codes), "proposed_codes": codes}
+
+
 def _intervals(
     conn: Any, days: int = 30
 ) -> list[tuple[datetime, datetime]]:
@@ -178,6 +189,7 @@ def snapshot(
         stale = {item["code"] for item in stale_claims(conn)}
         overlaps = audit.overlaps(conn)
         queue = _queue(conn)
+        memory = _memory(conn)
         metrics = _metrics(conn, metrics_days)
         activity = sessions_lib.ticket_activity(
             conn, [row["code"] for row in rows]
@@ -234,6 +246,7 @@ def snapshot(
         "window": window,
         "sessions": sessions,
         "queue": queue,
+        "memory": memory,
         "metrics": metrics,
         "worktrees": {"count": worktree_count},
         "stale": sorted(stale),
@@ -261,6 +274,12 @@ def lines(data: dict[str, Any]) -> list[str]:
         f"(incl. {queue.get('verifying', 0)} verificando)"
     )
     out.append(f"  worktrees {(data.get('worktrees') or {}).get('count', 0)}")
+    pending_memory = int((data.get("memory") or {}).get("pending") or 0)
+    if pending_memory:
+        noun = "propuesta pendiente" if pending_memory == 1 else "propuestas pendientes"
+        out.append(
+            f"Memoria: {pending_memory} {noun} · taiki memory pending"
+        )
     metrics = data.get("metrics") or {}
     if metrics:
         lead = metrics.get("lead_time_hours")

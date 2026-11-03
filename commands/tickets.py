@@ -10,9 +10,22 @@ from pathlib import Path
 
 from ticketlib import db, presentation, render, repo, scratch, sessions, workspace
 from ticketlib.domain import OPEN_STATUSES, TicketError
+from ticketlib.memory.config import load_memory_config
+from ticketlib.memory.curate import auto_curate
 from ticketlib.util import resolve_scope
 
 from .common import _clean_expired, _conn, _read_body, _show
+
+
+def _maybe_auto_curate(conn) -> None:
+    """Auto-curado opt-in: next sigue respondiendo aunque la memoria falle."""
+    cfg = load_memory_config()
+    if not cfg["auto_curate"]["enabled"]:
+        return
+    try:
+        auto_curate(conn, cfg)
+    except Exception as exc:  # noqa: BLE001 - next no debe fallar por memoria
+        print(f"Aviso: auto-curado de memoria falló: {exc}", file=sys.stderr)
 
 
 def _annotate(
@@ -320,6 +333,7 @@ def cmd_claim(args: argparse.Namespace) -> int:
 
 def cmd_next(args: argparse.Namespace) -> int:
     with _conn() as conn:
+        _maybe_auto_curate(conn)
         _clean_expired(conn)
         ticket = repo.next_ticket(conn, project=args.project)
         session_id = _annotate(conn, [ticket]).get(ticket["code"]) if ticket else None

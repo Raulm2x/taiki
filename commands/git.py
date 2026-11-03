@@ -185,11 +185,23 @@ def cmd_audit(args: argparse.Namespace) -> int:
         print("  ninguno")
     print()
     uncommitted = data["uncommitted"]
-    print(f"Confirmados sin commit ({len(uncommitted)})")
+    epics = data.get("uncommitted_epics") or []
+    print(f"Hojas cerradas sin commit enlazado ({len(uncommitted)})")
     for item in uncommitted:
         print(f"  {item['code']}  [{item['status']}]  {item['title']}")
     if not uncommitted:
-        print("  ninguno")
+        print("  ninguna")
+    if epics:
+        print(
+            f"  Épicas excluidas ({len(epics)}): no tienen commit propio por "
+            "diseño; su trabajo se reparte entre las hojas."
+        )
+    if uncommitted or epics:
+        print(
+            "  El audit solo detecta enlaces ausentes: «sin commit enlazado» "
+            "no prueba que exista un «commit verificado»; revísalo con "
+            "`taiki show <código>`."
+        )
     print()
     misnumbered = data["misnumbered"]
     print(f"Tareas con código plano ({len(misnumbered)})")

@@ -19,15 +19,43 @@ import contextlib
 import io
 import json
 import os
+import re
 import subprocess
+import tomllib
 from argparse import Namespace
 from pathlib import Path
 
-from commands.release import _bump_for, _explicit_bumps, cmd_release
+from commands.release import (
+    _bump_for,
+    _changelog,
+    _explicit_bumps,
+    _groups,
+    _tickets,
+    cmd_release,
+)
 from commands.tickets import cmd_claim
 from commands.worktree import cmd_worktree_merge
 from tests.seeds import git_repo
-from ticketlib import db, repo, workspace
+from ticketlib import __version__, db, repo, workspace
+
+# CHANGELOG de partida con el bloque de trabajo en curso que dejaban las
+# integraciones antiguas y una release anterior que debe conservarse.
+_CHANGELOG_SEED = """# Changelog
+
+## Unreleased
+
+Tickets: T-0045
+
+### feat
+- feat: bloque viejo (T-0045)
+
+## v0.2.0 — 2026-11-02
+
+Tickets: T-0038
+
+### feat
+- feat: release anterior (T-0038)
+"""
 
 
 def _git(root: Path, *args: str) -> str:
@@ -110,6 +138,7 @@ def _branches(root: Path) -> list[str]:
 def _seed_repo(path: Path, name: str) -> tuple[Path, Path]:
     """Repo temporal con ``main``, ``develop`` y workspace Taiki (sin remoto)."""
     root = git_repo(path)
+    _seed_versions(root)
     _commit(root, ".gitignore", ".worktrees/\n", "chore: ignora worktrees")
     _commit(root, "app.py", "v0\n", "chore: base")
     _git(root, "branch", "-m", "main")
@@ -211,6 +240,75 @@ def _has_ref(root: Path, ref: str) -> bool:
         text=True,
     )
     return result.returncode == 0
+
+
+def _seed_versions(root: Path, version: str = "0.0.0") -> None:
+    """Ficheros de versión de partida que ``taiki release`` debe alinear."""
+    (root / "ticketlib").mkdir(exist_ok=True)
+    _commit(
+        root,
+        "ticketlib/__init__.py",
+        f'"""Sistema de tickets local para agentes y usuario."""\n\n'
+        f'__version__ = "{version}"\n',
+        "chore: versión del paquete",
+    )
+    _commit(
+        root,
+        "pyproject.toml",
+        f'[project]\nname = "taiki"\nversion = "{version}"\n',
+        "chore: metadatos del paquete",
+    )
+
+
+def _parse_versions(
+    init_text: str | None, project_text: str | None
+) -> dict[str, str | None]:
+    init_version = None
+    if init_text:
+        match = re.search(r'^__version__ = "([^"]+)"', init_text, re.MULTILINE)
+        init_version = match.group(1) if match else None
+    project_version = None
+    if project_text:
+        project_version = tomllib.loads(project_text).get("project", {}).get("version")
+    return {"init": init_version, "pyproject": project_version}
+
+
+def _version_text(root: Path) -> dict[str, str | None]:
+    paths = {
+        "init": root / "ticketlib" / "__init__.py",
+        "pyproject": root / "pyproject.toml",
+    }
+    return {
+        key: path.read_text(encoding="utf-8") if path.is_file() else None
+        for key, path in paths.items()
+    }
+
+
+def _version_files(root: Path) -> dict[str, str | None]:
+    text = _version_text(root)
+    return _parse_versions(text["init"], text["pyproject"])
+
+
+def _version_files_at(root: Path, ref: str) -> dict[str, str | None]:
+    def show(path: str) -> str | None:
+        result = subprocess.run(
+            ["git", "-C", str(root), "show", f"{ref}:{path}"],
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout if result.returncode == 0 else None
+
+    return _parse_versions(show("ticketlib/__init__.py"), show("pyproject.toml"))
+
+
+def _latest_tag(root: Path) -> str | None:
+    result = subprocess.run(
+        ["git", "-C", str(root), "tag", "--list", "v[0-9]*", "--sort=-v:refname"],
+        capture_output=True,
+        text=True,
+    )
+    tags = result.stdout.split() if result.returncode == 0 else []
+    return tags[0] if tags else None
 
 
 def _push_cases(tmp: Path) -> tuple[dict, dict]:
@@ -344,6 +442,55 @@ def _bump_cases(root: Path) -> dict[str, dict]:
         "override": override.get("bump"),
     }
     return results
+
+
+def _changelog_cases() -> tuple[dict, dict]:
+    """``_changelog`` consume ``Unreleased``, no duplica y conserva el histórico.
+
+    Simula la release v0.3.0 desde v0.2.0 con los tickets T-0050–T-0057 en la
+    capa pura: sin repo, sin red y sin escribir ficheros.
+    """
+    kinds = ("feat", "fix", "feat", "docs", "fix", "feat", "test", "refactor")
+    commits = [
+        {
+            "sha": f"{index:07d}",
+            "subject": f"{kind}: cambio {index} (T-00{49 + index})",
+            "body": f"{kind}: cambio {index} (T-00{49 + index})",
+        }
+        for index, kind in enumerate(kinds, start=1)
+    ]
+    tickets = _tickets(commits)
+    groups = _groups(commits)
+    generated = _changelog(_CHANGELOG_SEED, "0.3.0", tickets, groups)
+    repeated = _changelog(generated, "0.3.0", tickets, groups)
+    newest = generated.split("## v0.3.0", 1)[-1].split("## v0.2.0", 1)[0]
+    actual = {
+        "unreleased": "Unreleased" not in generated,
+        "old_block": "T-0045" not in generated,
+        "version_once": generated.count("## v0.3.0") == 1,
+        "previous": "## v0.2.0" in generated,
+        "previous_body": "release anterior (T-0038)" in generated,
+        "ordered": generated.index("## v0.3.0") < generated.index("## v0.2.0"),
+        "range": sorted(code for code in tickets if code >= "T-0050"),
+        "range_in_section": all(
+            f"T-{code:04d}" in newest for code in range(50, 58)
+        ),
+        "rerun": repeated.count("## v0.3.0") == 1
+        and "Unreleased" not in repeated
+        and "## v0.2.0" in repeated,
+    }
+    expected = {
+        "unreleased": True,
+        "old_block": True,
+        "version_once": True,
+        "previous": True,
+        "previous_body": True,
+        "ordered": True,
+        "range": [f"T-{code:04d}" for code in range(50, 58)],
+        "range_in_section": True,
+        "rerun": True,
+    }
+    return actual, expected
 
 
 def _claim_worktree(
@@ -528,7 +675,14 @@ def _flow(h) -> tuple[dict, dict]:
 def run(h) -> None:
     tmp = Path(h.tmp)
     root = git_repo(tmp / "proyecto")
+    _seed_versions(root)
     _commit(root, "app.py", "v0\n", "chore: base")
+    _commit(
+        root,
+        "CHANGELOG.md",
+        _CHANGELOG_SEED,
+        "docs: changelog con bloque Unreleased",
+    )
     _git(root, "branch", "-m", "main")
     main_head = _git(root, "rev-parse", "main")
     _git(root, "checkout", "-b", "develop")
@@ -536,7 +690,9 @@ def run(h) -> None:
     _commit(root, "saludo.py", "hola!\n", "fix: corrige saludo (T-0002)")
     develop_head = _git(root, "rev-parse", "develop")
 
+    before_dry = _version_text(root)
     dry_rc, dry = _release(root, dry_run=True)
+    dry_unchanged = _version_text(root) == before_dry
     dry_head = _git(root, "rev-parse", "main")
     dry_tag = _tag_exists(root, "v0.1.0")
 
@@ -579,22 +735,54 @@ def run(h) -> None:
     sync_actual, sync_expected = _sync_cases(tmp)
     push_actual, push_expected = _push_cases(tmp)
     bumps_actual = _bump_cases(root)
+    changelog_units, changelog_unit_expected = _changelog_cases()
 
     rc, release = _release(root, no_verify=False, verify_cmd="true")
     message = _git(root, "log", "-1", "--format=%B", "main")
     changelog_first = (root / "CHANGELOG.md").read_text(encoding="utf-8")
     first_develop_moved = _git(root, "rev-parse", "develop") != develop_head
+    first_versions = _version_files(root)
+    first_tag_versions = _version_files_at(root, "v0.1.0")
     marker_path = root / ".taiki" / "releases.json"
     first_entries = json.loads(marker_path.read_text(encoding="utf-8"))
     first_tracked = _git(root, "ls-files", "--", ".taiki/releases.json")
 
     _commit(root, "posterior.txt", "posterior\n", "fix: parche posterior (T-0005)")
     second_rc, second = _release(root, no_verify=False, verify_cmd="true")
+    second_versions = _version_files(root)
+    second_tag_versions = _version_files_at(root, "v0.1.1")
     entries = json.loads(marker_path.read_text(encoding="utf-8"))
     changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
     second_section = changelog.split("## v0.1.1", 1)[-1].split("## v0.1.0", 1)[0]
     empty_rc, empty_error = _release_error(root)
     no_remote_rc, no_remote_error = _release_error(root, push=True)
+
+    project_root = Path(__file__).resolve().parents[1]
+    project_versions = _version_files(project_root)
+    project_tag = _latest_tag(project_root)
+    import server as mcp_server
+
+    server_version = mcp_server.SERVER_VERSION
+    version_actual = {
+        "dry_unchanged": dry_unchanged,
+        "first": first_versions,
+        "first_tag": first_tag_versions,
+        "second": second_versions,
+        "second_tag": second_tag_versions,
+        "project": project_versions,
+        "tag": project_tag,
+        "server": __version__ in server_version,
+    }
+    version_expected = {
+        "dry_unchanged": True,
+        "first": {"init": "0.1.0", "pyproject": "0.1.0"},
+        "first_tag": {"init": "0.1.0", "pyproject": "0.1.0"},
+        "second": {"init": "0.1.1", "pyproject": "0.1.1"},
+        "second_tag": {"init": "0.1.1", "pyproject": "0.1.1"},
+        "project": {"init": __version__, "pyproject": __version__},
+        "tag": f"v{__version__}",
+        "server": True,
+    }
 
     marker_actual = {
         "first_entries": len(first_entries),
@@ -635,7 +823,7 @@ def run(h) -> None:
         "second_range": develop_head,
         "second_message_old": False,
         "second_message_new": True,
-        "changelog_entries": 2,
+        "changelog_entries": 3,
         "entries": 2,
         "tags": ["v0.1.0", "v0.1.1"],
         "versions": ["0.1.0", "0.1.1"],
@@ -655,6 +843,8 @@ def run(h) -> None:
             "sync": sync_actual,
             "push": push_actual,
             "bumps": bumps_actual,
+            "changelog": changelog_units,
+            "version": version_actual,
             "marker": marker_actual,
             "release": {
                 "rc": rc,
@@ -674,6 +864,12 @@ def run(h) -> None:
                 "changelog_second": all(
                     part in changelog
                     for part in ("## v0.1.1", "T-0005")
+                ),
+                "changelog_unreleased": "Unreleased" not in changelog_first,
+                "changelog_version_once": changelog_first.count("## v0.1.0") == 1,
+                "changelog_previous": all(
+                    part in changelog_first
+                    for part in ("## v0.2.0", "release anterior (T-0038)")
                 ),
             },
             "flow": flow_actual,
@@ -702,7 +898,9 @@ def run(h) -> None:
                     "override": "minor",
                 },
             },
+            "changelog": changelog_unit_expected,
             "marker": marker_expected,
+            "version": version_expected,
             "release": {
                 "rc": 0,
                 "develop_moved": True,
@@ -713,6 +911,9 @@ def run(h) -> None:
                 "message_groups": True,
                 "changelog_first": True,
                 "changelog_second": True,
+                "changelog_unreleased": True,
+                "changelog_version_once": True,
+                "changelog_previous": True,
             },
             "flow": flow_expected,
         },

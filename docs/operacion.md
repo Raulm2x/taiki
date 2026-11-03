@@ -472,6 +472,37 @@ echo '{"tool_name":"write_file","tool_input":{"path":"/ruta"},"session_id":"ses_
   (pendiente).
 
 
+## Rendimiento y contexto
+
+Línea base medida antes de v0.3.0 (T-0058.06, 2026-11-03, base `05141b9`).
+Todo es local y sin red; el tiempo usa reloj monótono y medianas. Los números
+dependen de la máquina, así que sirven para comparar la misma estación y para
+detectar saltos, no como valor absoluto.
+
+| Métrica | Valor | Objetivo | Comando |
+| --- | --- | --- | --- |
+| `tools/list`: tools / bytes | 32 tools / 30.734 bytes (30,0 KiB) | ≤ 32 KiB | `python3 -m tests.benchmarks` |
+| Arranque del CLI (`list`) | 201 ms (mediana de 3) | ≤ 300 ms | `python3 -m tests.benchmarks` |
+| Suite `--strict-budget` | 1.968 comprobaciones / 10,86 s | ≤ 11 s (presupuesto 11,6 s) | `python3 tests/run.py --strict-budget` |
+| Brief | 2.443 chars (54 % de 4.500) | ≤ `brief_budget_chars` | `wc -c .taiki/generated/brief.md` |
+| Contexto de docs | `docs/memoria.md` 610 líneas; `AGENTS.md` 234 | informativo | `wc -l docs/memoria.md AGENTS.md` |
+
+- `tests/benchmarks.py` imprime la foto de contexto junto a los benchmarks de
+  connect/export; `--verify` ya lo ejecuta. El catálogo se serializa compacto
+  (sin indentación) desde `mcp_layer.schemas.TOOLS`, que es lo que viaja en
+  `tools/list`.
+- El arranque mide `python3 cli.py list` contra una DB temporal vacía: `list`
+  necesita DB y así la medición no depende de los datos del proyecto.
+- El brief solo se mide si `.taiki/generated/brief.md` existe (está ignorado
+  por Git); en un worktree recién creado aparece como «sin generar».
+- Umbrales de decisión: `tools/list` > 32 KiB, arranque > 300 ms o suite
+  `--strict-budget` > 11 s. Si se supera alguno, se abre una tarea hija de
+  T-0058 con la métrica y la fecha, y se decide con datos; no se optimiza a
+  ciegas. El benchmark avisa pero no falla por tiempo: es dependiente de la
+  máquina y no debe bloquear el gate.
+- No se tocó código de producción: las tres métricas están dentro de objetivo.
+
+
 ## Notas de diseño
 
 - El estado es un contrato de flujo, no una frontera de seguridad: un agente con

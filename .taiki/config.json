@@ -2,6 +2,22 @@
   "version": 1,
   "project": "taiki",
   "name": "Taiki",
+  "memory": {
+    "enabled": true,
+    "write_policy": "balanced",
+    "project_budget_chars": 3000,
+    "user_budget_chars": 1200,
+    "brief_budget_chars": 4500,
+    "max_entry_chars": 600,
+    "max_playbook_chars": 12000,
+    "stale_after_days": 45,
+    "archive_after_days": 120,
+    "candidate_min_evidence": 2,
+    "candidate_lookback_days": 90,
+    "instructions_sync": true,
+    "skills_sync": true,
+    "user_scope": "project"
+  },
   "defaults": {
     "kind": "otro",
     "priority": "media"
@@ -38,6 +54,22 @@
       "strengths": [],
       "max_parallel": 1,
       "cost": 0.5
+    },
+    "curator": {
+      "model": "opencode-go/deepseek-v4.1-flash",
+      "variant": "high",
+      "strengths": [],
+      "max_parallel": 1,
+      "cost": 1.0,
+      "steps": 24
+    },
+    "merger": {
+      "model": "opencode-go/deepseek-v4.1-flash",
+      "variant": "high",
+      "strengths": [],
+      "max_parallel": 1,
+      "cost": 1.0,
+      "steps": 24
     }
   },
   "orchestrator": {

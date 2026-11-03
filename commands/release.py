@@ -18,8 +18,12 @@ Flujo:
 3. Hace ``merge --squash`` de la integración sobre el ``main`` actual y crea
    **un único commit** con los tickets desde el tag anterior y bullets por tipo
    de commit. No se reescribe ``main``.
-4. Actualiza ``CHANGELOG.md`` (lo crea si falta) y etiqueta el commit con un
-   tag anotado ``vX.Y.Z``.
+4. Alinea la versión del paquete (``ticketlib/__init__.py`` y
+   ``pyproject.toml``) con ``vX.Y.Z``, actualiza ``CHANGELOG.md`` (lo crea si
+   falta; retira el bloque ``Unreleased`` previo y no duplica la sección de la
+   versión) y etiqueta el commit con un tag anotado ``vX.Y.Z``. Ambos ficheros
+   de versión viajan en el mismo commit de release, de modo que código, commit y
+   tag coinciden.
 5. Reconcilia la integración con ``main``: el squash deja en ``main`` un commit
    que la rama de integración no tiene, así que se integra de vuelta con
    ``git merge --no-ff`` (idempotente: no hace nada si ``main`` ya es
@@ -74,6 +78,8 @@ DEFAULT_INTEGRATION = "develop"
 VERIFY_ENV = "RELEASE_VERIFY"
 DEFAULT_VERIFY = (sys.executable, "tests/run.py", "--verify")
 RELEASES_FILE = ".taiki/releases.json"
+VERSION_FILE = "ticketlib/__init__.py"
+PYPROJECT_FILE = "pyproject.toml"
 BUMPS = ("major", "minor", "patch")
 _BUMP_RANK = {"patch": 0, "minor": 1, "major": 2}
 # Orden estable de los grupos del resumen; el resto va al final como "otros".
@@ -107,6 +113,9 @@ _BOOKKEEPING = re.compile(
     r"|chore: reconciliar .+ tras v\d+\.\d+\.\d+"
     r")$"
 )
+# Bloque de trabajo en curso que algunas integraciones dejan en el CHANGELOG:
+# su contenido se regenera en la release y no debe sobrevivir a ella.
+_UNRELEASED_HEADING = re.compile(r"^##\s+Unreleased\s*$", re.IGNORECASE)
 
 
 def _git(root: Path, *args: str) -> str:
@@ -397,10 +406,102 @@ def _changelog(
     ).strip()
     if not existing.strip():
         return f"# Changelog\n\n{entry}\n"
-    if existing.startswith("# "):
-        title, _, rest = existing.partition("\n")
-        return f"{title}\n\n{entry}\n\n{rest.lstrip(chr(10))}".rstrip() + "\n"
-    return f"{entry}\n\n{existing}".rstrip() + "\n"
+    header, sections = _split_changelog(existing)
+    kept = [section for section in sections if not _is_stale_section(section, version)]
+    if header.startswith("# "):
+        parts = [header, entry, *kept]
+    else:
+        parts = [entry, header, *kept] if header else [entry, *kept]
+    return "\n\n".join(parts).rstrip() + "\n"
+
+
+def _split_changelog(existing: str) -> tuple[str, list[str]]:
+    """Separa el encabezado del fichero de sus secciones ``## …``."""
+    header: list[str] = []
+    sections: list[list[str]] = []
+    for line in existing.splitlines():
+        if line.startswith("## "):
+            sections.append([line])
+        elif sections:
+            sections[-1].append(line)
+        else:
+            header.append(line)
+    return "\n".join(header).strip(), [
+        "\n".join(section).strip() for section in sections
+    ]
+
+
+def _is_stale_section(section: str, version: str) -> bool:
+    """``## Unreleased`` o una sección previa de la misma versión."""
+    heading = section.splitlines()[0].strip() if section else ""
+    if _UNRELEASED_HEADING.match(heading):
+        return True
+    return bool(re.fullmatch(rf"##\s+v{re.escape(version)}(?:\s.*)?", heading))
+
+
+def _replace_line(
+    text: str, key: str, version: str, section: str | None = None
+) -> str:
+    """Sustituye ``key = "..."`` (una vez) y conserva el resto del fichero."""
+    lines = text.splitlines(keepends=True)
+    current = None
+    pattern = re.compile(
+        rf'^(?P<head>\s*{re.escape(key)}\s*=\s*")(?P<value>[^"]*)(?P<tail>".*)$'
+    )
+    for index, line in enumerate(lines):
+        header = line.strip()
+        if header.startswith("[") and header.endswith("]"):
+            current = header
+            continue
+        if section is not None and current != section:
+            continue
+        match = pattern.match(line.rstrip("\n"))
+        if match:
+            newline = "\n" if line.endswith("\n") else ""
+            lines[index] = (
+                f"{match.group('head')}{version}{match.group('tail')}{newline}"
+            )
+            return "".join(lines)
+    where = f" en {section}" if section else ""
+    raise TicketError(f"No se encontró {key} = \"...\"{where}")
+
+
+def _write_version(root: Path, version: str) -> list[str]:
+    """Alinea ``__version__`` y ``pyproject.toml`` con la versión del release.
+
+    Las dos escrituras son transaccionales: primero se valida y prepara todo y
+    solo después se escribe. Si algo falla, se restaura el contenido original y
+    se aborta antes de crear el commit, para que el árbol no quede a medias.
+    """
+    targets = (
+        (VERSION_FILE, "__version__", None),
+        (PYPROJECT_FILE, "version", "[project]"),
+    )
+    originals: dict[Path, str] = {}
+    planned: list[tuple[Path, str]] = []
+    try:
+        for relative, key, section in targets:
+            path = root / relative
+            if not path.is_file():
+                continue
+            original = path.read_text(encoding="utf-8")
+            updated = _replace_line(original, key, version, section)
+            originals[path] = original
+            planned.append((path, updated))
+        for path, updated in planned:
+            path.write_text(updated, encoding="utf-8")
+    except (OSError, TicketError) as exc:
+        for path, original in originals.items():
+            try:
+                path.write_text(original, encoding="utf-8")
+            except OSError:
+                pass
+        if isinstance(exc, TicketError):
+            raise
+        raise TicketError(
+            f"No se pudo actualizar la versión a {version}: {exc}"
+        ) from exc
+    return [path.relative_to(root).as_posix() for path, _ in planned]
 
 
 def _verify_command(explicit: str | list[str] | None) -> list[str]:
@@ -700,6 +801,7 @@ def run(
         detail = (merged.stderr or merged.stdout).strip()
         raise TicketError(f"No se pudo aplanar {branch} sobre {main}: {detail}")
 
+    version_files = _write_version(base, version)
     changelog_path = base / "CHANGELOG.md"
     existing = (
         changelog_path.read_text(encoding="utf-8")
@@ -710,6 +812,8 @@ def run(
         _changelog(existing, version, tickets, groups), encoding="utf-8"
     )
     _git(base, "add", "CHANGELOG.md")
+    if version_files:
+        _git(base, "add", *version_files)
     # El commit de release agrega tickets ya verificados y no tiene un T-XXXX
     # propio; los gates se ejecutaron antes. Los hooks no aportan nada aquí.
     _git(base, "commit", "--no-verify", "-m", message)
@@ -756,6 +860,7 @@ def run(
         {
             "commit": commit,
             "changelog": str(changelog_path),
+            "version_files": version_files,
             "marker": RELEASES_FILE,
             "branch": _git(base, "rev-parse", "--abbrev-ref", "HEAD"),
         }

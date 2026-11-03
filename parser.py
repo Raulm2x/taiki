@@ -14,6 +14,7 @@ from commands import (
     cmd_attach,
     cmd_audit,
     cmd_auto_link,
+    cmd_brief,
     cmd_claim,
     cmd_comment,
     cmd_commit,
@@ -32,6 +33,7 @@ from commands import (
     cmd_list,
     cmd_mcp_install,
     cmd_mcp_uninstall,
+    cmd_memory,
     cmd_new,
     cmd_next,
     cmd_open,
@@ -41,11 +43,13 @@ from commands import (
     cmd_repair_gaps,
     cmd_reject,
     cmd_release,
+    cmd_remember,
     cmd_reopen,
     cmd_scheme_install,
     cmd_servers,
     cmd_scheme_uninstall,
     cmd_show,
+    cmd_skills,
     cmd_stats,
     cmd_status,
     cmd_transition,
@@ -59,6 +63,7 @@ from commands import (
 )
 from ticketlib import domain
 from ticketlib.domain import KINDS, LINK_KINDS, PRIORITIES, STATUSES
+from ticketlib.memory import MEMORY_KINDS, MEMORY_SCOPES, MEMORY_STATUSES
 
 
 # ── Parser ───────────────────────────────────────────────────────────────────
@@ -312,6 +317,303 @@ def build_parser() -> argparse.ArgumentParser:
         help="Quita la marca scratch y lo devuelve a la tabla",
     )
     p.set_defaults(func=cmd_scratch)
+
+    p = sub.add_parser("memory", help="Gestiona la memoria semántica")
+    memory_sub = p.add_subparsers(dest="memory_action", required=True)
+    p.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser("add", help="Añade una memoria")
+    m.add_argument("--scope", choices=MEMORY_SCOPES, default="project")
+    m.add_argument("--kind", choices=MEMORY_KINDS, default="fact")
+    m.add_argument("--key")
+    m.add_argument("--title", required=True)
+    m.add_argument("--content", "--body", dest="content", required=True)
+    m.add_argument("--evidence", action="append", default=[])
+    m.add_argument("--confidence", type=float, default=0.5)
+    m.add_argument(
+        "--ticket-kinds",
+        nargs="+",
+        choices=KINDS,
+        help="Tipos de ticket aplicables; sin la opción, la memoria es general",
+    )
+    m.add_argument("--pin", action="store_true")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser("list", help="Lista memorias")
+    m.add_argument("--scope", choices=MEMORY_SCOPES)
+    m.add_argument("--kind", choices=MEMORY_KINDS)
+    m.add_argument(
+        "--ticket-kinds",
+        nargs="+",
+        choices=KINDS,
+        help="Solo memorias aplicables a alguno de esos tipos de ticket",
+    )
+    m.add_argument("--status", choices=MEMORY_STATUSES)
+    m.add_argument("--limit", type=int, default=50)
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser("show", help="Detalle de una memoria")
+    m.add_argument("code")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser("pending", help="Propuestas pendientes")
+    m.add_argument("--limit", type=int, default=50)
+    m.add_argument(
+        "--diff",
+        action="store_true",
+        help="Resume el cambio frente a la memoria sustituida",
+    )
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser(
+        "candidates", help="Candidatos de aprendizaje del histórico"
+    )
+    m.add_argument("--since", help="Ventana temporal: 90d o una fecha ISO")
+    m.add_argument(
+        "--kind", choices=MEMORY_KINDS, help="Filtra por tipo de memoria sugerida"
+    )
+    m.add_argument("--limit", type=int, default=None)
+    m.add_argument(
+        "--all", action="store_true", help="Ignora candidate_max y lista todo"
+    )
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser(
+        "review", help="Paquete de revisión para el curator"
+    )
+    m.add_argument(
+        "--write",
+        action="store_true",
+        help="Guarda el paquete en .taiki/generated/memory-review.json",
+    )
+    m.add_argument(
+        "--run-command",
+        action="store_true",
+        help="Ejecuta memory.review_command y deja sus salidas como propuestas",
+    )
+    m.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Con --run-command, valida sin crear propuestas",
+    )
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser(
+        "curate", help="Caduca, archiva y deduplica memorias de forma determinista"
+    )
+    m.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Muestra el plan sin escribir estados ni ledger",
+    )
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser("stats", help="Estadísticas de la memoria")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser(
+        "impact", help="Tendencias de cierre, intentos y lead time"
+    )
+    m.add_argument("--days", type=int, default=30)
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser(
+        "export", help="Exporta un snapshot JSON o Markdown de la memoria"
+    )
+    m.add_argument("path")
+    m.add_argument(
+        "--format", choices=["json", "markdown"], help="Formato de salida"
+    )
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser(
+        "import", help="Importa un snapshot con estrategia keep/replace/new"
+    )
+    m.add_argument("path")
+    m.add_argument("--strategy", choices=["keep", "replace", "new"], default="keep")
+    m.add_argument("--dry-run", action="store_true")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser(
+        "rollback", help="Revierte por asiento de ledger o por snapshot"
+    )
+    m.add_argument("ledger_id", nargs="?", type=int)
+    m.add_argument("--snapshot", help="Snapshot de memoria a restaurar")
+    m.add_argument("--dry-run", action="store_true")
+    m.add_argument("--why")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser("approve", help="Aprueba una propuesta")
+    m.add_argument("code")
+    m.add_argument("--actor", default="usuario")
+    m.add_argument("--why")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser("reject", help="Rechaza una propuesta")
+    m.add_argument("code")
+    m.add_argument("--actor", default="usuario")
+    m.add_argument("--why")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser("pin", help="Fija una memoria en el brief")
+    m.add_argument("code")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser("unpin", help="Desfija una memoria")
+    m.add_argument("code")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser("rm", help="Archiva una memoria (nunca la borra)")
+    m.add_argument("code")
+    m.add_argument("--why", required=True)
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser("edit", help="Edita una memoria")
+    m.add_argument("code")
+    m.add_argument("-t", "--title")
+    m.add_argument("--content", "--body", dest="content")
+    m.add_argument("--description")
+    m.add_argument("--key")
+    m.add_argument("--kind", choices=MEMORY_KINDS)
+    m.add_argument("--confidence", type=float)
+    m.add_argument("--paths", nargs="+")
+    m.add_argument(
+        "--ticket-kinds",
+        nargs="+",
+        choices=KINDS,
+        help="Reemplaza las etiquetas de tipo de ticket de la memoria",
+    )
+    m.add_argument("--why")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    p = memory_sub.add_parser(
+        "playbook", help="Playbooks: procedimientos exportables como skills"
+    )
+    playbook_sub = p.add_subparsers(dest="playbook_action", required=True)
+    p.set_defaults(func=cmd_memory)
+
+    m = playbook_sub.add_parser("add", help="Crea un playbook")
+    m.add_argument("--slug", required=True)
+    m.add_argument("--title", required=True)
+    m.add_argument("--description", required=True)
+    source = m.add_mutually_exclusive_group(required=True)
+    source.add_argument("--content", "--body", dest="content")
+    source.add_argument("--file", help="Lee el cuerpo de un fichero")
+    m.add_argument(
+        "--support",
+        action="append",
+        default=[],
+        metavar="RUTA",
+        help="Fichero de apoyo; se clasifica por extensión",
+    )
+    m.add_argument("--evidence", action="append", default=[])
+    m.add_argument("--confidence", type=float, default=0.5)
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = playbook_sub.add_parser("list", help="Lista playbooks")
+    m.add_argument("--status", choices=MEMORY_STATUSES)
+    m.add_argument(
+        "--all", action="store_true", help="Incluye archivados y sustituidos"
+    )
+    m.add_argument("--limit", type=int, default=50)
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = playbook_sub.add_parser("show", help="Detalle de un playbook")
+    m.add_argument("ref", help="Slug o código M-####")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = playbook_sub.add_parser(
+        "export", help="Exporta skills a .taiki/generated/skills"
+    )
+    m.add_argument("ref", nargs="?", help="Slug o código M-####")
+    m.add_argument("--all", action="store_true", help="Exporta todos los activos")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = playbook_sub.add_parser(
+        "archive", help="Archiva un playbook (nunca lo borra)"
+    )
+    m.add_argument("ref", help="Slug o código M-####")
+    m.add_argument("--why", required=True)
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    p = sub.add_parser(
+        "skills", help="Skills curadas de AutoSkills para el stack del proyecto"
+    )
+    skills_sub = p.add_subparsers(dest="skills_action", required=True)
+    p.set_defaults(func=cmd_skills)
+
+    s = skills_sub.add_parser(
+        "suggest", help="Sugiere skills curadas para el stack detectado"
+    )
+    s.add_argument("--limit", type=int, default=20)
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_skills)
+
+    s = skills_sub.add_parser(
+        "install", help="Instala una skill como playbook propuesto (solo usuario)"
+    )
+    s.add_argument("name", help="Nombre de la skill en el registro")
+    s.add_argument("--yes", action="store_true", help="Confirma sin preguntar")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_skills)
+
+    s = skills_sub.add_parser("list", help="Lista las skills instaladas")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_skills)
+
+    s = skills_sub.add_parser(
+        "remove", help="Archiva una skill instalada (nunca la borra)"
+    )
+    s.add_argument("name")
+    s.add_argument("--why")
+    s.set_defaults(func=cmd_skills)
+
+    s = skills_sub.add_parser(
+        "sync", help="Exporta los playbooks activos a .taiki/generated/skills"
+    )
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_skills)
+
+    p = sub.add_parser(
+        "remember", help="Atajo: guarda una preferencia activa del usuario"
+    )
+    p.add_argument("text", nargs="+")
+    p.add_argument("-t", "--title")
+    p.add_argument("--ticket", help="Ticket de evidencia (si no, la sesión)")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_remember)
+
+    p = sub.add_parser("brief", help="Brief operativo de la memoria")
+    p.add_argument("--write", action="store_true", help="Escribe el artefacto")
+    p.add_argument("--json", action="store_true")
+    p.add_argument(
+        "--section", choices=("project", "user", "all"), default="all"
+    )
+    p.add_argument("--budget", type=int, help="Presupuesto en caracteres")
+    p.set_defaults(func=cmd_brief)
 
     p = sub.add_parser("stats", help="Resumen de tickets")
     p.add_argument("--json", action="store_true")

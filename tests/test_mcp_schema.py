@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from mcp_layer import handlers, schemas
 from ticketlib import repo
@@ -17,13 +18,15 @@ def run(h: Harness) -> None:
         "comment", "link", "stats", "next", "agents", "status", "whoami",
         "heartbeat", "checkpoint", "retry", "reassign", "schedule",
         "worktree_create", "worktree_list", "promote", "scratch_drop",
-        "health",
+        "health", "brief", "memory_search", "memory_write",
+        "memory_playbook", "memory_checklist", "memory_candidates",
+        "memory_stats", "skills_suggest",
     }
     catalog_names = {tool["name"] for tool in schemas.TOOLS}
     h.eq(
         catalog_names,
         expected_catalog,
-        "tools/list expone las 19 herramientas esperadas",
+        "tools/list expone todas las herramientas esperadas",
     )
     read_only = {
         tool["name"]
@@ -34,7 +37,9 @@ def run(h: Harness) -> None:
         read_only,
         {
             "list", "get", "stats", "next", "agents", "schedule",
-            "status", "whoami", "worktree_list", "health",
+            "status", "whoami", "worktree_list", "health", "brief",
+            "memory_search", "memory_playbook", "memory_checklist",
+            "memory_candidates", "memory_stats", "skills_suggest",
         },
         "readOnlyHint solo se anota en las herramientas de lectura",
     )
@@ -57,6 +62,23 @@ def run(h: Harness) -> None:
             spec.name for spec in schemas.TOOL_SPECS if not spec.read_only
         ),
         "MUTATING_TOOLS se deriva de read_only",
+    )
+    module_root = Path(__file__).resolve().parents[1] / "mcp_layer"
+    line_counts = {
+        path.relative_to(module_root).as_posix(): len(
+            path.read_text(encoding="utf-8").splitlines()
+        )
+        for path in module_root.rglob("*.py")
+    }
+    oversized = sorted(
+        f"{name} ({lines})"
+        for name, lines in line_counts.items()
+        if lines > 700
+    )
+    h.ok(
+        not oversized,
+        "ningún módulo MCP supera 700 líneas"
+        + (f": {', '.join(oversized)}" if oversized else ""),
     )
     transition_tool = next(
         tool for tool in schemas.TOOLS if tool["name"] == "transition"

@@ -131,17 +131,47 @@ def unresolved(conn: Any) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
-def uncommitted(conn: Any) -> list[dict[str, Any]]:
-    """Confirmados, completados o verificados sin ningún commit enlazado."""
+_CLOSED_STATUSES = "('completado', 'verificado', 'confirmado')"
+# Una épica es un ticket con hijos (aunque estén archivados): su commit no
+# existe como tal porque el trabajo se reparte entre las hojas.
+_EPIC_EXISTS = "EXISTS (SELECT 1 FROM tickets c WHERE c.parent_id = t.id)"
+_NO_COMMIT = (
+    "NOT EXISTS (SELECT 1 FROM links l "
+    "WHERE l.ticket_id = t.id AND l.kind = 'commit')"
+)
+
+
+def _closed_without_commit(conn: Any, *, epics: bool) -> list[dict[str, Any]]:
     rows = conn.execute(
         "SELECT t.code, t.title, t.status FROM tickets t "
         "WHERE t.archived = 0 "
-        "AND t.status IN ('completado', 'verificado', 'confirmado') "
-        "AND NOT EXISTS (SELECT 1 FROM links l "
-        "WHERE l.ticket_id = t.id AND l.kind = 'commit') "
+        "AND t.status IN " + _CLOSED_STATUSES + " "
+        "AND " + ("" if epics else "NOT ") + _EPIC_EXISTS + " "
+        "AND " + _NO_COMMIT + " "
         "ORDER BY t.code DESC"
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def uncommitted(conn: Any) -> list[dict[str, Any]]:
+    """Hojas cerradas sin ningún commit enlazado.
+
+    Las épicas quedan fuera a propósito: no tienen commit propio por diseño
+    y mezclarlas con hojas reales convertía el audit en ruido. La exclusión
+    solo alcanza a tickets con hijos; una hoja cerrada sin enlace de commit
+    sigue apareciendo. Las épicas descartadas se explican con
+    :func:`uncommitted_epics`.
+    """
+    return _closed_without_commit(conn, epics=False)
+
+
+def uncommitted_epics(conn: Any) -> list[dict[str, Any]]:
+    """Épicas cerradas sin commit enlazado, excluidas de :func:`uncommitted`.
+
+    Se exponen aparte para que el mensaje pueda explicar el recuento sin
+    volver a mezclarlas con las hojas que sí requieren revisión.
+    """
+    return _closed_without_commit(conn, epics=True)
 
 
 def audit(
@@ -151,7 +181,12 @@ def audit(
     limit: int = 100,
     stalled_days: int = 2,
 ) -> dict[str, Any]:
-    """Resumen completo para ``taiki audit``."""
+    """Resumen completo para ``taiki audit``.
+
+    ``uncommitted_epics`` es aditivo: informa de las épicas cerradas sin
+    commit enlazado que ``uncommitted`` excluye a propósito, para explicar el
+    recuento sin volver a mezclarlas con las hojas.
+    """
     fleet = servers.inventory(conn)
     return {
         "repo": str(Path(repo).expanduser().resolve()),
@@ -161,6 +196,7 @@ def audit(
         "stale_claims": stale_claims(conn),
         "unresolved": unresolved(conn),
         "uncommitted": uncommitted(conn),
+        "uncommitted_epics": uncommitted_epics(conn),
         "misnumbered": renumber_plan(conn),
         "gaps": code_gaps(conn),
         "hidden": hidden(conn),

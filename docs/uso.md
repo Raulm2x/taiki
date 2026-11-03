@@ -71,9 +71,166 @@ taiki scheme-install           # registra ticket:// para Ctrl+clic
 taiki tui                      # TUI con toggles para confirmar
 ```
 
-`--json` está disponible en `list`, `show`, `stats`, `next`, `guard` y `audit`.
+`--json` está disponible en `list`, `show`, `stats`, `next`, `guard`, `audit`,
+`memory`, `remember`, `brief` y `skills`.
 En `list` y `show`, `--compact` y `--json-summary` implican `--json`: no hay
 combinaciones que se ignoren en silencio.
+
+### Memoria y brief
+
+La memoria guarda hechos, convenciones y pitfalls reutilizables; no sustituye
+al ticket ni guarda transcripciones. Las propuestas de los agentes quedan
+pendientes hasta que el usuario las aprueba. El detalle está en
+[Memoria](memoria.md).
+
+```bash
+taiki remember "Prefiero commits en español"        # preferencia (scope user)
+taiki remember "El gate exige ruff" --ticket T-0045.05
+
+taiki memory add --scope project --kind convention \
+  --title "Los docs van en docs/" \
+  --content "La documentación vive en docs/ y se enlaza desde docs/README.md." \
+  --evidence T-0045.05 --pin
+
+taiki memory list                      # vigentes y propuestas
+taiki memory list --kind pitfall
+taiki memory show M-0001               # detalle, uso y ledger
+taiki memory pending                   # propuestas pendientes
+taiki memory pending --diff            # diff frente a la memoria sustituida
+taiki memory approve M-0002            # solo el usuario
+taiki memory reject M-0003 --why "Fallo transitorio"
+taiki memory edit M-0001 --content "Texto corregido"
+taiki memory pin M-0001                # fijar en el brief
+taiki memory unpin M-0001
+taiki memory rm M-0001 --why "Ya no aplica"  # archiva, no borra
+
+taiki memory candidates                # candidatos deterministas del histórico
+taiki memory candidates --since 30d --kind pitfall --limit 5
+taiki memory review                    # paquete para el curator
+taiki memory review --write            # .taiki/generated/memory-review.json
+taiki memory review --run-command      # comando opt-in → propuestas
+taiki memory review --run-command --dry-run
+
+taiki memory curate                    # caduca/archiva/deduplica sin borrar
+taiki memory curate --dry-run
+taiki memory curate --json
+taiki memory stats                     # conteos, presupuesto, uso y routing
+taiki memory stats --json
+taiki memory impact --days 30          # tendencias, sin causalidad
+taiki memory impact --days 30 --json
+
+taiki memory export .taiki/generated/memoria.json
+taiki memory export .taiki/generated/memoria.md --format markdown
+taiki memory import .taiki/generated/memoria.json --strategy keep --dry-run
+taiki memory import .taiki/generated/memoria.json --strategy replace
+taiki memory rollback 42               # por asiento de ledger
+taiki memory rollback 42 --dry-run
+taiki memory rollback --snapshot .taiki/generated/memoria.json
+
+taiki brief                            # brief operativo
+taiki brief --write                    # .taiki/generated/brief.md
+taiki brief --section project --budget 2000
+
+taiki memory playbook add --slug revisar-pr \
+  --title "Revisar PR" \
+  --description "Checklist para revisar un pull request." \
+  --content "1. Lee el diff. 2. Ejecuta los gates." \
+  --support references/checklist.md \
+  --evidence T-0047.05
+taiki memory playbook list             # activos y propuestos
+taiki memory playbook list --all       # incluye archivados
+taiki memory playbook show revisar-pr
+taiki memory playbook export --all     # .taiki/generated/skills/<slug>/
+taiki memory playbook archive revisar-pr --why "Ya no aplica"
+
+taiki skills suggest                   # skills curadas para el stack detectado
+taiki skills suggest --limit 10 --json
+taiki skills install fastapi --yes     # playbook propuesto, pendiente de aprobar
+taiki skills list                      # instaladas, estado y origen
+taiki skills remove fastapi --why "Ya no uso FastAPI"  # archiva
+taiki skills sync                      # exporta activos y retira obsoletos
+```
+
+`memory candidates` agrupa rework, rechazos, bloqueos, cierres costosos,
+routing, hotspots y directivas del usuario. Cada candidato lleva evidencia,
+muestra y confianza; el motor no escribe memoria. `memory review` reúne
+candidatos, memorias vigentes, tickets recientes, umbrales e instrucciones, y
+`--write` lo guarda de forma atómica para que lo lea el curator.
+
+El **curator** es un subagente que lee el paquete de revisión, propone como
+máximo 5 memorias y prefiere `patch`/`supersede` sobre altas nuevas. No aprueba,
+no edita código y no lanza subagentes. El conductor lo ejecuta en background
+cada 5 tickets verificados/cerrados o cuando hay 3 o más candidatos, y publica
+las propuestas pendientes. La aprobación sigue siendo del usuario.
+
+`memory curate` aplica caducidad, archivo y dedupe deterministas: `active →
+stale`, `stale → archived`, consolida duplicados y recorta el presupuesto por
+menor prioridad. `pin`/`lock` quedan exentos y nada se borra ni se aprueba.
+`--dry-run` muestra el plan sin escribir. `memory stats` resume estado, scope,
+kind, presupuesto, propuestas, uso y routing; `memory impact` muestra
+tendencias semanales de cierres, intentos, lead time y verificación. El impacto
+es descriptivo: no demuestra causalidad.
+
+`memory export` escribe un snapshot JSON o Markdown con versión y checksum;
+`memory import` valida el checksum y acepta `--strategy keep|replace|new` y
+`--dry-run`, informando conflictos. `memory rollback <ledger-id>` restaura el
+estado anterior a un asiento; `--snapshot <fichero>` restaura un snapshot
+exportado y archiva lo que sobra. Ambos son auditables y admiten `--dry-run`.
+El auto-curado (`memory.auto_curate`) y `memory.review_command` son opt-in: el
+segundo recibe el paquete por stdin y solo deja propuestas para el usuario.
+
+`taiki mcp install` regenera el brief y lo añade a las instrucciones del
+proyecto para que el agente lo reciba al empezar. Una memoria de origen agente
+exige evidencia y no puede aprobarse desde un agente: `approve` y `reject`
+requieren el actor `usuario`.
+
+Los **playbooks** son procedimientos completos con evidencia y ficheros de
+apoyo (`references/`, `scripts/`, `assets/` o `templates/`). `add` acepta
+`--content` o `--file` para el cuerpo y `--support <ruta>` repetible; el apoyo
+se lee del disco y se guarda con su nombre. `export` escribe
+`.taiki/generated/skills/<slug>/SKILL.md` y sus apoyos; `--all` exporta los
+activos y retira los skills de playbooks archivados. `archive` exige `--why` y
+nunca borra. Los scripts se guardan como texto y no se ejecutan.
+
+El brief muestra solo el índice (slug, título, descripción y código). El cuerpo
+se carga bajo demanda con `memory_playbook(slug)` o el recurso
+`taiki://playbook/{slug}`. `taiki mcp install` sincroniza
+`.taiki/generated/skills` con la lista `skills` de OpenCode y `uninstall` la
+retira.
+
+### Skills curadas de AutoSkills
+
+`taiki skills` integra el catálogo de [AutoSkills](https://www.autoskills.sh/)
+como fuente opcional de playbooks. La detección de stack es local (manifiestos,
+lockfiles y configuración) y no usa Node. `suggest` cruza ese stack con el
+registro y muestra fuente, commit, hash, revisión y comprobación de seguridad.
+
+`install` es exclusivo del usuario/CLI y descarga el bundle verificado con
+SHA-256 y `bundleHash`; el resultado nace como playbook `proposed` (`M-####`) y
+solo se activa con `taiki memory approve`. No existe tool MCP de instalación:
+`skills_suggest` solo lee. `list` muestra las instaladas, `remove` archiva (no
+borra) y `sync` exporta los playbooks activos y retira los obsoletos. El
+registro se cachea 24 h en `.taiki/generated/skills/.cache/registry.json` y
+`TAIKI_SKILLS_REGISTRY` permite usar un registro local o un espejo.
+
+Los scripts de una skill se guardan como texto y nunca se ejecutan. La
+desinstalación es `taiki skills remove <nombre>` seguida de `taiki skills sync`;
+`taiki mcp uninstall` retira el MCP, el brief y la ruta de skills de
+`opencode.json`. Detalle y límites: [Memoria](memoria.md#skills-curadas-de-autoskills).
+
+### Routing advice y checklist
+
+`agents(kind=...)` y `schedule` incluyen un bloque `advice`: el perfil que
+mejor resolvió tareas de ese tipo y rutas en el histórico cerrado. Solo aparece
+con al menos 5 muestras e incluye `sample`, `first_pass`, `confidence`
+(cota inferior de Wilson), `avg_attempts`, `variant`, `steps` y `reason`. Es
+una sugerencia: **no cambia la configuración ni lanza agentes**.
+
+Antes de revisar, el reviewer pide
+`memory_checklist(kind="pitfall"|"convention", paths=[...], limit=5)`. Ahí
+`kind` es el tipo de memoria, no el tipo de ticket; cada entrada es compacta y
+lleva evidencia. Completa con `memory_search` de pitfalls y, si detecta un
+fallo recurrente, propone un `pitfall` sin aprobarlo.
 
 ### Épicas y tareas
 
@@ -291,6 +448,21 @@ enlazar un commit y abrir la sesión del agente.
   reabrir), comentar, copiar código al portapapeles, enlazar commit y abrir
   sesión. Las acciones destructivas piden confirmación y todo pasa por el
   dominio (mismas validaciones y eventos que el CLI).
+- **Pantalla de memoria** (`Y`): propuestas, entradas activas, stale,
+  playbooks y presupuesto sin salir del dashboard. La cabecera muestra los
+  conteos por estado, el presupuesto de `project`/`user`, los playbooks y los
+  umbrales de frescura/archivo. `h/l` (o `←/→`) ciclan los filtros
+  `propuestas → activas → stale → playbooks → todas`; `j/k`, `PgUp/PgDn` y
+  `g/G` recorren la lista, `tab` cambia el foco al detalle y `?` muestra la
+  ayuda. La lista muestra código, estado, tipo y título; el detalle añade
+  contenido, evidencia, uso, presupuesto y ficheros del playbook.
+  Las acciones son explícitas del usuario: `a` aprueba una propuesta, `x` la
+  rechaza con un motivo, `p` fija o desfija en el brief, `r` archiva con
+  confirmación y `o` exporta el playbook a `.taiki/generated/skills/<slug>/`.
+  Aprobar y rechazar nunca son automáticos y ninguna acción borra: archivar
+  conserva el histórico en el ledger. Si la memoria está deshabilitada o
+  vacía, la pantalla lo avisa y sigue siendo navegable. `q`, `Esc` o `Y`
+  vuelven a la lista de tickets.
 - **Auto-refresh**: cada 2 s (`--refresh N`, `0` lo desactiva) se consulta una
   huella barata (`MAX(updated_at)`, `MAX(events.id)`) y solo se recarga si
   cambió; cada 20 s se revalidan las sesiones. `R` pausa/activa y la barra

@@ -5,19 +5,74 @@
 # P4 (T-0028) añadió integración real (dependencias, orquestador, scheduler,
 # status a escala y smoke CLI). Techo revisado una vez; a partir de aquí, podar.
 # P4: integración real (status, atribución, worktree y smoke opt-in).
-max_seconds = 5.0
-baseline_checks = 1039
+# P0/P1 (T-0045.01): +2 módulos de memoria (105 comprobaciones) y el esquema v5.
+# Revisión única del techo para la fundación de memoria; a partir de aquí, podar.
+# P1 (T-0045.02): +2 módulos de contrato de CLI y brief (+46 comprobaciones).
+# P2 integración (T-0046.07): 1411 checks reales; consolidación de ramas
+# paralelas; podar antes de volver a subir. La suite combinada ronda 7.2-7.5s;
+# CI conserva su presupuesto propio de 8.0s.
+# P3 núcleo (T-0047.01): +68 comprobaciones del nuevo test_memory_playbooks
+# (slug, validación, apoyos, export/idempotencia, brief_index y presupuesto).
+# Revisión única del techo por el módulo nuevo; a partir de aquí, podar.
+# P3 CLI (T-0047.02): +32 comprobaciones de contrato del CLI de playbooks y
+# +0.07s de suite por el nuevo módulo (medido 7.57s; CI conserva 8.0s).
+# P3 MCP/sync (T-0047.03): +16 comprobaciones de contrato MCP y sync de skills.
+# P3 advice/checklist (T-0047.04): +30 comprobaciones y ~0.2s; medido 7.66-8.04s
+# según carga, así que sube el margen local y el de CI (8.3s) una vez.
+# P3 brief/hints (T-0047.05): +17 comprobaciones y ~0.1s (8.02-8.18s medidos).
+# T-0052 ticket_kinds: +19 comprobaciones (migración v6, filtros store/MCP/CLI,
+# checklist por tipo de ticket y hints). Revisión única del techo; a partir de
+# aquí, podar antes de volver a subir.
+# T-0051 poda de candidates: +1 check de API pública tras partir el módulo.
+# T-0053 propuestas visibles: +13 checks (brief 0/1/varias y presupuesto,
+# status JSON/humano y health con aviso de más de 7 días). Revisión única del
+# techo; a partir de aquí, podar antes de volver a subir.
+# T-0048.01 curado determinista: +28 checks (stale/archive, pin/lock, dedupe
+# exacto/clave/similitud, dry_run, presupuesto y ledger). Revisión única del
+# techo por el módulo nuevo; a partir de aquí, podar antes de volver a subir.
+# T-0048.02 CLI de curado/stats/impact: +35 checks y dos módulos nuevos
+# (contrato JSON/humano, dry-run, stats e impact). Medido 8.62-8.80s; se sube
+# el margen local una vez y CI pasa a 9.5s para runners compartidos.
+# T-0048.03 MCP memory_stats/health: +22 checks y dos módulos nuevos
+# (solo lectura, modos, health OK/pendiente/stale/presupuesto/artefactos/roto).
+# Medido 9.17s en la primera pasada; se amplía el margen local una vez.
+# T-0048.04 export/import/rollback: +33 checks y dos módulos nuevos
+# (checksum, secretos, roundtrip, estrategias, dry-run, rollback y CLI).
+# Medido 9.35s; se amplía el margen local y CI para runners compartidos.
+# T-0048.05 auto-curado/review_command: +14 checks; medido 9.79s y
+# test_hygiene 0.96s por el catálogo creciente. Se ajusta el margen local y
+# el de módulo una vez.
+# T-0048.05 status/next: +6 checks de integración; medido 9.65s.
+# T-0049.01 núcleo autoskills: +92 checks en tres módulos nuevos
+# (registro/hashes/caché, detección+catálogo e instalación verificada).
+# Revisión única del techo; a partir de aquí, podar antes de volver a subir.
+# Medido 10.02s con la suite en 1837 checks; se amplía el margen local y CI
+# una vez para runners con carga.
+# T-0049.02 CLI/MCP skills: +41 checks (contrato CLI, MCP read-only y catálogo)
+# y ~0.5s; medido 10.48-10.6s, se amplía el margen local y CI una vez.
+# T-0055 pantalla Memoria de la TUI: +59 comprobaciones del nuevo
+# test_tui_memory y ~0.1s; medido 10.88s con 1942 checks. Revisión única del
+# techo por el módulo nuevo; a partir de aquí, podar antes de volver a subir.
+# T-0056 subagente merger: +20 comprobaciones (nuevo test_merger_agent y la
+# aserción de permisos en test_orchestrator); el tiempo se mantiene (10.88s),
+# así que no se amplía el margen. Revisión única del techo; a partir de aquí,
+# podar antes de volver a subir.
+# T-0058.03 auditoría sin épicas: +4 comprobaciones (épica confirmada fuera,
+# hoja sin commit dentro, hoja con commit fuera y lista de épicas excluidas).
+# Revisión única del techo por el comportamiento nuevo; a partir de aquí, podar.
+max_seconds = 11.6
+baseline_checks = 1966
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
 
 [module]
-max_seconds = 0.75
+max_seconds = 1.1
 
 # Perfil de CI: los runners compartidos son más lentos y no deben fallar por
 # ruido. Se aplica con CI=true (o TAIKI_CI=true) y cada valor se puede
 # sobrescribir con TAIKI_SUITE_BUDGET / TAIKI_MODULE_BUDGET.
 [ci.suite]
-max_seconds = 8.0
+max_seconds = 12.0
 
 [ci.module]
 max_seconds = 1.5
