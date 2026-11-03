@@ -94,22 +94,23 @@ def _aging(h: Harness) -> None:
                 "SELECT code, status FROM memories ORDER BY code"
             )
         }
-        h.eq(result["stale"], [old["code"]], "active→stale por inactividad")
-        h.eq(
-            result["archived"],
-            [stale_old["code"]],
-            "stale→archived por antigüedad",
+        h.ok(
+            result["stale"] == [old["code"]]
+            and result["archived"] == [stale_old["code"]],
+            "active→stale por inactividad y stale→archived por antigüedad",
         )
-        h.eq(status[recent["code"]], "active", "la memoria reciente sigue activa")
-        h.eq(status[old["code"]], "stale", "la memoria antigua queda stale")
-        h.eq(
-            status[stale_old["code"]],
-            "archived",
-            "la stale antigua se archiva, no se borra",
+        h.ok(
+            status[recent["code"]] == "active"
+            and status[old["code"]] == "stale"
+            and status[stale_old["code"]] == "archived"
+            and status[stale_recent["code"]] == "stale",
+            "la memoria reciente sigue activa y la stale reciente se conserva",
         )
-        h.eq(status[stale_recent["code"]], "stale", "la stale reciente se conserva")
-        h.eq(status[pinned["code"]], "active", "pin queda exento de stale")
-        h.eq(status[locked["code"]], "active", "lock queda exento de stale")
+        h.ok(
+            status[pinned["code"]] == "active"
+            and status[locked["code"]] == "active",
+            "pin y lock quedan exentos de stale",
+        )
         actions = {
             row["action"]
             for row in conn.execute("SELECT action FROM memory_ledger")
@@ -192,34 +193,26 @@ def _dedupe(h: Harness) -> None:
         }
         merged = {item["code"]: item["into"] for item in result["merged"]}
         h.ok(
-            exact_b["code"] in merged and merged[exact_b["code"]] == exact_a["code"],
-            "dedupe exacto por fingerprint archiva el perdedor",
-        )
-        h.ok(
-            key_b["code"] in merged and merged[key_b["code"]] == key_a["code"],
-            "dedupe por clave archiva el perdedor",
+            merged.get(exact_b["code"]) == exact_a["code"]
+            and merged.get(key_b["code"]) == key_a["code"],
+            "dedupe exacto y por clave archivan el perdedor",
         )
         h.ok(
             near_b["code"] in merged or near_a["code"] in merged,
             "near-duplicate por similitud se consolida",
         )
-        h.eq(
-            status[pin_b["code"]],
-            "active",
-            "el duplicado pinned gana y no se archiva",
-        )
-        h.eq(
-            status[pin_a["code"]],
-            "archived",
-            "el duplicado no protegido se archiva",
-        )
-        h.eq(before, after, "el curado nunca borra filas")
         h.ok(
-            conn.execute(
+            status[pin_b["code"]] == "active"
+            and status[pin_a["code"]] == "archived",
+            "el duplicado pinned gana y el no protegido se archiva",
+        )
+        h.ok(
+            before == after
+            and conn.execute(
                 "SELECT 1 FROM memory_ledger WHERE action = 'merge' LIMIT 1"
             ).fetchone()
             is not None,
-            "el merge deja asiento en el ledger",
+            "el curado nunca borra filas y el merge deja asiento",
         )
     finally:
         conn.close()
@@ -241,9 +234,12 @@ def _dry_run(h: Harness) -> None:
             "SELECT status FROM memories WHERE code = ?", (old["code"],)
         ).fetchone()[0]
         ledger_after = conn.execute("SELECT COUNT(*) FROM memory_ledger").fetchone()[0]
-        h.eq(result["stale"], [old["code"]], "dry_run informa del cambio previsto")
-        h.eq(status, "active", "dry_run no cambia el estado")
-        h.eq(ledger_after, ledger_before, "dry_run no escribe en el ledger")
+        h.ok(
+            result["stale"] == [old["code"]]
+            and status == "active"
+            and ledger_after == ledger_before,
+            "dry_run informa del cambio previsto sin escribir estado ni ledger",
+        )
 
         real = curate(conn, _BASE)
         h.eq(real["stale"], [old["code"]], "el curado real aplica el plan")
@@ -296,37 +292,28 @@ def _budget(h: Harness) -> None:
             )
         }
         h.ok(
-            budget["used_before"] == 70 and budget["used"] <= budget["limit"],
-            "el presupuesto se reduce hasta el límite",
-        )
-        h.eq(budget["over"], 0, "el scope queda dentro del presupuesto")
-        h.eq(
-            budget["retired"],
-            [low["code"], high["code"]],
-            "se archiva primero la menor prioridad",
+            budget["used_before"] == 70
+            and budget["used"] <= budget["limit"]
+            and budget["over"] == 0,
+            "el presupuesto se reduce hasta el límite y queda dentro",
         )
         h.ok(
-            low["code"] in result["archived"] and high["code"] in result["archived"],
-            "los retirados por presupuesto se reportan como archivados",
-        )
-        h.eq(
-            status[pinned["code"]],
-            "active",
-            "pin queda exento del recorte por presupuesto",
-        )
-        h.ok(
-            all(
-                status[item["code"]] == "archived"
-                for item in (low, high)
-            )
-            and status[pinned["code"]] != "archived",
-            "el recorte nunca borra ni toca el pin",
+            budget["retired"] == [low["code"], high["code"]]
+            and low["code"] in result["archived"]
+            and high["code"] in result["archived"],
+            "se archiva primero la menor prioridad y se reporta",
         )
         live = conn.execute(
             "SELECT COUNT(*) FROM memories WHERE status IN (?, ?, ?)",
             BUDGET_STATUSES,
         ).fetchone()[0]
-        h.eq(live, 1, "solo sobrevive la entrada protegida dentro del presupuesto")
+        h.ok(
+            status[pinned["code"]] == "active"
+            and status[low["code"]] == "archived"
+            and status[high["code"]] == "archived"
+            and live == 1,
+            "el recorte nunca borra ni toca el pin y solo sobrevive el protegido",
+        )
     finally:
         conn.close()
 

@@ -97,9 +97,9 @@ def _stats(h: Harness) -> None:
     conn.commit()
 
     data = stats(conn)
-    h.eq(
-        set(data),
-        {
+    h.ok(
+        set(data)
+        == {
             "generated_at",
             "total",
             "by_status",
@@ -109,36 +109,27 @@ def _stats(h: Harness) -> None:
             "proposals",
             "usage",
             "routing",
-        },
-        "stats devuelve un contrato estable",
-    )
-    h.ok(
-        data["total"] >= 4
+        }
+        and data["total"] >= 4
         and data["by_status"]["active"] >= 1
         and data["by_status"]["proposed"] == 1
         and data["by_status"]["stale"] == 1
         and data["by_status"]["archived"] == 1,
-        "stats cuenta por estado",
+        "stats devuelve un contrato estable y cuenta por estado",
     )
     h.ok(
-        data["by_scope"]["project"] >= 4 and data["by_kind"]["convention"] >= 1,
-        "stats agrupa por scope y kind",
-    )
-    h.ok(
-        {"project", "user"} <= set(data["budget"])
+        data["by_scope"]["project"] >= 4
+        and data["by_kind"]["convention"] >= 1
+        and {"project", "user"} <= set(data["budget"])
         and data["budget"]["project"]["limit"] > 0,
-        "stats incluye presupuesto por scope",
-    )
-    h.eq(
-        data["proposals"]["codes"],
-        [proposal["code"]],
-        "stats expone las propuestas pendientes",
+        "stats agrupa por scope/kind e incluye presupuesto por scope",
     )
     h.ok(
-        data["usage"]["events"] >= 2
+        data["proposals"]["codes"] == [proposal["code"]]
+        and data["usage"]["events"] >= 2
         and data["usage"]["use_count"] >= 1
         and data["usage"]["helpful"] >= 1,
-        "stats agrega uso y feedback",
+        "stats expone propuestas y agrega uso y feedback",
     )
     route = next(
         item
@@ -153,11 +144,13 @@ def _stats(h: Harness) -> None:
     )
 
     payload = _json(["memory", "stats", "--json"])
-    h.eq(set(payload), set(data), "el JSON de stats conserva el contrato")
     code, human, _ = _run(["memory", "stats"])
     h.ok(
-        code == 0 and "Memorias:" in human and "Presupuesto:" in human,
-        "la salida humana de stats es clara",
+        set(payload) == set(data)
+        and code == 0
+        and "Memorias:" in human
+        and "Presupuesto:" in human,
+        "el CLI de stats conserva el contrato JSON y la salida humana",
     )
 
     conn.execute(
@@ -196,9 +189,9 @@ def _impact(h: Harness) -> None:
     conn.commit()
 
     data = impact(conn, days=30)
-    h.eq(
-        set(data),
-        {
+    h.ok(
+        set(data)
+        == {
             "generated_at",
             "days",
             "cutoff",
@@ -208,30 +201,30 @@ def _impact(h: Harness) -> None:
             "verification",
             "trend",
             "notes",
-        },
-        "impact devuelve un contrato estable",
+        }
+        and data["closed"] == 2
+        and data["attempts"]["total"] == 3
+        and data["attempts"]["avg"] == 1.5
+        and data["lead_time_hours"]["avg"] == 3.5,
+        "impact devuelve contrato, cierres, intentos y lead time",
     )
-    h.eq(data["closed"], 2, "impact cuenta los cierres de la ventana")
-    h.eq(data["attempts"]["total"], 3, "impact suma intentos")
-    h.eq(data["attempts"]["avg"], 1.5, "impact calcula la media de intentos")
-    h.eq(data["lead_time_hours"]["avg"], 3.5, "impact calcula el lead time medio")
     h.ok(
         data["verification"]["verified"] == 1
-        and data["verification"]["failures"] == 1,
-        "impact cuenta verificaciones y fallos",
-    )
-    h.ok(len(data["trend"]) == 2, "impact agrupa la tendencia por semanas")
-    h.ok(
-        data["notes"] and "causalidad" in data["notes"][0],
-        "impact recuerda que no afirma causalidad",
+        and data["verification"]["failures"] == 1
+        and len(data["trend"]) == 2
+        and data["notes"]
+        and "causalidad" in data["notes"][0],
+        "impact cuenta verificaciones, agrupa la tendencia y no afirma causalidad",
     )
 
     recent = impact(conn, days=1)
     h.eq(recent["closed"], 0, "la ventana de impact acota los cierres")
 
     payload = _json(["memory", "impact", "--days", "30", "--json"])
-    h.eq(set(payload), set(data), "el JSON de impact conserva el contrato")
-    h.eq(payload["days"], 30, "el CLI pasa --days a impact")
+    h.ok(
+        set(payload) == set(data) and payload["days"] == 30,
+        "el CLI de impact conserva el contrato y pasa --days",
+    )
     code, human, _ = _run(["memory", "impact", "--days", "30"])
     h.ok(
         code == 0 and "Impacto" in human and "Nota:" in human,

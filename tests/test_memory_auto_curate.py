@@ -53,6 +53,16 @@ def _command(operations: list[dict]) -> str:
     return f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}"
 
 
+def _rejects(h: Harness, cases: list, message: str) -> None:
+    rejected = 0
+    for case in cases:
+        try:
+            case()
+        except ValidationError:
+            rejected += 1
+    h.eq(rejected, len(cases), message)
+
+
 def _disabled(h: Harness) -> None:
     conn = db.connect(h.tmp / "auto-disabled.db")
     try:
@@ -64,23 +74,16 @@ def _disabled(h: Harness) -> None:
             source="user",
         )
         cfg = validate_memory_config({**_BASE})
-        h.ok(
-            cfg["auto_curate"]["enabled"] is False,
-            "auto_curate está desactivado por defecto",
-        )
         outcome = auto_curate(conn, cfg)
-        h.ok(
-            outcome["ran"] is False
-            and outcome["reason"] == "disabled"
-            and db.meta_get(conn, AUTO_CURATE_LAST_RUN, None) is None,
-            "desactivado no ejecuta ni registra last_run",
-        )
         forced = auto_curate(conn, cfg, force=True)
         h.ok(
-            forced["ran"] is True
+            cfg["auto_curate"]["enabled"] is False
+            and outcome["ran"] is False
+            and outcome["reason"] == "disabled"
+            and forced["ran"] is True
             and forced["reason"] == "forced"
             and db.meta_get(conn, AUTO_CURATE_LAST_RUN, None) is not None,
-            "el comando explícito fuerza el curado sin cambiar el opt-in",
+            "desactivado no ejecuta pero el comando explícito fuerza el curado",
         )
     finally:
         conn.close()
@@ -115,12 +118,10 @@ def _interval(h: Harness) -> None:
         h.ok(
             first["ran"]
             and first["result"]["stale"] == [memory["code"]]
-            and status == "stale",
-            "auto_curate activo ejecuta el curado determinista",
-        )
-        h.ok(
-            second["ran"] is False and second["reason"] == "interval",
-            "el intervalo impide ejecutar de nuevo",
+            and status == "stale"
+            and second["ran"] is False
+            and second["reason"] == "interval",
+            "auto_curate activo ejecuta el curado y el intervalo impide repetirlo",
         )
     finally:
         conn.close()
@@ -214,11 +215,6 @@ def _review_invalid(h: Harness) -> None:
                 "review_timeout_seconds": 5,
             }
         )
-        h.raises(
-            ValidationError,
-            lambda: run_review_command(conn, cfg),
-            "review_command con JSON inválido se rechaza",
-        )
         missing = validate_memory_config(
             {
                 "review_command": f"{shlex.quote(sys.executable)} -c "
@@ -226,10 +222,13 @@ def _review_invalid(h: Harness) -> None:
                 "review_timeout_seconds": 5,
             }
         )
-        h.raises(
-            ValidationError,
-            lambda: run_review_command(conn, missing),
-            "review_command con fallo de proceso se rechaza",
+        _rejects(
+            h,
+            [
+                lambda: run_review_command(conn, cfg),
+                lambda: run_review_command(conn, missing),
+            ],
+            "review_command rechaza JSON inválido y fallo de proceso",
         )
     finally:
         conn.close()
@@ -416,10 +415,6 @@ def _status_next(h: Harness) -> None:
             "SELECT status FROM memories WHERE code = ?", (first["code"],)
         ).fetchone()[0]
         last_run = db.meta_get(conn, AUTO_CURATE_LAST_RUN, None)
-        h.ok(
-            code == 0 and first_status == "stale" and last_run is not None,
-            "status activado ejecuta auto-curado vencido",
-        )
         second = add_memory(
             conn,
             title="Status segunda",
@@ -437,8 +432,11 @@ def _status_next(h: Harness) -> None:
             "SELECT status FROM memories WHERE code = ?", (second["code"],)
         ).fetchone()[0]
         h.ok(
-            second_status == "active",
-            "status no repite el auto-curado antes del intervalo",
+            code == 0
+            and first_status == "stale"
+            and last_run is not None
+            and second_status == "active",
+            "status ejecuta el auto-curado vencido y no repite antes del intervalo",
         )
     finally:
         conn.close()
@@ -471,14 +469,15 @@ def _status_next(h: Harness) -> None:
         conn.close()
 
     code, out, err = _status_with(enabled_cfg, next_path, h, fail=True)
-    h.ok(
-        code == 0 and "Aviso" in err and out,
-        "status no falla si auto-curado lanza",
-    )
+    status_code, status_out, status_err = code, out, err
     code, out, err = _next_with(enabled_cfg, next_path, h, fail=True)
     h.ok(
-        code == 0 and "Aviso" in err,
-        "next no falla si auto-curado lanza",
+        status_code == 0
+        and "Aviso" in status_err
+        and bool(status_out)
+        and code == 0
+        and "Aviso" in err,
+        "status y next no fallan si el auto-curado lanza",
     )
 
 

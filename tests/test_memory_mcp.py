@@ -24,20 +24,16 @@ def _raises(exc_type, func) -> bool:
 
 def run(h: Harness) -> None:
     names = {tool["name"] for tool in schemas.TOOLS}
-    h.eq(
-        {"brief", "memory_search", "memory_write"} - names,
-        set(),
-        "tools/list expone las herramientas de memoria",
-    )
     read_only = {
         tool["name"]
         for tool in schemas.TOOLS
         if (tool.get("annotations") or {}).get("readOnlyHint") is True
     }
-    h.eq(
-        read_only & {"brief", "memory_search", "memory_write"},
-        {"brief", "memory_search"},
-        "solo brief y memory_search son de lectura",
+    h.ok(
+        {"brief", "memory_search", "memory_write"} <= names
+        and read_only & {"brief", "memory_search", "memory_write"}
+        == {"brief", "memory_search"},
+        "tools/list expone memoria y solo brief/memory_search son de lectura",
     )
     operations = _tool("memory_write")["inputSchema"]["properties"]["operations"]
     search_props = _tool("memory_search")["inputSchema"]["properties"]
@@ -151,13 +147,6 @@ def run(h: Harness) -> None:
         },
     )
     proposed_id, active_id = write["ids"]
-    h.ok(
-        write["applied"] == 1
-        and write["proposed"] == 1
-        and write["budget"].get("project", {}).get("limit")
-        and write["warnings"],
-        "memory_write aplica la política y devuelve presupuesto y avisos",
-    )
 
     search = handlers.call_tool("memory_search", {"query": "MCP", "limit": 10})
     active = handlers.call_tool(
@@ -225,11 +214,15 @@ def run(h: Harness) -> None:
         "memory_search", {"status": "archived", "limit": 20}
     )
     h.ok(
-        lifecycle["applied"] == 3
+        write["applied"] == 1
+        and write["proposed"] == 1
+        and write["budget"].get("project", {}).get("limit")
+        and write["warnings"]
+        and lifecycle["applied"] == 3
         and lifecycle["proposed"] == 0
         and superseded["applied"] == 1
         and archived["count"] >= 1,
-        "patch, feedback, remove y supersede se aplican en orden",
+        "memory_write aplica política, presupuesto y ciclo patch/feedback/remove/supersede",
     )
 
     by_path = memory_handlers.hints(

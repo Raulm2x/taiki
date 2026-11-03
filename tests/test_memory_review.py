@@ -75,9 +75,9 @@ def _packet(h: Harness) -> None:
             _ticket(conn, f"Antiguo {index}")
 
         packet = review_packet(conn, {"candidate_max": 5}, limit=3)
-        h.eq(
-            set(packet),
-            {
+        h.ok(
+            set(packet)
+            == {
                 "generated_at",
                 "candidates",
                 "current_memories",
@@ -85,46 +85,46 @@ def _packet(h: Harness) -> None:
                 "thresholds",
                 "rules",
                 "instructions",
-            },
-            "el paquete expone el contrato completo",
+            }
+            and bool(packet["generated_at"]),
+            "el paquete expone el contrato completo y sella la generación",
         )
-        h.ok(bool(packet["generated_at"]), "el paquete sella la generación")
 
         current = packet["current_memories"]
         h.ok(
-            any(item["code"] == memory["code"] for item in current),
-            "la memoria propuesta aparece en el paquete",
-        )
-        h.ok(
-            all("content" not in item for item in current),
-            "las memorias se incluyen compactas",
-        )
-        h.ok(
-            all(item["status"] in ("active", "proposed", "stale") for item in current),
-            "solo se incluye memoria vigente o propuesta",
+            any(item["code"] == memory["code"] for item in current)
+            and all("content" not in item for item in current)
+            and all(
+                item["status"] in ("active", "proposed", "stale")
+                for item in current
+            ),
+            "las memorias vigentes aparecen compactas y sin contenido",
         )
 
         thresholds = packet["thresholds"]
-        h.eq(thresholds["candidate_max"], 5, "el paquete refleja el umbral efectivo")
-        h.eq(thresholds["candidate_min_evidence"], 2, "evidencia mínima visible")
-        h.eq(thresholds["candidate_similarity"], 0.8, "similitud visible")
-        h.eq(len(packet["rules"]), 7, "las reglas se listan completas")
-        h.eq(len(packet["instructions"]), 7, "las instrucciones anti-aprendizaje van completas")
+        h.ok(
+            thresholds["candidate_max"] == 5
+            and thresholds["candidate_min_evidence"] == 2
+            and thresholds["candidate_similarity"] == 0.8,
+            "el paquete refleja los umbrales efectivos",
+        )
+        h.ok(
+            len(packet["rules"]) == 7 and len(packet["instructions"]) == 7,
+            "las reglas e instrucciones anti-aprendizaje van completas",
+        )
 
         recent = packet["recent_tickets"]
-        h.eq(len(recent), 2, "solo entran tickets cerrados o reabiertos")
         by_code = {item["code"]: item for item in recent}
-        h.ok(completed["code"] in by_code, "el ticket cerrado aparece")
-        h.eq(
-            by_code[completed["code"]]["resolution"],
-            "hecho",
-            "la resolución se conserva",
+        h.eq(len(recent), 2, "solo entran tickets cerrados o reabiertos")
+        h.ok(
+            completed["code"] in by_code
+            and by_code[completed["code"]]["resolution"] == "hecho",
+            "el ticket cerrado aparece con su resolución",
         )
-        h.ok(rejected["code"] in by_code, "el ticket rechazado aparece")
-        h.eq(
-            by_code[rejected["code"]]["iterations"],
-            2,
-            "el rechazo cuenta los intentos",
+        h.ok(
+            rejected["code"] in by_code
+            and by_code[rejected["code"]]["iterations"] == 2,
+            "el rechazo aparece y cuenta los intentos",
         )
         h.ok(
             "[redactado]" in by_code[rejected["code"]]["rejection"],
@@ -132,20 +132,28 @@ def _packet(h: Harness) -> None:
         )
 
         text = json.dumps(packet)
-        h.ok("hunter2" not in text, "el paquete no filtra el secreto")
-        h.ok("password:" not in text, "el paquete no filtra la credencial")
-        h.ok("sk-" not in text, "el paquete no filtra claves")
+        h.ok(
+            "hunter2" not in text
+            and "password:" not in text
+            and "sk-" not in text,
+            "el paquete no filtra secretos ni credenciales",
+        )
         h.ok(
             all("body" not in item for item in recent),
             "el paquete no incluye cuerpos de comentarios",
         )
 
         one = review_packet(conn, limit=1)
-        h.eq(len(one["recent_tickets"]), 1, "limit acota los tickets recientes")
-        h.eq(
-            [item["id"] for item in packet["candidates"]],
-            [item["id"] for item in review_packet(conn, {"candidate_max": 5}, limit=3)["candidates"]],
-            "los candidatos del paquete son deterministas",
+        h.ok(
+            len(one["recent_tickets"]) == 1
+            and [item["id"] for item in packet["candidates"]]
+            == [
+                item["id"]
+                for item in review_packet(
+                    conn, {"candidate_max": 5}, limit=3
+                )["candidates"]
+            ],
+            "limit acota los tickets recientes y los candidatos son deterministas",
         )
         h.raises(
             ValidationError,

@@ -70,19 +70,14 @@ def _add(reference: Path, script: Path, template: Path, *, slug: str = "revisar-
 def run(h: Harness) -> None:
     reference, script, template = _support_files(h)
     _, created = _add(reference, script, template)
-    h.eq(created["kind"], "playbook", "playbook add crea kind=playbook")
-    h.eq(created["key"], "playbook:revisar-pr", "playbook add fija la clave")
-    h.eq(created["status"], "active", "el playbook del usuario nace activo")
-    paths = [item["path"] for item in created["files"]]
-    h.eq(
-        paths,
-        ["references/checklist.md", "scripts/run.sh", "templates/brief.tmpl"],
-        "los apoyos se clasifican por extensión",
-    )
-    h.eq(
-        created["evidence"][0]["ref"],
-        "T-0047",
-        "playbook add guarda la evidencia",
+    h.ok(
+        created["kind"] == "playbook"
+        and created["key"] == "playbook:revisar-pr"
+        and created["status"] == "active"
+        and [item["path"] for item in created["files"]]
+        == ["references/checklist.md", "scripts/run.sh", "templates/brief.tmpl"]
+        and created["evidence"][0]["ref"] == "T-0047",
+        "playbook add fija kind, clave, estado, apoyos y evidencia",
     )
 
     body = h.tmp / "cuerpo.md"
@@ -111,7 +106,7 @@ def run(h: Harness) -> None:
         "playbook add --file lee el cuerpo del disco",
     )
 
-    invalid_slug, _, err = _run(
+    invalid_slug, _, invalid_err = _run(
         [
             "memory",
             "playbook",
@@ -128,11 +123,7 @@ def run(h: Harness) -> None:
             "T-0047",
         ]
     )
-    h.ok(
-        invalid_slug == 1 and "Slug de playbook inválido" in err,
-        "playbook add rechaza un slug inválido",
-    )
-    missing, _, err = _run(
+    missing, _, missing_err = _run(
         [
             "memory",
             "playbook",
@@ -149,10 +140,6 @@ def run(h: Harness) -> None:
             str(h.tmp / "no-existe.md"),
         ]
     )
-    h.ok(
-        missing == 1 and "no encontrado" in err,
-        "playbook add rechaza un apoyo inexistente",
-    )
     without_source, _, _ = _run(
         [
             "memory",
@@ -166,41 +153,42 @@ def run(h: Harness) -> None:
             "Y",
         ]
     )
-    h.eq(without_source, 2, "playbook add exige --content o --file")
+    h.ok(
+        invalid_slug == 1
+        and "Slug de playbook inválido" in invalid_err
+        and missing == 1
+        and "no encontrado" in missing_err
+        and without_source == 2,
+        "playbook add rechaza slug inválido, apoyo inexistente y falta de cuerpo",
+    )
 
     _, listed = _json(["memory", "playbook", "list", "--json"])
-    h.eq(listed["count"], 2, "playbook list devuelve los playbooks creados")
-    h.eq(
-        listed["playbooks"][0]["kind"],
-        "playbook",
-        "playbook list solo incluye playbooks",
-    )
     plain_code, plain_out, _ = _run(["memory", "playbook", "list"])
     h.ok(
-        plain_code == 0 and "revisar-pr" in plain_out,
-        "playbook list imprime slug y estado",
+        listed["count"] == 2
+        and all(item["kind"] == "playbook" for item in listed["playbooks"])
+        and plain_code == 0
+        and "revisar-pr" in plain_out,
+        "playbook list devuelve solo playbooks y los imprime",
     )
 
     _, shown = _json(["memory", "playbook", "show", "revisar-pr", "--json"])
-    h.eq(shown["code"], created["code"], "playbook show acepta el slug")
-    h.eq(
-        shown["files"][0]["content"],
-        "- tests\n",
-        "playbook show incluye el contenido de los apoyos",
-    )
-    h.ok(shown["evidence"], "playbook show incluye la evidencia")
     _, by_code = _json(["memory", "playbook", "show", created["code"], "--json"])
-    h.eq(by_code["id"], created["id"], "playbook show acepta el código")
-    missing_show, _, err = _run(["memory", "playbook", "show", "no-existe"])
     h.ok(
-        missing_show == 1 and "no encontrado" in err,
-        "playbook show falla con un slug desconocido",
+        shown["code"] == created["code"]
+        and by_code["id"] == created["id"]
+        and shown["files"][0]["content"] == "- tests\n"
+        and bool(shown["evidence"]),
+        "playbook show resuelve por slug y código con apoyos y evidencia",
     )
+    missing_show, _, err = _run(["memory", "playbook", "show", "no-existe"])
     _, detail_out, _ = _run(["memory", "playbook", "show", "revisar-pr"])
     h.ok(
-        "Evidencia: ticket:T-0047" in detail_out
+        missing_show == 1
+        and "no encontrado" in err
+        and "Evidencia: ticket:T-0047" in detail_out
         and "references/checklist.md" in detail_out,
-        "playbook show imprime evidencia y ficheros",
+        "playbook show falla con un slug desconocido e imprime el detalle",
     )
 
     from commands import memory as memory_command
@@ -212,42 +200,34 @@ def run(h: Harness) -> None:
             ["memory", "playbook", "export", "revisar-pr", "--json"]
         )
         skill = Path(exported["path"])
-        h.ok(skill.is_file(), "playbook export escribe SKILL.md")
         h.ok(
-            'name: "revisar-pr"' in skill.read_text(encoding="utf-8"),
-            "el SKILL.md exportado lleva frontmatter",
-        )
-        h.eq(
-            len(exported["files"]),
-            3,
-            "playbook export escribe también los apoyos",
+            skill.is_file()
+            and 'name: "revisar-pr"' in skill.read_text(encoding="utf-8")
+            and len(exported["files"]) == 3,
+            "playbook export escribe SKILL.md con frontmatter y apoyos",
         )
         _, exported_all = _json(
             ["memory", "playbook", "export", "--all", "--json"]
-        )
-        h.eq(
-            exported_all["exported"],
-            ["desde-fichero", "revisar-pr"],
-            "playbook export --all exporta los activos",
         )
         plain_export, plain_export_out, _ = _run(
             ["memory", "playbook", "export", "--all"]
         )
         h.ok(
-            plain_export == 0 and "Exportados 2 playbook(s)" in plain_export_out,
-            "playbook export imprime el resumen",
+            exported_all["exported"] == ["desde-fichero", "revisar-pr"]
+            and plain_export == 0
+            and "Exportados 2 playbook(s)" in plain_export_out,
+            "playbook export --all exporta los activos y resume",
         )
-        no_ref, _, err = _run(["memory", "playbook", "export"])
-        h.ok(
-            no_ref == 1 and "Indica un slug" in err,
-            "playbook export exige slug o --all",
-        )
-        both, _, err = _run(
+        no_ref, _, no_ref_err = _run(["memory", "playbook", "export"])
+        both, _, both_err = _run(
             ["memory", "playbook", "export", "revisar-pr", "--all"]
         )
         h.ok(
-            both == 1 and "no ambos" in err,
-            "playbook export rechaza slug y --all a la vez",
+            no_ref == 1
+            and "Indica un slug" in no_ref_err
+            and both == 1
+            and "no ambos" in both_err,
+            "playbook export exige slug o --all, nunca ambos",
         )
     finally:
         memory_command.workspace.project_root = original
@@ -265,18 +245,18 @@ def run(h: Harness) -> None:
             "--json",
         ]
     )
-    h.eq(archived["status"], "archived", "playbook archive archiva sin borrar")
+    _, active = _json(["memory", "playbook", "list", "--json"])
+    _, everything = _json(["memory", "playbook", "list", "--all", "--json"])
     h.ok(
-        _json(["memory", "playbook", "show", "revisar-pr", "--json"])[1][
+        archived["status"] == "archived"
+        and _json(["memory", "playbook", "show", "revisar-pr", "--json"])[1][
             "status"
         ]
-        == "archived",
-        "el playbook archivado sigue existiendo",
+        == "archived"
+        and active["count"] == 1
+        and everything["count"] == 2,
+        "playbook archive archiva sin borrar y list distingue --all",
     )
-    _, active = _json(["memory", "playbook", "list", "--json"])
-    h.eq(active["count"], 1, "playbook list omite los archivados por defecto")
-    _, everything = _json(["memory", "playbook", "list", "--all", "--json"])
-    h.eq(everything["count"], 2, "playbook list --all incluye los archivados")
     archive_out_code, archive_out, _ = _run(
         ["memory", "playbook", "archive", "desde-fichero", "--why", "obsoleto"]
     )

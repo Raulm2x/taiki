@@ -55,13 +55,9 @@ def run(h: Harness) -> None:
     h.ok(
         agents["advice"]["profile"] == "worker-high"
         and agents["advice"]["sample"] == 5
-        and agents["recommended"]["name"] == "worker-high",
-        "agents incluye advice observado sin cambiar el routing recomendado",
-    )
-    h.eq(
-        handlers.call_tool("agents", {})["advice"],
-        None,
-        "agents sin tipo devuelve advice nulo",
+        and agents["recommended"]["name"] == "worker-high"
+        and handlers.call_tool("agents", {})["advice"] is None,
+        "agents incluye advice observado por tipo y lo omite sin tipo",
     )
 
     ready = repo.create_ticket(
@@ -106,16 +102,6 @@ def run(h: Harness) -> None:
         "memory_checklist",
         {"paths": ["ticketlib/memory/advice.py"], "limit": 1},
     )
-    h.eq(
-        by_paths["count"],
-        1,
-        "memory_checklist respeta el límite y las rutas",
-    )
-    h.eq(
-        by_paths["checklist"][0]["code"],
-        pitfall["code"],
-        "memory_checklist prioriza el pitfall fijado por confianza",
-    )
     by_kind = handlers.call_tool(
         "memory_checklist",
         {
@@ -124,19 +110,18 @@ def run(h: Harness) -> None:
             "paths": ["ticketlib/memory/advice.py"],
         },
     )
-    h.ok(
-        by_kind["count"] == 1
-        and by_kind["checklist"][0]["kind"] == "convention",
-        "memory_checklist combina tipo de ticket y tipo de memoria",
-    )
     by_ticket = handlers.call_tool(
         "memory_checklist",
         {"kind": "funcionalidad", "paths": ["ticketlib/memory/advice.py"]},
     )
     h.ok(
-        by_ticket["count"] == 1
+        by_paths["count"] == 1
+        and by_paths["checklist"][0]["code"] == pitfall["code"]
+        and by_kind["count"] == 1
+        and by_kind["checklist"][0]["kind"] == "convention"
+        and by_ticket["count"] == 1
         and by_ticket["checklist"][0]["kind"] == "convention",
-        "memory_checklist excluye memorias etiquetadas para otro ticket",
+        "memory_checklist combina rutas, límite, tipo de ticket y de memoria",
     )
     h.ok(
         _raises(
