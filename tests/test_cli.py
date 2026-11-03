@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 import cli
-from ticketlib import domain, repo
+from ticketlib import db, domain, repo
 from tui import actions as tui_actions
 from tests.support import Harness
 
@@ -334,3 +334,73 @@ def run(h: Harness) -> None:
         result.returncode == 0 and "usage: taiki" in result.stdout,
         "bin/taiki arranca el CLI como taiki",
     )
+
+    # ── Aislamiento y scope por CLI ─────────────────────────────────────
+    cli_db = str(h.tmp / "cli-isolation.db")
+    out = io.StringIO()
+    with h.env(TAIKI_DB=cli_db), contextlib.redirect_stdout(out):
+        created_code = cli.main(
+            [
+                "new",
+                "-t",
+                "Ticket CLI aislado",
+                "--isolation",
+                "scope",
+                "--resource",
+                "package:git",
+                "--resource",
+                "systemd:user/taiki.service",
+                "--reversal",
+                '{"kind": "manual", "ref": "revertir"}',
+            ]
+        )
+    h.eq(created_code, 0, "taiki new acepta aislamiento, recursos y reversión")
+    iso_conn = db.connect(cli_db)
+    try:
+        created_ticket = repo.get_ticket(iso_conn, "T-0001")
+        h.eq(
+            (
+                created_ticket["isolation"],
+                created_ticket["resources"],
+                created_ticket["reversal"]["kind"],
+            ),
+            (
+                "scope",
+                ["package:git", "systemd:user/taiki.service"],
+                "manual",
+            ),
+            "new persiste el modelo de aislamiento",
+        )
+        out = io.StringIO()
+        with h.env(TAIKI_DB=cli_db), contextlib.redirect_stdout(out):
+            updated_code = cli.main(
+                ["update", "T-0001", "--isolation", "none"]
+            )
+        h.eq(updated_code, 0, "taiki update acepta --isolation")
+        h.eq(
+            repo.get_ticket(iso_conn, "T-0001")["isolation"],
+            "none",
+            "update cambia el aislamiento",
+        )
+        out = io.StringIO()
+        with h.env(TAIKI_DB=cli_db), contextlib.redirect_stdout(out):
+            cli.main(["show", "T-0001", "--json", "--compact"])
+        shown = json.loads(out.getvalue().strip())
+        h.ok(
+            shown["isolation"] == "none"
+            and shown["resources"] == ["package:git", "systemd:user/taiki.service"]
+            and isinstance(shown.get("scope"), list)
+            and shown["scope"],
+            "show incluye isolation, recursos y scope",
+        )
+        out = io.StringIO()
+        with h.env(TAIKI_DB=cli_db), contextlib.redirect_stdout(out):
+            cli.main(["list", "--json-summary", "--compact", "--limit", "5"])
+        listed = json.loads(out.getvalue().strip())
+        h.ok(
+            listed.get("scope_roots")
+            and all("isolation" in item for item in listed["tickets"]),
+            "list incluye isolation por ticket y scope_roots",
+        )
+    finally:
+        iso_conn.close()

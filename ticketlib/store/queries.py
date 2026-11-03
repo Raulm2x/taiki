@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -10,6 +11,7 @@ from typing import Any, Iterable
 
 from .. import db
 from ..domain import (
+    DEFAULT_ISOLATION,
     DEPENDENCY_DONE_STATUSES,
     DEPENDENCY_KIND,
     KINDS,
@@ -143,6 +145,36 @@ def _dependency_fields(
     return depends_on, blocked_by
 
 
+def _decode_isolation_fields(ticket: dict[str, Any]) -> dict[str, Any]:
+    """Garantiza los campos del modelo si la fila no pasó por ``row_to_ticket``."""
+    ticket.setdefault("isolation", DEFAULT_ISOLATION)
+    if not isinstance(ticket.get("resources"), list):
+        raw_resources = ticket.get("resources")
+        if isinstance(raw_resources, str) and raw_resources.strip():
+            try:
+                parsed = json.loads(raw_resources)
+            except json.JSONDecodeError:
+                parsed = [raw_resources]
+            ticket["resources"] = (
+                parsed if isinstance(parsed, list) else [str(parsed)]
+            )
+        else:
+            ticket["resources"] = []
+    if not isinstance(ticket.get("reversal"), dict):
+        raw_reversal = ticket.get("reversal")
+        if isinstance(raw_reversal, str) and raw_reversal.strip():
+            try:
+                parsed_reversal = json.loads(raw_reversal)
+            except json.JSONDecodeError:
+                parsed_reversal = None
+            ticket["reversal"] = (
+                parsed_reversal if isinstance(parsed_reversal, dict) else None
+            )
+        else:
+            ticket["reversal"] = None
+    return ticket
+
+
 def get_ticket(
     conn: sqlite3.Connection,
     code: Any,
@@ -160,7 +192,7 @@ def get_ticket(
     (``code`` se conserva siempre).
     """
     row = row_by_code(conn, code)
-    ticket = row_to_ticket(row)
+    ticket = _decode_isolation_fields(row_to_ticket(row))
     ticket["tags"] = [
         item["tag"]
         for item in conn.execute(
@@ -488,7 +520,10 @@ def list_tickets(
             sql += " OFFSET ?"
             params.append(offset)
 
-    tickets = [row_to_ticket(row) for row in conn.execute(sql, params)]
+    tickets = [
+        _decode_isolation_fields(row_to_ticket(row))
+        for row in conn.execute(sql, params)
+    ]
     progress = subtask_progress(conn, [ticket["code"] for ticket in tickets])
     for ticket in tickets:
         ticket["progress"] = progress.get(

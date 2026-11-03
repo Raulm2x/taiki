@@ -9,6 +9,7 @@ from typing import Any
 from ticketlib import (
     db,
     domain,
+    orchestrator as orchestrator_lib,
     repo,
     runtime,
     workspace,
@@ -74,6 +75,7 @@ def _handle_create(
     defaults = config.get("defaults") or {}
     kind = args.get("kind") or defaults.get("kind") or "otro"
     priority = args.get("priority") or defaults.get("priority") or "media"
+    isolation = args.get("isolation") or workspace.isolation_settings(config)["default"]
     assigned = actor if actor not in ("", "agente", "usuario") else None
 
     with db.tx(conn):
@@ -87,6 +89,9 @@ def _handle_create(
             path=path,
             tags=args.get("tags"),
             paths=args.get("paths"),
+            isolation=isolation,
+            resources=args.get("resources"),
+            reversal=args.get("reversal"),
             parent_id=args.get("parent_id"),
             created_by=actor,
             actor_type="agente",
@@ -105,6 +110,8 @@ def _handle_create(
                 project=ticket.get("project"),
                 path=ticket.get("path"),
                 paths=ticket.get("paths"),
+                isolation=isolation,
+                resources=args.get("resources"),
                 parent_id=ticket["code"],
                 created_by=actor,
                 actor_type="agente",
@@ -116,7 +123,10 @@ def _handle_create(
         ticket,
         detail=detail,
         extra={
-            "subtasks": [item["code"] for item in ticket.get("subtasks", [])]
+            "subtasks": [item["code"] for item in ticket.get("subtasks", [])],
+            "isolation": ticket.get("isolation"),
+            "resources": ticket.get("resources"),
+            "reversal": ticket.get("reversal"),
         },
     )
 
@@ -171,6 +181,19 @@ def _handle_list(
     hidden = 0
     if args.get("only_roots"):
         hidden = max(0, repo.count_tickets(conn, filters=base_filter) - total)
+    projected = _project_rows(
+        rows,
+        detail=bool(args.get("detail", False)),
+        fields=args.get("fields"),
+    )
+    if not fields:
+        for row, item in zip(rows, projected):
+            item["risk"] = domain.risk_for(
+                row.get("paths"), row.get("resources")
+            )
+            item["requires_review"] = domain.requires_review(row.get("paths"))
+            if not detail:
+                item["isolation"] = row.get("isolation")
     return {
         "count": len(rows),
         "total": total,
@@ -179,11 +202,8 @@ def _handle_list(
         "order": order,
         "detail": bool(args.get("detail", False)),
         "hidden_children": hidden,
-        "tickets": _project_rows(
-            rows,
-            detail=bool(args.get("detail", False)),
-            fields=args.get("fields"),
-        ),
+        "scope_roots": workspace.scope_roots(),
+        "tickets": projected,
     }
 
 
@@ -221,6 +241,12 @@ def _handle_get(
         for event in ticket.get("events", []):
             for key in ("actor_type", "from_status", "to_status", "session_id"):
                 event.pop(key, None)
+    if not args.get("fields"):
+        ticket["scope"] = workspace.scope_roots()
+        ticket["risk"] = domain.risk_for(
+            ticket.get("paths"), ticket.get("resources")
+        )
+        ticket["requires_review"] = domain.requires_review(ticket.get("paths"))
     return ticket
 
 
@@ -260,6 +286,16 @@ def _handle_claim(
     code = args.get("code")
     if not code:
         raise domain.ValidationError("El parámetro 'code' es obligatorio")
+    if args.get("worktree"):
+        # none/scope trabajan en el árbol vivo: el worktree no aplica y se
+        # rechaza antes de reclamar para no dejar el ticket a medio asignar.
+        target = repo.get_ticket(conn, code)
+        isolation = str(target.get("isolation") or domain.DEFAULT_ISOLATION)
+        if isolation in orchestrator_lib.LIVE_ISOLATIONS:
+            raise domain.ValidationError(
+                f"{target['code']} usa aislamiento {isolation}: no crea "
+                "worktree; reclama sin worktree y trabaja en el checkout live."
+            )
     ticket = repo.claim_ticket(
         conn,
         code,
@@ -270,14 +306,21 @@ def _handle_claim(
         anonymous_owner=True,
         lease_minutes=args.get("lease_minutes"),
     )
+    isolation = str(ticket.get("isolation") or domain.DEFAULT_ISOLATION)
     if args.get("worktree"):
         ticket = _attach_worktree(conn, ticket)
+    scope = workspace.scope_roots()
+    ticket["scope"] = scope
     result = _receipt(
         ticket,
         detail=bool(args.get("detail", False)),
         extra={
             "worktree": ticket.get("worktree"),
             "branch": ticket.get("branch"),
+            "isolation": isolation,
+            "requires_worktree": isolation == "worktree",
+            "resources": ticket.get("resources"),
+            "scope": scope,
         },
     )
     result["hints"] = memory_handlers.hints(conn, ticket)
@@ -303,6 +346,9 @@ def _handle_update(
             "project",
             "path",
             "paths",
+            "isolation",
+            "resources",
+            "reversal",
             "tags",
             "parent_id",
             "assigned_to",

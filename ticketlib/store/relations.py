@@ -93,6 +93,12 @@ def link_ticket(
     Con ``kind="commit"`` se resuelve el hash completo **antes** de abrir la
     transacción. Los llamantes que ya lo resolvieron pasan ``resolve=False``
     para no ejecutar git con el lock de escritura tomado.
+
+    ``kind="external"`` enlaza un commit de **otro** repositorio (por ejemplo,
+    dotfiles) sin resolverlo en el repo del ticket. El formato de ``ref`` es
+    ``repo@sha``: el nombre o etiqueta del repositorio, ``@`` y el hash corto
+    o completo. ``taiki commit --repo <ruta>`` lo crea automáticamente y
+    ``taiki link <código> external <repo@sha>`` permite registrarlo a mano.
     """
     check_enum(kind, LINK_KINDS, "tipo de enlace")
     ref = (ref or "").strip()

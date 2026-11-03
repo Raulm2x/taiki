@@ -24,7 +24,13 @@ from pathlib import Path
 from typing import Any
 
 from . import db
-from .domain import TicketError
+from .domain import (
+    DEFAULT_ISOLATION,
+    ISOLATION_MODES,
+    TicketError,
+    ValidationError,
+    clean_branch,
+)
 from .paths import (
     CONFIG_NAME,
     DB_NAME,
@@ -61,7 +67,144 @@ def default_config(root: Path, name: str | None = None) -> dict[str, Any]:
         "guard": False,
         "guard_auto": "scratch",
         "defaults": {"kind": "otro", "priority": "media"},
+        "isolation": {"default": DEFAULT_ISOLATION, "live_branch": "main"},
+        # Raíces del modo scope. Los defaults viven en config.json (versionado);
+        # las rutas absolutas de la máquina van en local.json (ignorado).
+        "scope": {"roots": ["."]},
         "ui": {"scope": "atencion", "refresh": 2.0},
+    }
+
+
+def isolation_settings(config: dict[str, Any] | None = None) -> dict[str, str]:
+    """Devuelve ``{default, live_branch}`` validados con defaults seguros."""
+    data = config if config is not None else load_config()
+    raw = data.get("isolation") if isinstance(data, dict) else None
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ValidationError("El bloque 'isolation' debe ser un objeto")
+    default = raw.get("default", DEFAULT_ISOLATION)
+    if default not in ISOLATION_MODES:
+        raise ValidationError(
+            f"isolation.default inválido: {default!r} "
+            f"(esperado uno de {', '.join(ISOLATION_MODES)})"
+        )
+    return {
+        "default": str(default),
+        "live_branch": clean_branch(raw.get("live_branch")),
+    }
+
+
+def scope_roots(
+    config: dict[str, Any] | None = None,
+    local: dict[str, Any] | None = None,
+) -> list[str]:
+    """Raíces del modo scope: config.json + local.json, sin duplicados.
+
+    Las rutas relativas se resuelven contra el proyecto; ``local.json`` puede
+    aportar rutas absolutas de la máquina sin versionarlas en config.json.
+    """
+    data = config if config is not None else load_config()
+    local_data = local if local is not None else load_local()
+    roots: list[str] = []
+    for source, block_name in ((data, "config.json"), (local_data, "local.json")):
+        if not isinstance(source, dict):
+            continue
+        block = source.get("scope")
+        if block is None:
+            continue
+        if not isinstance(block, dict):
+            raise ValidationError(f"scope en {block_name} debe ser un objeto")
+        values = block.get("roots")
+        if values is None:
+            continue
+        if isinstance(values, str):
+            values = [values]
+        if not isinstance(values, (list, tuple)):
+            raise ValidationError(
+                f"scope.roots en {block_name} debe ser una lista"
+            )
+        for value in values:
+            if not isinstance(value, str) or not value.strip():
+                raise ValidationError(
+                    f"scope.roots en {block_name} contiene una raíz inválida"
+                )
+            root = value.strip()
+            if root not in roots:
+                roots.append(root)
+    return roots or ["."]
+
+
+DOTFILES_LIVE_DEFAULT = "~/.config"
+
+
+def verify_command(config: dict[str, Any] | None = None) -> str | None:
+    """Comando de verificación del workspace (``verify.command``) o ``None``."""
+    data = config if config is not None else load_config()
+    block = data.get("verify") if isinstance(data, dict) else None
+    if block is None:
+        return None
+    if not isinstance(block, dict):
+        raise ValidationError("El bloque 'verify' debe ser un objeto")
+    command = block.get("command")
+    if command is None:
+        return None
+    text = str(command).strip()
+    return text or None
+
+
+def _dotfiles_path(value: Any, source: str, key: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValidationError(f"dotfiles.{key} en {source} debe ser una cadena")
+    text = value.strip()
+    if not text:
+        return None
+    return str(Path(text).expanduser())
+
+
+def dotfiles_settings(
+    config: dict[str, Any] | None = None,
+    local: dict[str, Any] | None = None,
+) -> dict[str, str | None]:
+    """Repositorio de dotfiles configurado o detectado.
+
+    ``dotfiles.repo``/``dotfiles.live`` pueden venir de ``config.json`` o de
+    ``local.json`` (este último gana para rutas de la máquina). Sin bloque, se
+    detecta un repositorio en ``live`` (por defecto ``~/.config``) cuando
+    contiene ``.git``. ``detected`` solo se rellena si el repo existe.
+    """
+    data = config if config is not None else load_config()
+    local_data = local if local is not None else load_local()
+    repo: str | None = None
+    live: str | None = None
+    for source, block_name in ((data, "config.json"), (local_data, "local.json")):
+        if not isinstance(source, dict):
+            continue
+        block = source.get("dotfiles")
+        if block is None:
+            continue
+        if not isinstance(block, dict):
+            raise ValidationError(f"dotfiles en {block_name} debe ser un objeto")
+        repo = _dotfiles_path(block.get("repo"), block_name, "repo") or repo
+        live = _dotfiles_path(block.get("live"), block_name, "live") or live
+    live_path = Path(live) if live else Path(DOTFILES_LIVE_DEFAULT).expanduser()
+    detected: str | None = None
+    origin: str | None = None
+    if repo is not None:
+        if (Path(repo) / ".git").exists():
+            detected = repo
+            origin = "config"
+    elif (live_path / ".git").exists():
+        repo = str(live_path)
+        detected = repo
+        origin = "git"
+    return {
+        "repo": repo,
+        "live": str(live_path),
+        "detected": detected,
+        "source": origin,
     }
 
 

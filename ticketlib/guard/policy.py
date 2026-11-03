@@ -8,16 +8,31 @@ from pathlib import Path
 from typing import Any
 
 from .. import db, env, repo, scratch, workspace
-from ..commits import PROTECTED_BRANCHES, current_branch
+from ..commits import PROTECTED_BRANCHES, current_branch, overlaps
 from ..domain import TicketError
+from ..store.workflow import authorization_active
 from ..util import lease_expired, normalize_agent, resolve_scope
 from .commands import (
+    command_runs_code,
+    command_scope_problem,
     command_touches_home,
+    high_risk_command,
     path_guarded,
+    path_in_scope,
+    resolve_roots,
     risky_git,
     split_commands,
 )
-from .context import auto_title, find_active, find_pending, find_session_epic, session_chain
+from .context import (
+    auto_title,
+    find_active,
+    find_pending,
+    find_session_epic,
+    session_chain,
+    ticket_isolation,
+    ticket_paths,
+    ticket_resources,
+)
 from .hook import is_mutating
 
 DISABLED_VALUES = {"0", "off", "false", "no", "disabled"}
@@ -245,6 +260,7 @@ def other_active_sessions(
     """Tickets en progreso que no pertenecen a esta sesión."""
     rows = conn.execute(
         "SELECT t.code, t.assigned_to, t.updated_at, t.lease_until, "
+        "t.paths, t.resources, t.isolation, "
         "COALESCE(t.owner_session, ("
         "  SELECT e.session_id FROM events e "
         "  WHERE e.ticket_id = t.id AND e.session_id IS NOT NULL "
@@ -308,6 +324,109 @@ def _inside_repo(session_base: Path, path: str | None) -> bool:
     return True
 
 
+def _scope_base(workspace_dir: Path | None, session_base: Path) -> Path:
+    """Raíz contra la que se resuelven paths y raíces relativas."""
+    if workspace_dir is not None:
+        return workspace_dir.parent
+    return session_base
+
+
+def _guard_roots(
+    workspace_dir: Path | None, scope_base: Path, config: dict[str, Any]
+) -> list[Path]:
+    """HOME + raíz del proyecto + ``scope.roots``, resueltas contra la raíz.
+
+    La raíz del proyecto se incluye siempre: una config con ``["/etc"]`` no
+    debe dejar el repositorio fuera del guard.
+    """
+    configured: list[str] = []
+    try:
+        configured = workspace.scope_roots(
+            config, workspace.load_local(workspace_dir)
+        )
+    except TicketError:
+        configured = ["."]
+    values: list[str | Path] = [Path.home(), scope_base, *configured]
+    return list(resolve_roots(values, scope_base))
+
+
+def _serial_message(action: str, others: list[dict[str, Any]]) -> str:
+    codes = ", ".join(item["code"] for item in others[:5])
+    extra = "" if len(others) <= 5 else f" y {len(others) - 5} más"
+    return (
+        f"Bloqueado: `{action}` con aislamiento none y otra sesión activa "
+        f"({codes}{extra}). Espera o usa worktree."
+    )
+
+
+def _authorization_message(code: str, risk: str) -> str:
+    return (
+        f"Bloqueado: comando de alto riesgo ({risk}). Pide autorización al "
+        f'usuario: `taiki authorize {code} --why "..."`.'
+    )
+
+
+def _scope_message(detail: str, code: str) -> str:
+    return (
+        f"Bloqueado: {detail} no está en el scope de {code}. Un agente no "
+        f"amplía el scope: pide `taiki update {code} --paths <ruta>`."
+    )
+
+
+def _overlap_message(code: str, clash: dict[str, Any]) -> str:
+    shared = clash["paths"][:3] + clash["resources"][:3]
+    detail = ", ".join(shared) if shared else "paths/resources"
+    return (
+        f"Bloqueado: el scope de {code} solapa con {clash['code']} "
+        f"({detail}). Serializa o espera a que termine."
+    )
+
+
+def _scope_clash(
+    active: dict[str, Any], others: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Primer ticket activo de otra sesión con paths o recursos solapados."""
+    left_paths = ticket_paths(active)
+    left_resources = set(ticket_resources(active))
+    for other in others:
+        hits = overlaps(left_paths, ticket_paths(other))
+        shared = sorted(left_resources & set(ticket_resources(other)))
+        if hits or shared:
+            return {"code": other["code"], "paths": hits, "resources": shared}
+    return None
+
+
+def _scope_problem(
+    active: dict[str, Any],
+    *,
+    path: str | None,
+    command: str | None,
+    base: Path,
+    cwd: Path | None = None,
+) -> str | None:
+    """Detalle de la escritura que se sale del scope, o ``None`` si cabe.
+
+    ``base`` resuelve los ``paths`` del ticket (raíz del proyecto); ``cwd``
+    resuelve destinos relativos de comandos (directorio real de la sesión).
+
+    Decisión fail-closed: ``isolation=scope`` sin ``paths`` no permite nada.
+    ``commits.check`` aún trata el scope vacío como "sin restricción"; unificar
+    exige tocar ``store/mutations.py`` (validar en create/update) o
+    ``commits.py``, fuera de los paths de este ticket.
+    """
+    scopes = ticket_paths(active)
+    resources = ticket_resources(active)
+    if not scopes:
+        return "el ticket no declara paths (scope vacío)"
+    if path:
+        if path_in_scope(path, scopes, base, cwd):
+            return None
+        return f"la ruta {path!r}"
+    if command:
+        return command_scope_problem(command, scopes, resources, base, cwd)
+    return "la escritura sin ruta"
+
+
 def evaluate(
     *,
     tool: str,
@@ -330,21 +449,31 @@ def evaluate(
     if command and "git" in command:
         branch = current_branch(cwd or ".")
         protected = protected_git(command, branch)
-    if not mutating and not risky and not protected:
+    if (
+        not mutating
+        and not risky
+        and not protected
+        and not (command and command_runs_code(command))
+    ):
         return _allowed("skipped", session)
-    if path and not path_guarded(path):
-        return _allowed("outside", session)
-    if not path and command and not command_touches_home(command, cwd):
-        return _allowed("outside", session)
     session_base = Path(cwd).expanduser() if cwd else Path.cwd()
     # El guard es opt-in: solo actúa si el proyecto lo activa en .taiki/config.json.
     # Con TAIKI_DB/TICKETS_DB explícito se asume activado (tests y usos manuales).
-    config = workspace.load_config(workspace.find_workspace(session_base))
+    workspace_dir = workspace.find_workspace(session_base)
+    config = workspace.load_config(workspace_dir)
     enabled = config.get("guard")
     if enabled is None:
         enabled = bool(env.get("DB"))
     if not enabled:
         return _allowed("disabled", session)
+    scope_base = _scope_base(workspace_dir, session_base)
+    roots = _guard_roots(workspace_dir, scope_base, config)
+    if path and not path_guarded(path, roots, scope_base):
+        return _allowed("outside", session)
+    if not path and command and not command_touches_home(
+        command, scope_base, roots
+    ):
+        return _allowed("outside", session)
     try:
         target = db.db_path(session_base)
     except TicketError:
@@ -362,6 +491,16 @@ def evaluate(
     try:
         chain = session_chain(session)
         active = find_active(conn, chain, agent)
+        # En scope, ejecutar código pegado (``python -c``, ``sh -c``) cuenta
+        # como escritura aunque no se pueda leer el cuerpo: el guard no adivina.
+        if (
+            not mutating
+            and command
+            and active is not None
+            and ticket_isolation(active) == "scope"
+            and command_runs_code(command)
+        ):
+            mutating = True
         others = other_active_sessions(conn, chain, agent) if mutating or risky else []
         if active is not None:
             # El ticket propio nunca es "otra sesión", aunque no tenga sesión
@@ -375,17 +514,59 @@ def evaluate(
             if not mutating:
                 return _allowed("skipped", session)
         if active is not None:
-            if (
-                mutating
-                and others
-                and not shared_tree(environ)
-                and _inside_repo(session_base, path)
-                and not _has_worktree(conn, active["code"])
-            ):
+            mode = ticket_isolation(active)
+            if mutating:
+                action = path or command or "escritura"
+                if mode == "none":
+                    if others and not shared_tree(environ):
+                        return _blocked(
+                            "serial",
+                            session,
+                            _serial_message(action, others),
+                            active["code"],
+                        )
+                elif mode == "scope":
+                    clash = _scope_clash(active, others)
+                    if clash is not None:
+                        return _blocked(
+                            "scope-overlap",
+                            session,
+                            _overlap_message(active["code"], clash),
+                            active["code"],
+                        )
+                    problem = _scope_problem(
+                        active,
+                        path=path,
+                        command=command,
+                        base=scope_base,
+                        cwd=session_base,
+                    )
+                    if problem is not None:
+                        return _blocked(
+                            "scope",
+                            session,
+                            _scope_message(problem, active["code"]),
+                            active["code"],
+                        )
+                elif (
+                    others
+                    and not shared_tree(environ)
+                    and _inside_repo(session_base, path)
+                    and not _has_worktree(conn, active["code"])
+                ):
+                    # Modo worktree: comportamiento clásico; no valida paths.
+                    return _blocked(
+                        "worktree",
+                        session,
+                        _worktree_message(active, others),
+                        active["code"],
+                    )
+            risk = high_risk_command(command) if command else None
+            if risk and not authorization_active(conn, active):
                 return _blocked(
-                    "worktree",
+                    "authorization",
                     session,
-                    _worktree_message(active, others),
+                    _authorization_message(active["code"], risk),
                     active["code"],
                 )
             repo.heartbeat_ticket(

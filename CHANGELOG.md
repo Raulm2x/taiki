@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.4.0 — 2026-11-03
+
+Tickets: T-0059, T-0060.01, T-0060.02, T-0060.03, T-0060.04, T-0060.05, T-0060.09, T-0060.10, T-0060.11, T-0060.12, T-0060.07, T-0060.08
+
+### feat
+- feat: perfil system-admin y flujo live (T-0060.07)
+- feat: reject --revert en modo live (T-0060.11)
+- feat: revisión especial de tickets sensibles (T-0060.10)
+- feat: riesgo y autorización previa (T-0060.09)
+- feat: sys export y audit (T-0060.05)
+- feat: sys snapshot y reversal (T-0060.05)
+- feat: sys status y helpers de sistema (T-0060.05)
+- feat: claim y schedule sin worktree (T-0060.04)
+- feat: commit live y enlace cross-repo (T-0060.03)
+- feat: guard mode-aware y scope (T-0060.02)
+- feat: modelo de aislamiento y scope (T-0060.01)
+
+### fix
+- fix: confirmación del usuario como revisión especial (T-0060.12)
+- fix: propagar cwd al guard (T-0060.02)
+- fix: cerrar bypasses del guard en scope (T-0060.02)
+- fix: reconciliar versiones y marcador de release (T-0059)
+
+### docs
+- docs: aislamiento configurable y agente de sistema (T-0060.08)
+- docs: reconciliación y marcador de release (T-0059)
+
+### chore
+- chore: margen de suite para el ledger de sistema (T-0060.05)
+- chore: reconciliar develop tras v0.3.0 [sin-ticket]
+
 ## v0.3.0 — 2026-11-03
 
 Tickets: T-0045.01, T-0045.02, T-0045.03, T-0045.04, T-0045.05, T-0045.06, T-0050, T-0046.01, T-0046.02, T-0046.03, T-0046.04, T-0046.05, T-0046.06, T-0046.07, T-0047.01, T-0047.02, T-0047.03, T-0047.04, T-0047.05, T-0047.06, T-0052, T-0051, T-0053, T-0048.01, T-0048.02, T-0048.03, T-0048.04, T-0048.05, T-0048.06, T-0049.01, T-0049.02, T-0049.03, T-0054, T-0055, T-0056, T-0057, T-0058.01, T-0058.02, T-0058.03, T-0058.04, T-0058.05, T-0058.06

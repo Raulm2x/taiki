@@ -50,7 +50,7 @@ def run(h: Harness) -> None:
     table = agents.registry(config)
     merger = table["merger"]
     h.ok("merger" in table, "el registro incluye al merger")
-    h.eq(
+    h.ok(
         (
             merger["model"],
             merger["variant"],
@@ -58,21 +58,10 @@ def run(h: Harness) -> None:
             merger["max_parallel"],
             merger["cost"],
             merger["steps"],
-        ),
-        (
-            "opencode-go/deepseek-v4.1-flash",
-            "high",
-            [],
-            1,
-            1.0,
-            24,
-        ),
-        "el merger declara modelo, variante, límites y coste",
-    )
-    h.eq(
-        agents.capability("merger", config)["steps"],
-        24,
-        "capability resuelve el merger con sus steps",
+        )
+        == ("opencode-go/deepseek-v4.1-flash", "high", [], 1, 1.0, 24)
+        and agents.capability("merger", config)["steps"] == 24,
+        "el merger declara modelo, variante, límites y coste; capability lo resuelve",
     )
     h.eq(
         agents.recommend("bug")["name"],
@@ -81,7 +70,7 @@ def run(h: Harness) -> None:
     )
 
     raw = (config.get("agents") or {}).get("merger") or {}
-    h.eq(
+    h.ok(
         (
             raw.get("model"),
             raw.get("variant"),
@@ -89,21 +78,10 @@ def run(h: Harness) -> None:
             raw.get("max_parallel"),
             raw.get("cost"),
             raw.get("steps"),
-        ),
-        (
-            "opencode-go/deepseek-v4.1-flash",
-            "high",
-            [],
-            1,
-            1.0,
-            24,
-        ),
-        "config.json declara el merger con los mismos valores",
-    )
-    h.eq(
-        agents.registry(config)["reviewer"]["steps"],
-        20,
-        "config.json mantiene el resto de perfiles intactos",
+        )
+        == ("opencode-go/deepseek-v4.1-flash", "high", [], 1, 1.0, 24)
+        and agents.registry(config)["reviewer"]["steps"] == 20,
+        "config.json declara el merger y mantiene el resto de perfiles intactos",
     )
 
     _text, front, body = _split(MERGER)
@@ -123,15 +101,14 @@ def run(h: Harness) -> None:
         _effect(front, "shell", "taiki worktree merge*") == "allow"
         and _effect(front, "shell", "taiki worktree list*") == "allow"
         and _effect(front, "shell", "python3 tests/*") == "allow"
-        and _effect(front, "shell", "timeout * python3 tests/*") == "allow",
-        "el merger integra worktrees y puede ejecutar los tests",
-    )
-    h.ok(
-        _effect(front, "shell", "taiki worktree merge*--force*") == "deny"
+        and _effect(front, "shell", "timeout * python3 tests/*") == "allow"
+        and _effect(front, "shell", "sed -n *") == "allow"
+        and _effect(front, "shell", "sed *") is None
+        and _effect(front, "shell", "taiki worktree merge*--force*") == "deny"
         and _effect(front, "shell", "taiki worktree merge*--no-tests*") == "deny"
         and _effect(front, "shell", "taiki worktree merge*--path*") == "deny"
         and _effect(front, "shell", "taiki worktree remove*") == "deny",
-        "el merger no fuerza, no salta tests, no cambia el path ni retira worktrees",
+        "el merger integra worktrees, ejecuta tests y no usa flags de bypass",
     )
     h.ok(
         all(

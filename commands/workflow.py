@@ -6,8 +6,45 @@ import argparse
 import sys
 
 from ticketlib import repo, workspace, worktree
+from ticketlib.store.workflow import (
+    authorize_ticket,
+    revert_ticket,
+    review_ticket,
+)
 
 from .common import _conn, _read_body
+
+
+def cmd_authorize(args: argparse.Namespace) -> int:
+    with _conn() as conn:
+        ticket = authorize_ticket(
+            conn,
+            args.code,
+            args.why,
+            actor="usuario",
+            actor_type="usuario",
+        )
+    print(
+        f"{ticket['code']} autorizado: {args.why.strip()} "
+        "(el guard aceptará comandos de alto riesgo)"
+    )
+    return 0
+
+
+def cmd_review(args: argparse.Namespace) -> int:
+    with _conn() as conn:
+        ticket = review_ticket(
+            conn,
+            args.code,
+            args.why,
+            actor="usuario",
+            actor_type="usuario",
+        )
+    print(
+        f"{ticket['code']} revisado: {args.why.strip()} "
+        "(ya puede marcarse como verificado)"
+    )
+    return 0
 
 
 def cmd_transition(args: argparse.Namespace) -> int:
@@ -100,6 +137,21 @@ def cmd_confirm(args: argparse.Namespace) -> int:
 
 def cmd_reject(args: argparse.Namespace) -> int:
     with _conn() as conn:
+        if getattr(args, "revert", False):
+            result = revert_ticket(
+                conn,
+                args.code,
+                args.why,
+                actor="usuario",
+                actor_type="usuario",
+            )
+            ticket = result["ticket"]
+            if result["manual"]:
+                print(f"{ticket['code']} → cancelado (revert manual)")
+                print(f"ejecuta: {result['command']}")
+            else:
+                print(f"{ticket['code']} revertido y cancelado")
+            return 0
         ticket = repo.transition(
             conn,
             args.code,

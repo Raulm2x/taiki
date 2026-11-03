@@ -245,6 +245,46 @@ explicar renumeraciones o historia. Para commits que no son trabajo de un
 ticket, escribe `[sin-ticket]` o usa `TAIKI_HOOK=off`.
 
 
+## Aislamiento configurable
+
+El aislamiento es por ticket (`--isolation`) y el defecto sale de
+`.taiki/config.json`:
+
+```json
+{
+  "isolation": {"default": "worktree", "live_branch": "main"},
+  "scope": {"roots": ["."]}
+}
+```
+
+| modo | escritura | commit | paralelismo |
+|---|---|---|---|
+| `none` | árbol vivo, sin acotar | rama viva (`live_branch`) | serial |
+| `scope` | árbol vivo dentro de `paths` y `resources` | rama viva, índice acotado | sí, si no solapa |
+| `worktree` | `.worktrees/T-XXXX`, rama `agent/T-XXXX-*` | en su rama, merge tras confirmar | sí, si no solapa |
+
+- **Claim**: `none`/`scope` se reclaman sin worktree; `worktree` con
+  `worktree=true`. Tras el claim, `session_move` deja la sesión en la ruta.
+- **Schedule**: `none` va siempre a `serial`; `scope` y `worktree` admiten
+  `parallel` si sus paths y recursos son disjuntos. Solapes, esquema, store
+  core, config y merges son seriales.
+- **Guard**: `scope` exige `paths` y falla cerrado sin ellos; solo permite
+  escribir dentro de su alcance. `worktree` exige el worktree. `none` permite
+  el árbol vivo pero no se paraleliza.
+- **Commit live**: `taiki commit` en `none`/`scope` valida el índice contra
+  `paths` y commitea en la rama viva. `taiki commit --repo <ruta> --ticket
+  T-XXXX` commitea el árbol vivo de otro repositorio (dotfiles) y enlaza
+  `external <repo>@<sha>`: la DB y el ticket no cambian de workspace.
+- **Reversión**: `taiki update --reversal '{"kind","ref","command"}'`.
+  `reject --revert` (usuario) ejecuta `git revert` solo para `git-revert`; en
+  `copy`/sistema imprime el comando y cancela el ticket. `worktree` no aplica.
+- **Riesgo**: `risk` (`low`/`medium`/`high`) se deriva de paths y resources.
+  Rutas sensibles marcan `requires_review` como aviso, no bloquean
+  `verificado`: `taiki confirm` es la revisión especial.
+- **Autorización**: el guard bloquea sin `taiki authorize` (solo usuario)
+  `sudo`, `systemctl` de sistema (sin `--user`), `pacman`/`paru`/`yay` y
+  escrituras en `/etc`, `/usr`, `/boot` o `/var/lib`.
+
 ## Agentes en paralelo (worktrees)
 
 Varias sesiones pueden trabajar a la vez sin pisarse:
@@ -262,9 +302,10 @@ Varias sesiones pueden trabajar a la vez sin pisarse:
   `--force` lo fuerza) y `taiki audit` lo señala. `taiki heartbeat T-XXXX`
   renueva el lease durante comandos largos.
 - **Un ticket activo por sesión**, con heartbeat en cada acción del guard.
-- **Worktree obligatorio**: si otra sesión está activa, el guard bloquea las
-  escrituras dentro del checkout cuando tu ticket no tiene worktree; la lectura
-  sigue libre. Escape consciente: `TAIKI_SHARED_TREE=1`.
+- **Worktree obligatorio en modo `worktree`**: si otra sesión está activa, el
+  guard bloquea las escrituras dentro del checkout cuando tu ticket no tiene
+  worktree o sale de su `scope`; la lectura sigue libre. Escape consciente:
+  `TAIKI_SHARED_TREE=1`.
 - **Commits acotados**: declara las rutas del ticket con `--paths` y usa
   `taiki commit -m "..."`. Rechaza el índice fuera de alcance o que solapa con
   otro ticket activo; el hook `pre-commit` (`taiki hook-check-index`) aplica la
@@ -384,6 +425,75 @@ taiki scratch --promote S-0001   # vuelve a la tabla como T-XXXX
   `T-XXXX`, aparece como *código oculto*, no como hueco real.
 - `export` los incluye: es un respaldo, no una vista.
 
+
+## Workspace de sistema (`taiki sys`)
+
+El trabajo de sistema no vive en el repo del proyecto: usa un workspace propio,
+un repositorio Git en `~/.local/share/taiki-sys` (configurable con `TAIKI_DB` o
+ejecutando desde su raíz) con su `.taiki/`, su DB local y su rama viva. Los
+ficheros vivos del sistema siguen siendo la fuente de verdad; el repo es un
+ledger de snapshots y registros.
+
+```text
+~/.local/share/taiki-sys/
+├── .taiki/                 # config, DB local y archivos versionables
+├── snapshots/<T-XXXX>/<timestamp>/…
+└── records/
+    ├── tickets.json
+    ├── tickets.md
+    └── manifest.json
+```
+
+- **`taiki sys status`**: repo Git (raíz, rama, cambios), `scope.roots`,
+  `isolation` (`default` y `live_branch`), `verify.command` y dotfiles
+  detectados.
+- **Raíces**: `scope.roots` se compone de `config.json` y `local.json`; las
+  rutas relativas se resuelven contra el workspace. `taiki sys snapshot` rechaza
+  ficheros fuera de esas raíces.
+- **`taiki sys snapshot T-XXXX --path FILE`**: copia a
+  `snapshots/T-XXXX/<timestamp>/<ruta>` con `shutil.copy2`, calcula SHA-256,
+  commitea y anota en el ticket la reversión `copy` con el comando `cp -a`.
+  Solo para tickets `none`/`scope` y ficheros existentes.
+- **`--packages`**: guarda `pacman -Qqe` en
+  `snapshots/T-XXXX/pacman-Qqe.txt`; `--from FILE` permite leer una lista sin
+  ejecutar `pacman`. El rollback es **manual**:
+  `pacman -S --needed $(cat …)`.
+- **Dotfiles**: si el fichero vive en el repo de dotfiles detectado, no se
+  copia. Se registra una reversión `git-revert` en ese repo y se imprime el
+  comando `taiki commit --repo <dotfiles> --ticket T-XXXX`. El commit de
+  dotfiles se enlaza como `external <repo>@<sha>`.
+- **`taiki sys export [T-XXXX]`**: exporta los tickets y escribe
+  `records/tickets.json`, `records/tickets.md` y `records/manifest.json` con
+  snapshots, hashes y enlaces (`commit` y `external`), y lo commitea. La DB
+  nunca se versiona.
+- **`taiki sys audit`**: compara los hashes del manifiesto con los ficheros
+  actuales. Marca `changed`/`missing` y si el cambio está cubierto por un
+  ticket abierto (`snapshots/<T-XXXX>/…`). **Límite**: no escanea ficheros
+  nuevos; solo verifica los paths registrados en el manifiesto (follow-up).
+- **`verify.command`**: comando de verificación del workspace
+  (`.taiki/config.json`). `taiki sys status` lo muestra; no se ejecuta solo.
+
+### Arch y systemd
+
+- Paquetes: `pacman -Qqe` es la foto; la instalación la ejecuta el usuario tras
+  `taiki authorize` (el guard bloquea `pacman`, `paru` y `yay` sin autorización).
+- Servicios de usuario: `--resource systemd:user/<unit>` queda dentro del
+  alcance de `scope`; los de sistema usan `systemd:system/<unit>` y elevan el
+  `risk` a `high`.
+- `systemctl --user …` no exige autorización; `systemctl` sin `--user` sí, y se
+  bloquea hasta `taiki authorize`.
+- Los snapshots de `/etc`, `/usr`, `/boot` y `/var/lib` elevan el riesgo; no
+  sustituyen a un backup del sistema.
+
+### Riesgos
+
+- El workspace de sistema escribe en rutas reales: un snapshot no revierte
+  paquetes ni servicios por sí solo.
+- `sys audit` no detecta ficheros nuevos ni cambios fuera del manifiesto.
+- La autorización es por ticket y **solo la da el usuario**; los agentes deben
+  pedirla y no pueden auto-revisarse ni auto-confirmarse.
+- La DB del workspace de sistema no se versiona: `sys export` es el respaldo
+  lógico de los tickets.
 
 ## Servidores MCP
 

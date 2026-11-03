@@ -190,3 +190,64 @@ def run(h: Harness) -> None:
         },
         "agents expone el registro y recomienda un agente",
     )
+
+    # ── Contrato MCP de aislamiento y scope ─────────────────────────────
+    h.ok(
+        "authorize" not in catalog_names and "review" not in catalog_names,
+        "el aislamiento no expone authorize ni review",
+    )
+    created = handlers.call_tool(
+        "create",
+        {
+            "title": "Ticket MCP aislado",
+            "isolation": "scope",
+            "resources": ["package:git"],
+            "reversal": {"kind": "manual", "ref": "T-0060.01"},
+        },
+    )
+    h.eq(
+        (created["isolation"], created["resources"], created["reversal"]["kind"]),
+        ("scope", ["package:git"], "manual"),
+        "create acepta isolation, resources y reversal",
+    )
+    claimed = handlers.call_tool(
+        "claim", {"code": created["code"], "agent": "mcp-iso"}
+    )
+    h.ok(
+        claimed["isolation"] == "scope"
+        and isinstance(claimed.get("scope"), list)
+        and claimed["scope"],
+        "claim devuelve isolation y scope",
+    )
+    updated = handlers.call_tool(
+        "update",
+        {
+            "code": created["code"],
+            "isolation": "none",
+            "resources": ["service:sshd"],
+            "reversal": {"kind": "command", "command": "true"},
+        },
+    )
+    h.eq(
+        (updated["isolation"], updated["resources"], updated["reversal"]["kind"]),
+        ("none", ["service:sshd"], "command"),
+        "update acepta isolation, resources y reversal",
+    )
+    shown = handlers.call_tool("get", {"code": created["code"]})
+    h.ok(
+        shown["isolation"] == "none"
+        and shown["resources"] == ["service:sshd"]
+        and isinstance(shown.get("scope"), list),
+        "get incluye isolation, recursos y scope",
+    )
+    listed = handlers.call_tool(
+        "list", {"query": "Ticket MCP aislado", "limit": 5}
+    )
+    h.ok(
+        listed.get("scope_roots")
+        and any(
+            item.get("isolation") == "none"
+            for item in listed["tickets"]
+        ),
+        "list incluye isolation y scope_roots",
+    )

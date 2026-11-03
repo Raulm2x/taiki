@@ -215,6 +215,12 @@ def _handle_worktree_create(
     if not code:
         raise domain.ValidationError("El parámetro 'code' es obligatorio")
     ticket = repo.get_ticket(conn, code)
+    isolation = str(ticket.get("isolation") or domain.DEFAULT_ISOLATION)
+    if isolation in orchestrator_lib.LIVE_ISOLATIONS:
+        raise domain.ValidationError(
+            f"{code} usa aislamiento {isolation}: no necesita worktree; "
+            "trabaja en el checkout live sobre la rama configurada."
+        )
     if ticket["status"] != "en_progreso" and not args.get("force"):
         raise domain.ValidationError(
             f"{code} no está en progreso; reclámalo antes de crear el worktree."

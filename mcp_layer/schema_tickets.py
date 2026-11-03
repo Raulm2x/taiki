@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from ticketlib.domain import KINDS, LINK_KINDS, PRIORITIES, STATUSES
+from ticketlib.domain import (
+    ISOLATION_MODES,
+    KINDS,
+    LINK_KINDS,
+    PRIORITIES,
+    STATUSES,
+)
 
 from .schema_common import (
     AGENT,
@@ -13,6 +19,31 @@ from .schema_common import (
     STATUS,
     ToolSpec,
 )
+
+ISOLATION = {
+    "type": "string",
+    "enum": list(ISOLATION_MODES),
+    "description": "Aislamiento del trabajo: none (árbol vivo serial), "
+    "scope (paths + resources) o worktree (defecto)",
+}
+RESOURCES = {
+    "type": "array",
+    "items": {"type": "string", "maxLength": 200},
+    "maxItems": 50,
+    "description": "Recursos tipados: systemd:user/<unit>, "
+    "systemd:system/<unit>, package:<name>, service:<name>",
+}
+REVERSAL = {
+    "type": ["object", "null"],
+    "properties": {
+        "kind": {"type": "string", "maxLength": 40},
+        "ref": {"type": "string", "maxLength": 500},
+        "command": {"type": "string", "maxLength": 2_000},
+    },
+    "required": ["kind"],
+    "additionalProperties": False,
+    "description": "Plan de reversión: {kind, ref, command}; null lo limpia",
+}
 
 TICKET_SPECS = [
     ToolSpec(
@@ -61,6 +92,9 @@ TICKET_SPECS = [
                 "maxItems": 200,
                 "description": "Rutas o globs que posee el ticket",
             },
+            "isolation": ISOLATION,
+            "resources": RESOURCES,
+            "reversal": REVERSAL,
             "tags": {
                 "type": "array",
                 "items": {"type": "string", "maxLength": 80},
@@ -283,7 +317,8 @@ TICKET_SPECS = [
             "worktree": {
                 "type": "boolean",
                 "default": False,
-                "description": "Crea y enlaza un worktree para el ticket",
+                "description": "Crea y enlaza un worktree (solo aislamiento "
+                "worktree; none/scope trabajan en el árbol vivo)",
             },
             "lease_minutes": {
                 "type": "integer",
@@ -312,6 +347,9 @@ TICKET_SPECS = [
                 "maxItems": 200,
                 "description": "Rutas o globs que posee el ticket",
             },
+            "isolation": ISOLATION,
+            "resources": RESOURCES,
+            "reversal": REVERSAL,
             "tags": {
                 "type": "array",
                 "items": {"type": "string", "maxLength": 80},
@@ -556,7 +594,7 @@ TICKET_SPECS = [
         "schedule",
         "Plan de paralelismo: tareas listas y disjuntas que caben en el "
         "presupuesto; las que solapan o tocan zonas seriales se ejecutan de "
-        "una en una.",
+        "una en una. Incluye el aislamiento por ticket y requires_worktree.",
         {
             "project": {
                 "type": "string",
@@ -584,7 +622,9 @@ TICKET_SPECS = [
     ToolSpec(
         "worktree_create",
         "Crea (o reutiliza) el worktree del ticket reclamado y lo enlaza. "
-        "Trabaja dentro de la ruta devuelta para no pisar el árbol compartido.",
+        "Solo para aislamiento worktree: none/scope trabajan en el checkout "
+        "live. Trabaja dentro de la ruta devuelta para no pisar el árbol "
+        "compartido.",
         {
             "code": CODE,
             "title": {

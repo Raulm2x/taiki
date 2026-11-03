@@ -44,7 +44,7 @@ def _migration(h: Harness) -> None:
         old.execute("PRAGMA user_version = 4")
         h.eq(db.schema_version(old), 4, "la DB de prueba arranca en v4")
         db.migrate(old)
-        h.eq(db.schema_version(old), 6, "la migración sube a v6")
+        h.eq(db.schema_version(old), 7, "la migración sube a v7")
         h.eq(
             repo.get_ticket(old, ticket["code"])["title"],
             "Sobrevive a la migración",
@@ -92,7 +92,7 @@ def _ticket_kinds(h: Harness) -> None:
         old.execute("PRAGMA user_version = 5")
         db.migrate(old)
         h.ok(
-            db.schema_version(old) == 6
+            db.schema_version(old) == 7
             and "ticket_kinds"
             in {row["name"] for row in old.execute("PRAGMA table_info(memories)")}
             and get_memory(old, seeded["code"])["ticket_kinds"] == [],

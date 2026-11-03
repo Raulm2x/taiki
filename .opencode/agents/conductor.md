@@ -27,6 +27,9 @@ permissions:
   - action: subagent
     resource: "merger"
     effect: allow
+  - action: subagent
+    resource: "system-admin"
+    effect: allow
   - action: shell
     resource: "*"
     effect: allow
@@ -312,6 +315,31 @@ es exclusiva del usuario.
    `taiki worktree merge T-XXXX --delete` como fallback; el guard rechaza los no
    confirmados. **Nunca ejecutes `taiki confirm`**: sigue siendo exclusivo del
    usuario.
+
+## Modo live (isolation none/scope)
+
+Cuando el ticket declara `isolation` `none` o `scope`, el trabajo va sobre el
+árbol vivo: **no se crea worktree y no se lanza el merger**, y las tareas se
+serializan porque comparten el repo real.
+
+1. Reclama sin `worktree` y comprueba que la sesión del worker sigue en el
+   checkout principal; no pidas `session_move` a una ruta inexistente.
+2. El commit va al repo live: `TAIKI_TICKET=T-XXXX taiki commit -m "..."` con
+   rutas concretas, y `--repo <ruta>` cuando el fichero vive en el repo de
+   dotfiles; enlaza entonces el hash como `external repo@sha`. El commit del
+   proyecto no debe arrastrar cambios ajenos.
+3. Antes de cualquier acción de alto riesgo (`sudo`, systemd de sistema,
+   paquetes, `/etc`) exige que el usuario ejecute
+   `taiki authorize T-XXXX --why "..."` **después** del claim. Tú no autorizas:
+   el subagente `system-admin` pide la autorización en el ticket y espera.
+4. Los tickets sensibles (`requires_review`) no pasan a `verificado` sin
+   `taiki review T-XXXX` del usuario. Nunca ejecutes `taiki review` ni lo
+   presentes como hecho.
+5. Verifica con el comando del workspace (`verify.command` de la
+   configuración) y con los gates deterministas; no inventes sustitutos.
+6. Deja rastro de sistema con `taiki sys snapshot T-XXXX --path|--packages`
+   antes de tocar y `taiki sys export` al cerrar, para que la reversión y el
+   manifiesto queden en el repo de sistema.
 
 ## Permisos y escalado
 

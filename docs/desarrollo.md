@@ -197,22 +197,27 @@ de vuelta con un merge normal (`git switch develop && git merge --no-ff main`,
 sin reescribir `main`). El paso es idempotente (si `main` ya es ancestro no hace
 nada), restaura la rama en la que estabas y aparece en el resultado como
 `reconciled`. Sin él, la segunda release fallaría con *«main no es ancestro de
-develop»*. Si el merge diera conflicto, la release ya está publicada: el
-comando aborta el merge, avisa con `reconcile_error` y deja `develop` intacta
-para resolver a mano.
+develop»*. Si el merge tiene conflictos **solo** en
+`ticketlib/__init__.py`, `pyproject.toml` o `.taiki/releases.json`, se resuelven
+tomando la versión de `main` (la del release) y el merge continúa: la release es
+la fuente de verdad de esos ficheros. Cualquier otro conflicto aborta el merge,
+avisa con `reconcile_error` y deja `develop` para resolver a mano; la release ya
+está publicada.
 
 Además, la release registra el commit de integración publicado en
 `.taiki/releases.json`, un fichero **versionado** con una entrada
-`{tag, version, released_sha, date}` por release. El registro viaja en el mismo
-merge de reconciliación (o en un commit `chore(release): registrar vX.Y.Z` de
-`develop` si no hizo falta merge); `main` no recibe ningún commit propio por
-esto. La siguiente release usa el `released_sha` de la última entrada como
-inicio del rango, así que el squash de `main` no repite en el CHANGELOG commits
-ya publicados ni fuerza un bump por un `feat` antiguo. En repos sin marcador
-(primera release o proyectos anteriores a este fichero) se cae al rango
-`<tag>..develop`; si existe el merge de reconciliación de ese tag, se usa su
-primer padre. Si el rango no deja commits publicables, la release aborta con
-*«No hay commits nuevos desde vX.Y.Z»*.
+`{tag, version, released_sha, date}` por release. La entrada viaja en el
+**commit de release de `main`**: se escribe antes de reconciliar, así que no se
+pierde si la reconciliación falla, y `main` no recibe ningún commit extra por el
+marcador. El merge de reconciliación la trae a `develop`; en repos sin marcador
+(primera release o proyectos anteriores a este fichero) se completa en el merge
+o en un commit `chore(release): registrar vX.Y.Z` de `develop`. La siguiente
+release usa el `released_sha` de la última entrada como inicio del rango, así que
+el squash de `main` no repite en el CHANGELOG commits ya publicados ni fuerza un
+bump por un `feat` antiguo; si no hay marcador se cae al rango `<tag>..develop`,
+y si existe el merge de reconciliación de ese tag, se usa su primer padre. Si el
+rango no deja commits publicables, la release aborta con *«No hay commits nuevos
+desde vX.Y.Z»*.
 
 ```bash
 taiki release --push
@@ -297,9 +302,11 @@ anuncio con el tag publicado sin cambios propios.
 - **Worker**: crea la rama del ticket desde `develop`, commitea, ejecuta los
   gates y marca `completado`.
 - **Conductor**: revisa, verifica con `--verify`, marca `verificado` y mergea a
-  `develop` en orden de dependencias.
-- **Usuario**: confirma los tickets y ejecuta la release (`taiki release`) sobre
-  `main`.
+  `develop` en orden de dependencias. No confirma: eso es del usuario.
+  `taiki review` es opcional y no bloquea `verificado`.
+- **Usuario**: confirma los tickets (revisión especial) y ejecuta la release
+  (`taiki release`) sobre `main`; también autoriza comandos de alto riesgo con
+  `taiki authorize`.
 
 ### Migración
 
@@ -328,6 +335,32 @@ Después:
    `Rama de integración: develop` sin aviso.
 
 `main` queda congelada hasta la primera release (`taiki release`).
+
+### Esquema v7 y migración de datos
+
+La DB se actualiza sola al abrir: `SCHEMA_VERSION = 7` y `PRAGMA user_version`
+es la única fuente de versión. La migración es incremental y aditiva; no hay
+paso manual ni pérdida de tickets.
+
+- **v7** añade a `tickets` las columnas `isolation` (defecto `worktree`),
+  `resources` (JSON) y `reversal` (JSON). Los tickets existentes quedan en
+  `worktree`, que es el comportamiento anterior.
+- El bloque `isolation` de `.taiki/config.json` se lee con defaults seguros
+  (`default=worktree`, `live_branch=main`); `scope.roots` cae en `["."]` si
+  falta.
+- Tras actualizar, `taiki sys status` (workspace de sistema) y
+  `taiki status` muestran el aislamiento resuelto. Los tickets nuevos usan el
+  defecto del proyecto salvo que `--isolation` diga otra cosa.
+- Si la DB tiene una versión **mayor** que el código, Taiki se niega a abrirla y
+  pide actualizar; nunca degrada el esquema.
+- Los worktrees y ramas `agent/T-XXXX-*` no cambian: el modo `worktree` sigue
+  siendo el flujo por defecto.
+
+La épica de aislamiento y sistema se integró en este orden: contrato y esquema
+(.01–.04), workspace de sistema y snapshots (.05), riesgo y autorización (.09),
+revisión especial (.10), `reject --revert` (.11), confirmación como revisión
+(.12), perfil `system-admin` (.07) y esta documentación (.08). El release de
+cierre es **v0.4.0**.
 
 ## Desarrollo
 

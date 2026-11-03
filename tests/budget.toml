@@ -60,19 +60,37 @@
 # T-0058.03 auditoría sin épicas: +4 comprobaciones (épica confirmada fuera,
 # hoja sin commit dentro, hoja con commit fuera y lista de épicas excluidas).
 # Revisión única del techo por el comportamiento nuevo; a partir de aquí, podar.
-max_seconds = 11.6
-baseline_checks = 1966
+# T-0060.01 aislamiento/scope: +31 comprobaciones (migración v7, CRUD,
+# validaciones de recursos/reversión, config, CLI y contrato MCP). Revisión
+# única del techo por el modelo nuevo; a partir de aquí, podar.
+# T-0060.02 guard mode-aware: +29 comprobaciones (roots, comandos ambiguos,
+# modos none/scope/worktree, solapes y decodificación de filas). Revisión única
+# del techo por el comportamiento nuevo; a partir de aquí, podar.
+# Medido 12.2-12.5s con carga alta (load 3.5) en el gate de merge; se amplía
+# el margen local y el de CI una sola vez y no se sube el benchmark de export.
+# Revisión especial: +15 checks de regresión (prefijos, sed --in-place,
+# -t/--target-directory, git en scope, redirecciones fd, chmod/chown/dd y cwd).
+# T-0060.05 ledger de sistema: +0.25s de test_sys; medido 13.6s con load 3.2;
+# revisión única, a partir de aquí podar.
+# T-0060.09 seguridad: riesgo/autorización/guard; +0.4s; medido 14.0s con
+# load 2.4; revisión única, a partir de aquí podar.
+max_seconds = 14.4
+baseline_checks = 2041
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
 
 [module]
-max_seconds = 1.1
+max_seconds = 1.4
 
 # Perfil de CI: los runners compartidos son más lentos y no deben fallar por
 # ruido. Se aplica con CI=true (o TAIKI_CI=true) y cada valor se puede
 # sobrescribir con TAIKI_SUITE_BUDGET / TAIKI_MODULE_BUDGET.
 [ci.suite]
-max_seconds = 12.0
+# T-0060.05 ledger de sistema: +0.25s de test_sys; medido 13.6s con load 3.2;
+# revisión única, a partir de aquí podar.
+# T-0060.09 seguridad: riesgo/autorización/guard; +0.4s; medido 14.0s con
+# load 2.4; revisión única, a partir de aquí podar.
+max_seconds = 14.8
 
 [ci.module]
 max_seconds = 1.5

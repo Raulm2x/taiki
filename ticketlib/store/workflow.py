@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import shlex
 import sqlite3
+import subprocess
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from .. import db, env
@@ -19,6 +22,8 @@ from ..domain import (
     PermissionDenied,
     TransitionError,
     ValidationError,
+    clean_isolation,
+    clean_reversal,
 )
 from ..gitutil import resolve_commit
 from ..util import (
@@ -143,6 +148,10 @@ def transition(
             "(tests, CI, revisión)"
         )
 
+    # Las rutas sensibles (``requires_review``) quedan como aviso en el ticket,
+    # no como gate: ``taiki review`` es opcional y la confirmación del usuario
+    # (``taiki confirm``) es la revisión especial de esos tickets.
+
     if status in ("completado", "verificado", "confirmado"):
         closed = (
             PARENT_DONE_STATUSES
@@ -211,6 +220,150 @@ def transition(
         )
 
     return get_ticket(conn, code)
+
+
+def _cancel_after_revert(
+    conn: sqlite3.Connection,
+    code: Any,
+    note: str,
+    actor: str,
+    actor_type: str,
+    session_id: str | None,
+) -> dict[str, Any]:
+    """Lleva a ``cancelado`` desde estados abiertos o cerrados.
+
+    ``cancelado`` solo es alcanzable desde estados abiertos; un ticket
+    completado/verificado pasa primero por ``en_progreso`` para que la
+    máquina de estados siga siendo la única puerta de escritura.
+    """
+    row = row_by_code(conn, code)
+    if row["status"] == "cancelado":
+        return get_ticket(conn, code)
+    if "cancelado" not in TRANSITIONS.get(row["status"], set()):
+        transition(
+            conn,
+            code,
+            "en_progreso",
+            note=note,
+            actor=actor,
+            actor_type=actor_type,
+            session_id=session_id,
+        )
+    return transition(
+        conn,
+        code,
+        "cancelado",
+        note=note,
+        actor=actor,
+        actor_type=actor_type,
+        session_id=session_id,
+    )
+
+
+def revert_ticket(
+    conn: sqlite3.Connection,
+    code: Any,
+    why: str,
+    *,
+    actor: str = "usuario",
+    actor_type: str = "usuario",
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """Revierte el cambio de un ticket live y lo cancela.
+
+    Solo el usuario puede revertir. En ``git-revert`` el comando registrado se
+    valida con ``shlex.split`` y se ejecuta sin shell; el resto de reversiones
+    (copy, sistema, manual…) no se ejecutan: se devuelven para que el CLI
+    imprima el comando y el usuario decida.
+    """
+    if actor_type != "usuario":
+        raise PermissionDenied(
+            "Solo el usuario puede revertir un ticket con --revert."
+        )
+    why = (why or "").strip()
+    if not why:
+        raise ValidationError("Revertir un ticket requiere un motivo (--why)")
+
+    row = row_by_code(conn, code)
+    isolation = clean_isolation(row["isolation"])
+    if isolation == "worktree":
+        raise ValidationError(
+            f"{row['code']} usa aislamiento worktree: `reject --revert` solo "
+            "aplica a none/scope. Usa `taiki reject` normal para rework."
+        )
+
+    reversal = clean_reversal(row["reversal"])
+    if reversal is None:
+        raise ValidationError(
+            f"{row['code']} no tiene reversión registrada; añádela con "
+            "`taiki update --reversal` antes de revertir."
+        )
+
+    kind = reversal["kind"]
+    command = reversal.get("command") or ""
+    manual = kind != "git-revert"
+    if not manual:
+        ref = reversal.get("ref") or ""
+        if not ref or not Path(ref).is_dir():
+            raise ValidationError(
+                f"Reversión git-revert sin repo válido en 'ref': {ref!r}"
+            )
+        if "<sha>" in command:
+            prefix = f"{Path(ref).name}@"
+            linked = conn.execute(
+                "SELECT ref FROM links WHERE ticket_id = ? AND kind = 'external' "
+                "ORDER BY id DESC",
+                (row["id"],),
+            ).fetchall()
+            sha = next(
+                (
+                    item["ref"][len(prefix):]
+                    for item in linked
+                    if (item["ref"] or "").startswith(prefix)
+                    and item["ref"][len(prefix):]
+                ),
+                None,
+            )
+            if not sha:
+                raise ValidationError(
+                    f"{row['code']} no tiene SHA para <sha>; registra el "
+                    f"commit con `taiki link {row['code']} external "
+                    f"{prefix}<sha>`."
+                )
+            command = command.replace("<sha>", sha)
+        try:
+            tokens = shlex.split(command)
+        except ValueError as exc:
+            raise ValidationError(
+                f"Comando de reversión inválido: {exc}"
+            ) from exc
+        if (
+            len(tokens) < 5
+            or tokens[0] != "git"
+            or tokens[1] != "-C"
+            or Path(tokens[2]).resolve() != Path(ref).resolve()
+            or tokens[3] != "revert"
+        ):
+            raise ValidationError(
+                "Comando git-revert no permitido: se espera "
+                f"`git -C {ref} revert <sha>`; recibido {command!r}"
+            )
+        result = subprocess.run(
+            tokens, capture_output=True, text=True, check=False
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            raise TransitionError(
+                f"git revert falló en {ref}: {detail or 'sin detalle'}"
+            )
+        note = f"{why} · revertido: {command}"
+    else:
+        note = f"{why} · revert manual: {command or reversal.get('ref') or kind}"
+
+    ticket = _cancel_after_revert(
+        conn, code, note, actor, actor_type, session_id
+    )
+    return {"ticket": ticket, "manual": manual, "command": command, "note": why}
 
 
 def claim_ticket(
@@ -382,6 +535,123 @@ def heartbeat_ticket(
     return True
 
 
+def authorize_ticket(
+    conn: sqlite3.Connection,
+    code: Any,
+    why: str | None,
+    actor: str = "usuario",
+    actor_type: str = "usuario",
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """Registra la autorización explícita del usuario para un ticket.
+
+    No cambia el estado: deja un evento ``autorizar`` que el guard consulta.
+    Los agentes no pueden autorizar; la acción es del usuario.
+    """
+    if actor_type != "usuario":
+        raise PermissionDenied(
+            "Solo el usuario puede autorizar un ticket; "
+            "un agente debe pedirlo con `taiki authorize T-XXXX --why ...`."
+        )
+    reason = (why or "").strip()
+    if not reason:
+        raise ValidationError("La autorización necesita un motivo (--why)")
+    row = row_by_code(conn, code)
+    with db.tx(conn):
+        event(
+            conn,
+            row["id"],
+            "autorizar",
+            actor,
+            actor_type,
+            session_id,
+            row["status"],
+            row["status"],
+            reason,
+        )
+    return get_ticket(conn, code)
+
+
+def authorization_active(
+    conn: sqlite3.Connection, ticket: Any
+) -> bool:
+    """¿Hay una autorización del usuario posterior al inicio del ticket?
+
+    Sin ``started_at`` (ticket aún no reclamado) vale cualquier autorización.
+    """
+    return _user_event_active(conn, ticket, "autorizar")
+
+
+def review_ticket(
+    conn: sqlite3.Connection,
+    code: Any,
+    why: str | None,
+    actor: str = "usuario",
+    actor_type: str = "usuario",
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """Registra la revisión del usuario para un ticket sensible.
+
+    No cambia el estado: deja un evento ``revisar`` y ``review_active`` lo
+    consulta. Es opcional: ``transition`` a ``verificado`` no lo exige y la
+    confirmación del usuario sigue siendo la revisión especial. Los agentes no
+    pueden revisar.
+    """
+    if actor_type != "usuario":
+        raise PermissionDenied(
+            "Solo el usuario puede revisar un ticket sensible; "
+            "un agente debe pedirlo con `taiki review T-XXXX --why ...`."
+        )
+    reason = (why or "").strip()
+    if not reason:
+        raise ValidationError("La revisión necesita un motivo (--why)")
+    row = row_by_code(conn, code)
+    with db.tx(conn):
+        event(
+            conn,
+            row["id"],
+            "revisar",
+            actor,
+            actor_type,
+            session_id,
+            row["status"],
+            row["status"],
+            reason,
+        )
+    return get_ticket(conn, code)
+
+
+def review_active(conn: sqlite3.Connection, ticket: Any) -> bool:
+    """¿Hay una revisión del usuario posterior al inicio del ticket?
+
+    Sin ``started_at`` (ticket aún no reclamado) vale cualquier revisión.
+    """
+    return _user_event_active(conn, ticket, "revisar")
+
+
+def _user_event_active(
+    conn: sqlite3.Connection, ticket: Any, action: str
+) -> bool:
+    if isinstance(ticket, dict):
+        ticket_id = ticket.get("id")
+        started = ticket.get("started_at")
+        if ticket_id is None:
+            row = row_by_code(conn, ticket.get("code"))
+            ticket_id, started = row["id"], row["started_at"]
+    else:
+        row = row_by_code(conn, ticket)
+        ticket_id, started = row["id"], row["started_at"]
+    sql = (
+        "SELECT 1 FROM events WHERE ticket_id = ? AND action = ? "
+        "AND actor_type = 'usuario'"
+    )
+    params: list[Any] = [ticket_id, action]
+    if started:
+        sql += " AND ts >= ?"
+        params.append(started)
+    return conn.execute(sql + " LIMIT 1", params).fetchone() is not None
+
+
 def stale_claims(
     conn: sqlite3.Connection, at: str | None = None
 ) -> list[dict[str, Any]]:
@@ -408,6 +678,26 @@ def complete_ticket(
     resolution = (resolution or "").strip()
     if not resolution:
         raise ValidationError("La resolución es obligatoria al completar un ticket")
+
+    # En los modos live (none/scope) el trabajo no vive en un worktree con
+    # rama por ticket: la evidencia es un commit enlazado o un enlace
+    # ``external`` (``repo@sha``) de otro repositorio. Sin evidencia no se
+    # cierra; ``force`` es el bypass consciente, igual que en las transiciones.
+    row = row_by_code(conn, code)
+    isolation = clean_isolation(row["isolation"])
+    pending = (commit or "").strip()
+    if isolation in ("none", "scope") and not pending and not force:
+        linked = conn.execute(
+            "SELECT 1 FROM links WHERE ticket_id = ? "
+            "AND kind IN ('commit', 'external') LIMIT 1",
+            (row["id"],),
+        ).fetchone()
+        if linked is None:
+            raise ValidationError(
+                f"{row['code']} usa aislamiento {isolation}: completa con un "
+                "commit enlazado (`taiki commit`) o un enlace external "
+                "repo@sha; usa force=true para el bypass consciente."
+            )
 
     # Resolver git antes de abrir la transacción: rev-parse puede tardar y no
     # debe mantener el lock de escritura mientras otro proceso espera.

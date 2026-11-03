@@ -24,6 +24,10 @@ taiki show T-0001 --json --compact              # detalle JSON en una línea
 taiki show T-0001              # detalle completo (incluye jerarquía de subtareas)
 taiki new -t "Revisar backups" -k mantenimiento -p alta --tags backup infra
 taiki new -t "Migrar API" --paths src/api/ tests/api/  # rutas que posee el ticket
+taiki new -t "Centrar el div" --isolation none   # árbol vivo, en serie
+taiki new -t "Ajustar config" --isolation scope --paths ~/.config/foo/ \
+  --resource systemd:user/foo.service             # solo dentro del alcance
+taiki new -t "Cambio grande" --isolation worktree # .worktrees/ (defecto)
 taiki new -t "Subtarea" --parent T-0014  # crea T-0014.01, T-0014.02…
 taiki attach T-0014 T-0008 T-0009   # agrupa tickets existentes bajo una épica
 taiki detach T-0008                  # la devuelve a la raíz
@@ -42,11 +46,20 @@ taiki worktree list
 taiki worktree merge T-0001 --delete  # solo si T-0001 está confirmado
 taiki worktree remove T-0001 --delete-branch
 taiki commit -m "..."          # commitea solo las rutas del ticket activo
+taiki commit --repo ~/dotfiles --ticket T-0001 -m "..."  # otro repo; enlace external
 taiki complete T-0001 -r "Qué se hizo y cómo se verificó" --commit abc1234
-taiki confirm T-0001           # solo usuario
+taiki authorize T-0001 --why "Instalar el paquete x"   # solo usuario
+taiki review T-0001 --why "Revisado el cambio"         # opcional, solo usuario
+taiki confirm T-0001           # solo usuario; es la revisión especial
 taiki confirm T-0003 T-0004    # varios a la vez, atómico
 taiki reopen T-0001 --why "Reaparece el fallo"
 taiki reject T-0001 --why "Falta cubrir el caso vacío"  # reabre y cuenta iteración
+taiki reject T-0001 --why "Fallo en producción" --revert  # revierte live y cancela
+taiki sys status                # workspace de sistema y dotfiles
+taiki sys snapshot T-0001 --path /etc/foo.conf  # copia, commit y reversión
+taiki sys snapshot T-0001 --packages            # pacman -Qqe (rollback manual)
+taiki sys export T-0001         # records/ + manifest.json en el repo de sistema
+taiki sys audit                 # hashes del manifiesto (no escanea nuevos)
 taiki comment T-0001 "Nota"
 taiki transition T-0001 bloqueado --note "Espera respuesta"
 taiki stats
@@ -231,6 +244,56 @@ Antes de revisar, el reviewer pide
 `kind` es el tipo de memoria, no el tipo de ticket; cada entrada es compacta y
 lleva evidencia. Completa con `memory_search` de pitfalls y, si detecta un
 fallo recurrente, propone un `pitfall` sin aprobarlo.
+
+### Aislamiento por ticket
+
+Cada ticket elige cómo escribe con `--isolation`; el defecto es
+`isolation.default` de `.taiki/config.json` (`worktree`).
+
+| modo | ejemplo | dónde escribe | paralelismo |
+|---|---|---|---|
+| `none` | centrar un `div` en un proyecto pequeño | checkout vivo, sin acotar | serial |
+| `scope` | tocar `~/.config/foo/` y su unidad de usuario | checkout vivo dentro de `paths`/`resources` | sí, si no solapa |
+| `worktree` | refactor grande o cambio con tests lentos | `.worktrees/T-XXXX` | sí, si no solapa |
+
+```bash
+# none: el cambio vive en el árbol y se commitea en la rama viva
+taiki new -t "Centrar el div del panel" --isolation none --paths src/panel.css
+taiki claim T-0040 --agent worker
+
+# scope: solo puede escribir dentro de sus paths y recursos
+taiki new -t "Ajustar el servicio" --isolation scope \
+  --paths ~/.config/foo/ --resource systemd:user/foo.service
+taiki claim T-0041 --agent worker
+
+# worktree: el defecto, aislado en .worktrees/T-0042
+taiki new -t "Refactor del motor" --isolation worktree
+taiki claim T-0042 --agent worker --worktree
+
+# sistema: systemd de sistema o paquetes
+taiki new -t "Actualizar la unidad del sistema" -k mantenimiento \
+  --isolation scope --resource systemd:system/foo.service
+taiki authorize T-0043 --why "systemctl daemon-reload y enable"  # solo usuario
+taiki sys snapshot T-0043 --packages
+
+# dotfiles: el commit va al repo de dotfiles y se enlaza como external
+taiki new -t "Ajustar Hyprland" --isolation scope --paths ~/dotfiles/hypr/
+taiki commit --repo ~/dotfiles --ticket T-0044 -m "fix: hypr (T-0044)"
+```
+
+- **`none`** no se paraleliza: `schedule` lo manda a `serial`.
+- **`scope`** exige `paths`; sin ellos el guard no permite escribir
+  (fail-closed). Los `resources` (`systemd:user/<unit>`, `systemd:system/<unit>`,
+  `package:<nombre>`) también delimitan el alcance.
+- **`worktree`** mantiene el flujo clásico: `claim --worktree`,
+  `session_move`, commit en `agent/T-XXXX-*` y merge tras confirmar.
+- `risk` (`low`/`medium`/`high`) se deriva de paths y resources; las rutas
+  sensibles marcan `requires_review` como aviso, no como bloqueo.
+- La reversión se registra con
+  `taiki update T-XXXX --reversal '{"kind":"copy","ref":"…","command":"…"}'`.
+  `taiki reject --revert --why …` (solo usuario) ejecuta `git revert` si la
+  reversión es `git-revert`; con `copy` o sistema solo imprime el comando
+  manual. Los tickets `worktree` se rechazan de la forma normal.
 
 ### Épicas y tareas
 
@@ -511,6 +574,14 @@ El trabajo se entrega **antes** de publicarse:
 2. El usuario revisa y confirma con `taiki confirm` (o `c` en la TUI).
 3. Solo entonces se hace commit y push.
 
+`taiki confirm` es **la revisión especial**: la única transición a
+`confirmado`, exclusiva del usuario. `taiki review` es opcional y solo deja
+constancia de que el usuario miró un ticket con rutas sensibles
+(`requires_review` es un aviso); **no bloquea** el paso a `verificado`. Los
+tickets que tocan sistema (`/etc`, `/usr`, `/boot`, `/var/lib`, paquetes o
+systemd de sistema) exigen `taiki authorize` antes de que el guard acepte
+comandos de alto riesgo; autorizar no cambia el estado.
+
 El `commit-msg` exige que los tickets del asunto estén en **`confirmado`**, no
 solo que existan; el `pre-push` revisa los commits nuevos y bloquea el push si
 alguno referencia un ticket sin confirmar. Saltos: `[sin-ticket]` para commits
@@ -520,10 +591,16 @@ Si la revisión rechaza el trabajo:
 
 ```bash
 taiki reject T-0033 --why "Falta el caso de error"
+taiki reject T-0033 --why "El cambio rompió el arranque" --revert
 ```
 
 El ticket vuelve a `en_progreso`, deja un comentario con el motivo y, al
 volver a completarlo, sube el contador **`iterations`**. Se muestra en
 `taiki show`, en el panel de detalle de la TUI (`Iteraciones`) y en JSON:
 `iterations: 2` significa dos entregas, la segunda tras un rechazo.
+
+`reject --revert` es solo del usuario y para tickets live (`none`/`scope`):
+ejecuta `git revert` con la reversión registrada y cancela el ticket. Si la
+reversión es `copy` o de sistema, no ejecuta nada: imprime el comando para que
+lo apliques a mano. Un ticket `worktree` no se revierte así.
 

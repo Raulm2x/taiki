@@ -4,5 +4,17 @@
     "version": "0.2.0",
     "released_sha": "5605f57b4e80f438fa90920c3d7309e9b5ee350c",
     "date": "2026-11-02"
+  },
+  {
+    "tag": "v0.3.0",
+    "version": "0.3.0",
+    "released_sha": "9efbf54e0537c0a7a5782af639275a376c8aead0",
+    "date": "2026-11-03"
+  },
+  {
+    "tag": "v0.4.0",
+    "version": "0.4.0",
+    "released_sha": "e0940420489d61573751629690745cde985716ba",
+    "date": "2026-11-03"
   }
 ]

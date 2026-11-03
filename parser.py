@@ -48,6 +48,10 @@ from commands import (
     cmd_scheme_install,
     cmd_servers,
     cmd_scheme_uninstall,
+    cmd_sys_audit,
+    cmd_sys_export,
+    cmd_sys_snapshot,
+    cmd_sys_status,
     cmd_show,
     cmd_skills,
     cmd_stats,
@@ -61,8 +65,15 @@ from commands import (
     cmd_worktree_merge,
     cmd_worktree_remove,
 )
+from commands.workflow import cmd_authorize, cmd_review
 from ticketlib import domain
-from ticketlib.domain import KINDS, LINK_KINDS, PRIORITIES, STATUSES
+from ticketlib.domain import (
+    ISOLATION_MODES,
+    KINDS,
+    LINK_KINDS,
+    PRIORITIES,
+    STATUSES,
+)
 from ticketlib.memory import MEMORY_KINDS, MEMORY_SCOPES, MEMORY_STATUSES
 
 
@@ -164,6 +175,21 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="+",
         help="rutas o globs que posee el ticket (para commits seguros)",
     )
+    p.add_argument(
+        "--isolation",
+        choices=ISOLATION_MODES,
+        help="Aislamiento: none, scope (paths+resources) o worktree (defecto)",
+    )
+    p.add_argument(
+        "--resource",
+        action="append",
+        dest="resources",
+        help="Recurso tipado (systemd:user/<unit>, package:<name>…); repetible",
+    )
+    p.add_argument(
+        "--reversal",
+        help='Reversión JSON: {"kind": "...", "ref": "...", "command": "..."}',
+    )
     p.add_argument("--parent")
     p.set_defaults(func=cmd_new)
 
@@ -229,6 +255,21 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="+",
         help="rutas o globs que posee el ticket",
     )
+    p.add_argument(
+        "--isolation",
+        choices=ISOLATION_MODES,
+        help="Aislamiento: none, scope (paths+resources) o worktree",
+    )
+    p.add_argument(
+        "--resource",
+        action="append",
+        dest="resources",
+        help="Recurso tipado; repetible (reemplaza el conjunto completo)",
+    )
+    p.add_argument(
+        "--reversal",
+        help='Reversión JSON: {"kind": "...", "ref": "...", "command": "..."}',
+    )
     p.add_argument("--tags", nargs="*")
     p.set_defaults(func=cmd_update)
 
@@ -242,6 +283,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="Cambia el estado aunque el ticket esté reclamado",
     )
     p.set_defaults(func=cmd_transition)
+
+    p = sub.add_parser(
+        "authorize",
+        help="Autoriza comandos de alto riesgo para un ticket (solo usuario)",
+        description="Registra la autorización explícita del usuario para que "
+        "el guard acepte comandos de alto riesgo (sudo, systemctl de sistema, "
+        "gestores de paquetes, escrituras en /etc, /usr, /boot o /var/lib). "
+        "No cambia el estado del ticket. Solo el usuario puede autorizar: los "
+        "agentes deben pedirlo.",
+    )
+    p.add_argument("code")
+    p.add_argument(
+        "--why", required=True, help="Motivo de la autorización"
+    )
+    p.set_defaults(func=cmd_authorize)
+
+    p = sub.add_parser(
+        "review",
+        help="Deja constancia de la revisión de un ticket sensible (solo usuario)",
+        description="Registra que el usuario revisó un ticket que toca rutas "
+        "sensibles. Es opcional y ya no bloquea el paso a 'verificado': "
+        "`taiki confirm` es la revisión especial. Solo el usuario puede "
+        "revisar.",
+    )
+    p.add_argument("code")
+    p.add_argument(
+        "--why", required=True, help="Motivo o alcance de la revisión"
+    )
+    p.set_defaults(func=cmd_review)
 
     p = sub.add_parser(
         "confirm",
@@ -264,6 +334,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("code")
     p.add_argument("--why", required=True, help="Motivo del rechazo")
+    p.add_argument(
+        "--revert",
+        action="store_true",
+        help="Revierte el cambio live y cancela el ticket (solo usuario)",
+    )
     p.set_defaults(func=cmd_reject)
 
     p = sub.add_parser("reopen", help="Reabre un ticket")
@@ -773,6 +848,61 @@ def build_parser() -> argparse.ArgumentParser:
     wt_merge.add_argument("--json", action="store_true")
     wt_merge.set_defaults(func=cmd_worktree_merge)
 
+    p = sub.add_parser(
+        "sys",
+        help="Workspace de sistema: estado, raíces y dotfiles",
+        description="Trabaja sobre el workspace de sistema (repo Git propio en "
+        "~/.local/share/taiki-sys): estado del repo, raíces del modo scope y "
+        "detección de dotfiles.",
+    )
+    sys_sub = p.add_subparsers(dest="sys_action", required=True)
+    sys_status = sys_sub.add_parser("status", help="estado del workspace de sistema")
+    sys_status.add_argument("--json", action="store_true")
+    sys_status.set_defaults(func=cmd_sys_status)
+    sys_snap = sys_sub.add_parser(
+        "snapshot",
+        help="guarda un fichero vivo o la lista de paquetes en el repo de sistema",
+        description="Copia el fichero a snapshots/<T-XXXX>/<timestamp>/ en el "
+        "repo de sistema, lo commitea y anota la reversión en el ticket. Si el "
+        "fichero vive en el repo de dotfiles no se copia: se commitea allí. "
+        "Los paquetes se guardan con pacman -Qqe y el rollback es manual.",
+    )
+    sys_snap.add_argument("code")
+    sys_snap_group = sys_snap.add_mutually_exclusive_group(required=True)
+    sys_snap_group.add_argument("--path", help="fichero absoluto a copiar")
+    sys_snap_group.add_argument(
+        "--packages",
+        action="store_true",
+        help="guarda la lista pacman -Qqe (rollback manual)",
+    )
+    sys_snap.add_argument(
+        "--from",
+        dest="source",
+        metavar="FILE",
+        help="lee la lista de paquetes de FILE en vez de ejecutar pacman",
+    )
+    sys_snap.add_argument("--json", action="store_true")
+    sys_snap.set_defaults(func=cmd_sys_snapshot)
+    sys_export = sys_sub.add_parser(
+        "export",
+        help="exporta tickets y manifiesto a records/ en el repo de sistema",
+        description="Escribe records/tickets.json, records/tickets.md y "
+        "records/manifest.json (snapshots, commits/external y hashes) y lo "
+        "commitea. La DB no se versiona.",
+    )
+    sys_export.add_argument("code", nargs="?", help="ticket que firma el commit")
+    sys_export.add_argument("--json", action="store_true")
+    sys_export.set_defaults(func=cmd_sys_export)
+    sys_audit = sys_sub.add_parser(
+        "audit",
+        help="compara los hashes del manifiesto con los ficheros actuales",
+        description="Verifica los paths registrados en records/manifest.json y "
+        "marca los cambios cubiertos por un ticket abierto. No escanea "
+        "ficheros nuevos (follow-up).",
+    )
+    sys_audit.add_argument("--json", action="store_true")
+    sys_audit.set_defaults(func=cmd_sys_audit)
+
     p = sub.add_parser("link", help="Enlaza una referencia a un ticket")
     p.add_argument("code")
     p.add_argument("kind", choices=LINK_KINDS)
@@ -872,6 +1002,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Mensaje del commit; varios -m se concatenan como párrafos",
     )
     p.add_argument("-t", "--ticket", help="Código del ticket (o TAIKI_TICKET)")
+    p.add_argument(
+        "--repo",
+        help="Repositorio donde commitear (por ejemplo, dotfiles); mantiene la "
+        "DB del workspace y enlaza el hash como external repo@sha",
+    )
     p.add_argument("--agent", help="Agente que hizo el commit (atribución)")
     p.add_argument("--session", help="Sesión del agente que hizo el commit")
     p.add_argument("--dry-run", action="store_true", help="Solo comprueba")

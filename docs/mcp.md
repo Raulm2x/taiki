@@ -13,10 +13,10 @@ El servidor expone 32 herramientas. El nombre real no lleva prefijo (`list`,
 | `get` | Detalle; `include`, `fields`, `history_limit` y `raw` ajustan qué llega |
 | `next` | Siguiente ticket en resumen; `detail=true` para el registro completo |
 | `create`, `update`, `transition`, `complete`, `comment`, `link` | Ciclo de vida |
-| `claim` | Reclama; `worktree=true`, `lease_minutes`, `steal`, `force` |
+| `claim` | Reclama; `worktree=true` solo en modo `worktree`, `lease_minutes`, `steal`, `force` |
 | `heartbeat` | Renueva el lease en comandos largos |
 | `status`, `whoami` | Sesiones, claims, worktrees y tu ticket activo |
-| `worktree_create`, `worktree_list` | Aislan la escritura por tarea |
+| `worktree_create`, `worktree_list` | Aislan la escritura por tarea (`worktree`) |
 | `promote` | Convierte un scratch `S-####` en `T-####` |
 | `scratch_drop` | Archiva y cancela un scratch sin consumir `T-####` |
 | `health` | MCP, hooks, claims caducados, solapamientos, worktrees e integridad de memoria (`memory`) |
@@ -32,6 +32,24 @@ El servidor expone 32 herramientas. El nombre real no lleva prefijo (`list`,
 Los errores llegan como `{code, message, hint, retryable}` y las herramientas
 de lectura llevan `readOnlyHint`. Si el código del MCP cambia, las escrituras
 se bloquean hasta recargarlo: evita datos inconsistentes.
+
+### Campos nuevos del ticket
+
+- `isolation`: `none`, `scope` o `worktree` (defecto del config). `claim` con
+  `worktree=true` solo tiene sentido en `worktree`; `none` es serial y `scope`
+  se paraleliza si no comparte `paths`/`resources`.
+- `resources`: lista tipada (`systemd:user/<unit>`, `systemd:system/<unit>`,
+  `package:<nombre>`) que acota el `scope` y participa en `schedule`.
+- `reversal`: `{kind, ref, command}` registrado por `taiki update`/`taiki sys
+  snapshot`; alimenta `reject --revert` (CLI).
+- `risk`: `low`/`medium`/`high` derivado de `paths` y `resources`; no se
+  declara a mano.
+- `requires_review`: aviso booleano por rutas sensibles. No bloquea
+  `verificado`: la revisión especial es la confirmación del usuario.
+
+`authorize` y `review` **no se exponen por MCP**: son acciones del usuario en
+el CLI. El MCP tampoco expone `confirm`, `reject`, `release`, `sys` ni
+`skills install/remove`.
 
 Envelopes: `get` devuelve el ticket en primer nivel, `next` devuelve
 `{ticket}` y `list` devuelve `{tickets, count, total, offset, limit}`. Las
@@ -66,9 +84,10 @@ Resolución de sesiones automática compatible con `sessionId`, `session_id`, `A
    `statuses=["pendiente"]` o `next`.
 2. Antes de tocar código: `claim`. Si no hay ticket, créalo primero: el guard
    (cuando el proyecto lo tiene activado) bloquea la primera escritura y deja
-   un ticket automático reclamado. Si el recibo trae `hints`, úsalos como
-   contexto; los hints de playbook llevan `slug` y `reason` para cargarlo con
-   `memory_playbook`.
+   un ticket automático reclamado. Respeta `isolation`: `worktree` necesita
+   `worktree=true`; `scope` exige `paths`/`resources`; `none` es serial. Si el
+   recibo trae `hints`, úsalos como contexto; los hints de playbook llevan
+   `slug` y `reason` para cargarlo con `memory_playbook`.
 3. Si el índice del brief apunta a un playbook relevante, carga su cuerpo y
    apoyos con `memory_playbook(slug, path?)`; no vuelques todo el skill.
 4. Trabajo nuevo descubierto: `create` **pasando `agent`**; el ticket queda

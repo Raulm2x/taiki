@@ -13,6 +13,9 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
 - DB: `.taiki/taiki.db`. `config.json` y `.taiki/.gitignore` se versionan;
   `taiki.db`, `local.json` y `backups/` no.
 - Guard: activo porque `.taiki/config.json` tiene `"guard": true`.
+- Aislamiento: por ticket, `none`/`scope`/`worktree`; el defecto es
+  `worktree` (`isolation.default`). `scope` acota por `paths` y `resources`;
+  `none` trabaja en el árbol vivo en serie.
 
 ## Flujo de trabajo
 
@@ -28,12 +31,15 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
 2. Antes de tocar código, crea o reclama un ticket:
    `taiki new -t "..." -k mantenimiento -p alta` y `taiki claim T-0001 --agent opencode`.
 3. Al terminar: `taiki complete T-0001 -r "qué se hizo y cómo se verificó" --commit <hash>`.
-4. La confirmación es del usuario: `taiki confirm T-0001`. Nunca la ejecutes tú.
-   Quien revisa puede marcar `verificado` antes con evidencia
-   (`taiki transition T-0001 verificado --note "tests/CI/revisión"`).
-   Tras la confirmación, el conductor mergea solo tickets `confirmado`, en
-   orden de dependencias, con `taiki worktree merge T-XXXX --delete`; el guard
-   rechaza los no confirmados.
+4. La confirmación es del usuario: `taiki confirm` es **la revisión especial** y
+   nunca la ejecuta un agente. `taiki review` es opcional y no bloquea
+   `verificado`: solo deja constancia en tickets con rutas sensibles
+   (`requires_review` es un aviso). Quien revisa puede marcar `verificado` con
+   evidencia (`taiki transition T-0001 verificado --note "tests/CI/revisión"`).
+   `taiki authorize` (solo usuario) permite comandos de alto riesgo; sin ella
+   el guard los bloquea. Tras la confirmación, el conductor mergea solo
+   tickets `confirmado`, en orden de dependencias, con
+   `taiki worktree merge T-XXXX --delete`; el guard rechaza los no confirmados.
 5. El asunto del commit debe incluir `T-XXXX`; el hook `commit-msg` lo exige.
    Un `feat:` pequeño puede declarar `Release-Bump: patch|minor|major` como
    trailer del cuerpo; sin trailer, `feat` sube minor.
@@ -116,21 +122,85 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
   de ledger o por snapshot y deja auditoría. `memory stats` e `impact` dan
   tendencias descriptivas: **no afirmes causalidad**.
 
+## Aislamiento configurable
+
+Cada ticket declara cómo escribe. El modo se fija con `--isolation` en
+`taiki new`/`taiki update` y el defecto es `isolation.default` del
+`.taiki/config.json` (`worktree`).
+
+| modo | dónde escribe | paralelismo |
+|---|---|---|
+| `worktree` (defecto) | `.worktrees/T-XXXX` con rama `agent/T-XXXX-*` | igual que `scope`: por `paths`/`resources` disjuntos |
+| `scope` | checkout vivo, solo dentro de `paths` y `resources` | sí, si no solapan |
+| `none` | checkout vivo, sin acotar | **serial**: nunca en paralelo |
+
+- **`claim`**: con `worktree=true` crea y enlaza el worktree; en `none`/`scope`
+  se reclama sin worktree y se trabaja en el árbol vivo. Tras el claim, la
+  sesión se mueve con `session_move` a la ruta indicada.
+- **`schedule`**: devuelve `parallel` (paths y recursos disjuntos) y `serial`
+  (solapes, esquema, store core, config, sin paths o `none`). `none` siempre es
+  serial; `scope` y `worktree` admiten paralelo si no comparten paths ni
+  recursos. Las migraciones y los merges nunca van en paralelo.
+- **Guard**: en `scope` exige `paths` y solo permite escribir dentro de ellos
+  (fail-closed si faltan); en `worktree` exige el worktree; en `none` permite
+  el árbol vivo pero serializa. `TAIKI_SHARED_TREE=1` sigue siendo el escape
+  consciente.
+- **Commit live**: en `none`/`scope` el commit va a la rama viva
+  (`isolation.live_branch`, `main` por defecto) con el índice acotado por
+  `paths`. `taiki commit --repo <ruta> --ticket T-XXXX` commitea el árbol vivo
+  de **otro** repositorio (dotfiles) y enlaza `external <repo>@<sha>`; la DB y
+  el ticket siguen en el workspace actual.
+- **Reversión**: `taiki update --reversal '{"kind","ref","command"}'`.
+  `taiki reject --revert --why ...` (solo usuario) hace `git revert` cuando la
+  reversión es `git-revert`; en `copy`/sistema solo imprime el comando manual.
+  Un ticket `worktree` no se revierte así: se rechaza normal.
+
+## Agente de sistema (`taiki sys`)
+
+El trabajo de sistema vive en un workspace propio, `~/.local/share/taiki-sys`
+(repositorio Git con su `.taiki/` y su DB local). Los ficheros vivos siguen
+siendo la fuente de verdad; el repo guarda snapshots y registros.
+
+- `taiki sys status`: repo, rama, cambios, raíces de `scope.roots`,
+  aislamiento, `verify.command` y dotfiles detectados.
+- `taiki sys snapshot T-XXXX --path /etc/foo.conf`: copia a
+  `snapshots/T-XXXX/<timestamp>/`, commitea y anota la reversión en el ticket.
+  Solo para tickets `none`/`scope`. `--packages` guarda `pacman -Qqe` (rollback
+  manual); `--from FILE` evita ejecutar `pacman`.
+- `taiki sys export [T-XXXX]`: escribe `records/tickets.json`, `tickets.md` y
+  `manifest.json` (snapshots, commits y enlaces `external`) y lo commitea. La
+  DB no se versiona.
+- `taiki sys audit`: compara los hashes del manifiesto con los ficheros
+  actuales y marca los cambios cubiertos por un ticket abierto. **No escanea
+  ficheros nuevos**: solo los paths registrados.
+- Si el fichero vive en el repo de dotfiles, `sys snapshot` no lo copia:
+  indica `taiki commit --repo <dotfiles> --ticket T-XXXX` y la reversión es un
+  `git revert` de ese commit.
+
+`risk` (`low`/`medium`/`high`) se **deriva** de `paths` y `resources`, no se
+declara. Rutas sensibles marcan `requires_review` como aviso. El guard bloquea
+sin `taiki authorize` los comandos de alto riesgo: `sudo`, `systemctl` de
+sistema (sin `--user`), `pacman`/`paru`/`yay` y escrituras en `/etc`, `/usr`,
+`/boot` o `/var/lib`. Solo el usuario autoriza o revisa.
+
 ## Agentes en paralelo
 
 Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
 
 - **Reclama antes de escribir** y mantén **un solo ticket activo por sesión**.
   Si otra sesión ya tiene el ticket, no lo reclames a la fuerza.
-- **Un worktree por escritor.** Cada tarea que modifique código debe vivir en su
-  propio `git worktree` (`.worktrees/<T-XXXX>`, ignorado por Git) con la DB
-  compartida de `.taiki/`. El worktree puede contener el `.taiki/config.json`
-  versionado, pero `taiki` resuelve siempre la DB del checkout principal; no
-  crees una DB local dentro de `.worktrees/`. Las lecturas sí pueden compartir
-  el árbol. Si otra sesión está activa, el guard **bloquea escribir en el
-  checkout** sin worktree; el escape consciente es `TAIKI_SHARED_TREE=1`.
-- **Al reclamar**: `taiki claim T-XXXX --worktree` crea el worktree y lo enlaza.
-  Durante comandos largos, `taiki heartbeat T-XXXX` renueva el lease.
+- **Un worktree por escritor** cuando el ticket usa `worktree` (el defecto).
+  Vive en `.worktrees/<T-XXXX>`, ignorado por Git, con la DB compartida de
+  `.taiki/`. El worktree puede contener el `.taiki/config.json` versionado, pero
+  `taiki` resuelve siempre la DB del checkout principal; no crees una DB local
+  dentro de `.worktrees/`. Con `scope`/`none` se escribe en el árbol vivo:
+  `scope` solo dentro de `paths`/`resources` y `none` en serie. Las lecturas
+  pueden compartir el árbol. Si otra sesión está activa, el guard **bloquea
+  escribir en el checkout** fuera de tu scope o sin worktree; el escape
+  consciente es `TAIKI_SHARED_TREE=1`.
+- **Al reclamar**: `taiki claim T-XXXX --worktree` crea el worktree y lo enlaza
+  (o reclama sin él en `none`/`scope`). Durante comandos largos,
+  `taiki heartbeat T-XXXX` renueva el lease.
 - **Al terminar**: commitea en el worktree, marca el ticket `completado` y
   espera la confirmación del usuario. Solo después, `taiki worktree merge
   T-XXXX --delete` hace rebase sobre la rama de integración (`develop`), tests,

@@ -14,13 +14,16 @@ import subprocess
 from pathlib import Path
 from typing import Any, Iterable
 
-from . import env
+from . import env, workspace
 from .domain import TicketError
 from .util import clean_path
 
 PROTECTED_BRANCHES = {"main", "master"}
 AGENT_PREFIX = "agent/"
 HOTFIX_PREFIX = "hotfix/"
+# Aislamientos que trabajan sobre el árbol vivo: el trabajo va en la rama
+# configurada (``isolation.live_branch``) y no en una rama por ticket.
+LIVE_ISOLATIONS = ("none", "scope")
 
 
 def _git(root: Path, *args: str) -> str:
@@ -102,8 +105,38 @@ def current_branch(root: str | Path = ".") -> str | None:
         return None
 
 
+def in_worktree(root: str | Path = ".") -> bool:
+    """¿El checkout es un worktree ligado (no el árbol principal)?"""
+    try:
+        git_dir = Path(
+            _git(
+                Path(root),
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-dir",
+            ).strip()
+        )
+        common = Path(
+            _git(
+                Path(root),
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-common-dir",
+            ).strip()
+        )
+    except TicketError:
+        return False
+    return git_dir != common
+
+
 def branch_policy(
-    branch: str | None, code: str | None, *, agent: bool = True
+    branch: str | None,
+    code: str | None,
+    *,
+    agent: bool = True,
+    isolation: str | None = None,
+    live_branch: str | None = None,
+    worktree: bool = False,
 ) -> dict[str, Any]:
     """¿Puede esta rama recibir un commit del ticket ``code``?
 
@@ -112,6 +145,12 @@ def branch_policy(
     (creadas desde ``main``) únicamente con el ticket en el nombre. Un usuario
     que commitea fuera de esas ramas solo recibe un aviso; un agente se
     bloquea porque su trabajo siempre vive en una rama por ticket.
+
+    Excepción live: con ``isolation`` ``none`` o ``scope`` el trabajo va sobre
+    el árbol vivo, así que la rama configurada (``isolation.live_branch``,
+    ``main`` por defecto) acepta commits de agente **con ticket**. Los
+    worktrees ligados siguen bloqueando las ramas protegidas y ``git push``
+    mantiene su propio gate.
     """
     result: dict[str, Any] = {
         "ok": True,
@@ -122,13 +161,23 @@ def branch_policy(
     if not branch or branch == "HEAD":
         return result
     if branch in PROTECTED_BRANCHES:
+        live = (
+            isolation in LIVE_ISOLATIONS
+            and bool(code)
+            and bool(live_branch)
+            and branch == live_branch
+            and not worktree
+        )
+        if live:
+            return result
         if agent:
             return {
                 "ok": False,
                 "reason": "protected-branch",
                 "message": (
                     f"{branch} solo recibe releases: trabaja en una rama "
-                    "agent/T-XXXX y publica con `taiki release`."
+                    "agent/T-XXXX o usa un ticket con aislamiento live "
+                    "(none/scope) sobre la rama configurada."
                 ),
                 "warning": None,
             }
@@ -181,14 +230,54 @@ def check(
     *,
     branch: str | None = None,
     agent: bool | None = None,
+    isolation: str | None = None,
+    live_branch: str | None = None,
 ) -> dict[str, Any]:
-    """Analiza el índice contra el ticket, la rama y otras sesiones."""
+    """Analiza el índice contra el ticket, la rama y otras sesiones.
+
+    ``isolation`` manda sobre los ``paths``:
+
+    - ``worktree`` (default): solo se stagea lo que cae en ``paths``; sin
+      ``paths`` no hay restricción (compatibilidad histórica).
+    - ``scope``: ``paths`` es obligatorio. Sin ``paths`` se deniega todo
+      (fail-closed, deuda B7): cualquier staged queda fuera de alcance.
+    - ``none``: árbol vivo serial; no se exige ni se valida ``paths``.
+
+    ``resources`` se acepta para documentar el alcance del ticket, pero no
+    forma parte del índice de Git: no puede validarse aquí. El informe expone
+    ``isolation`` y ``scope_error`` además de las claves históricas.
+    """
     files = staged(root)
     name = current_branch(root) if branch is None else branch
     agent_mode = bool(env.get("AGENT")) if agent is None else agent
-    policy = branch_policy(name, ticket.get("code"), agent=agent_mode)
+    settings = workspace.isolation_settings()
+    mode = isolation or str(ticket.get("isolation") or settings["default"])
+    live = live_branch or settings["live_branch"]
+    linked = in_worktree(root)
+    policy = branch_policy(
+        name,
+        ticket.get("code"),
+        agent=agent_mode,
+        isolation=mode,
+        live_branch=live,
+        worktree=linked,
+    )
     scope = list(ticket.get("paths") or [])
-    outside = [item for item in files if scope and not matches(item, scope)]
+    resources = list(ticket.get("resources") or [])
+    scope_error: str | None = None
+    if mode == "scope":
+        if not scope:
+            scope_error = (
+                "isolation=scope sin paths: el ticket no puede commitear "
+                "(fail-closed). Declara paths con `taiki update --paths ...`."
+            )
+            outside = list(files)
+        else:
+            outside = [item for item in files if not matches(item, scope)]
+    elif mode == "none":
+        outside = []
+    else:
+        outside = [item for item in files if scope and not matches(item, scope)]
     conflicts: list[dict[str, Any]] = []
     for other in others:
         if other.get("code") == ticket.get("code"):
@@ -211,17 +300,27 @@ def check(
         "branch": name,
         "branch_reason": policy["reason"],
         "branch_message": policy["message"],
+        "isolation": mode,
+        "worktree": linked,
         "scope": scope,
+        "resources": resources,
+        "scope_error": scope_error,
         "staged": files,
         "outside": outside,
         "conflicts": conflicts,
         "ok": (
             bool(files)
             and not outside
+            and not scope_error
             and not conflicts
             and policy["ok"]
         ),
     }
+
+
+def toplevel(root: str | Path) -> Path:
+    """Raíz del repositorio Git en ``root`` (resuelve submódulos/rutas hijas)."""
+    return Path(_git(Path(root), "rev-parse", "--show-toplevel").strip())
 
 
 def commit(root: str | Path, message: str) -> str:

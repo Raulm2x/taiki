@@ -9,7 +9,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from ticketlib import db, presentation, render, repo, scratch, sessions, workspace
-from ticketlib.domain import OPEN_STATUSES, TicketError
+from ticketlib.domain import OPEN_STATUSES, TicketError, requires_review, risk_for
 from ticketlib.memory.config import load_memory_config
 from ticketlib.memory.curate import auto_curate
 from ticketlib.util import resolve_scope
@@ -62,7 +62,10 @@ def _tree_rows(tickets: list[dict]) -> list[dict]:
 
 
 def _json_summary(ticket: dict) -> dict:
-    return presentation.summary(ticket)
+    data = presentation.summary(ticket)
+    data["risk"] = risk_for(ticket.get("paths"), ticket.get("resources"))
+    data["requires_review"] = requires_review(ticket.get("paths"))
+    return data
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -118,7 +121,9 @@ def cmd_list(args: argparse.Namespace) -> int:
         payload = []
         for ticket in tickets:
             if summary:
-                payload.append(_json_summary(ticket))
+                item = _json_summary(ticket)
+                item["isolation"] = ticket.get("isolation")
+                payload.append(item)
                 continue
             item = {
                 key: value
@@ -126,6 +131,8 @@ def cmd_list(args: argparse.Namespace) -> int:
                 if key not in ("tree_prefix", "display_code")
             }
             item["session_id"] = session_map.get(ticket["code"])
+            item["risk"] = risk_for(ticket.get("paths"), ticket.get("resources"))
+            item["requires_review"] = requires_review(ticket.get("paths"))
             payload.append(item)
         scope = (
             "tree"
@@ -143,6 +150,7 @@ def cmd_list(args: argparse.Namespace) -> int:
             "limit": limit,
             "order": args.sort,
             "scope": scope,
+            "scope_roots": workspace.scope_roots(),
             "tickets": payload,
         }
         if not summary:
@@ -182,12 +190,29 @@ def cmd_show(args: argparse.Namespace) -> int:
         _clean_expired(conn)
         ticket = repo.get_ticket(conn, args.code)
         session_id = _annotate(conn, [ticket]).get(ticket["code"])
+    roots = workspace.scope_roots()
+    ticket["scope"] = roots
+    ticket["risk"] = risk_for(ticket.get("paths"), ticket.get("resources"))
+    ticket["requires_review"] = requires_review(ticket.get("paths"))
     _show(
         ticket,
         args.json or args.compact,
         session_id,
         compact=getattr(args, "compact", False),
     )
+    if not (args.json or args.compact):
+        print(
+            f"Aislamiento: {ticket.get('isolation')} · "
+            f"Riesgo: {ticket['risk']} · "
+            f"Revisión: {'requerida' if ticket['requires_review'] else 'no'} · "
+            f"Scope: {', '.join(roots)}"
+        )
+        if ticket.get("resources"):
+            print("Recursos: " + ", ".join(ticket["resources"]))
+        if ticket.get("reversal"):
+            reversal = ticket["reversal"]
+            detail = reversal.get("ref") or reversal.get("command") or ""
+            print(f"Reversión: {reversal.get('kind')} {detail}".rstrip())
     return 0
 
 
@@ -208,6 +233,7 @@ def cmd_new(args: argparse.Namespace) -> int:
     defaults = config.get("defaults") or {}
     kind = args.kind or defaults.get("kind") or "otro"
     priority = args.priority or defaults.get("priority") or "media"
+    isolation = args.isolation or workspace.isolation_settings(config)["default"]
 
     with _conn() as conn:
         ticket = repo.create_ticket(
@@ -220,6 +246,9 @@ def cmd_new(args: argparse.Namespace) -> int:
             path=path,
             tags=args.tags,
             paths=getattr(args, "paths", None),
+            isolation=isolation,
+            resources=getattr(args, "resources", None),
+            reversal=getattr(args, "reversal", None),
             parent_id=args.parent,
             created_by="usuario",
             actor_type="usuario",
@@ -283,9 +312,12 @@ def cmd_update(args: argparse.Namespace) -> int:
             "project",
             "path",
             "paths",
+            "isolation",
+            "resources",
+            "reversal",
             "tags",
         )
-        if getattr(args, key) is not None
+        if getattr(args, key, None) is not None
     }
     if not fields:
         print("Error: no se indicó ningún campo", file=sys.stderr)
