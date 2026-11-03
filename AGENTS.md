@@ -39,7 +39,10 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    `taiki memory pending`; `taiki status` y `health` también las cuentan. El
    usuario solo confirma tickets: no pide aprobación de memoria.
    `memory.brief_mode` (`full`/`index`) decide si el brief lleva el contenido
-   destilado o solo el índice con `memory_search`; `memory.enforce_budget`
+   destilado o solo el índice con `memory_search`; en modo `index` cada línea
+   muestra `key`, `tickets` y `paths` (si existen): úsalos como disparador para
+   decidir cuándo hacer `memory_search` y no cargar memoria que no encaja.
+   `memory.enforce_budget`
    (`false` por defecto) convierte el exceso de presupuesto en aviso
    (`budget_warning`) en vez de bloquear escrituras.
 1. Consulta el trabajo pendiente: `taiki next`, `taiki list`, `taiki stats`.

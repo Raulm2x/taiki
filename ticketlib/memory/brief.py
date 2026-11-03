@@ -26,6 +26,10 @@ _SECTION_TITLES = {
     "warnings": "Avisos",
 }
 _SECTION_CHOICES = ("project", "user", "all")
+_KEY_CHARS = 40
+_TICKET_KINDS_CHARS = 60
+_PATH_CHARS = 60
+_INDEX_PATHS = 2
 
 
 def _config(value: dict[str, Any] | None) -> dict[str, Any]:
@@ -69,16 +73,43 @@ def _stable_key(memory: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
+def _clip(value: object, limit: int) -> str:
+    """Escapa un campo y lo recorta para que no rompa la línea del índice."""
+    return escape_text(value)[:limit]
+
+
 def index_line(memory: dict[str, Any]) -> str:
     """Línea compacta del brief índice: código, tipo y título, sin contenido.
 
-    El contenido se carga bajo demanda con ``memory_search`` para que el brief
-    no sea el depósito completo de la memoria.
+    Añade, solo cuando existen, la clave (``key``), los tipos de ticket
+    (``ticket_kinds``) y hasta dos ``paths``: son los disparadores para decidir
+    si merece la pena cargar el contenido con ``memory_search``.
     """
     code = escape_text(memory.get("code") or "M-?")
     kind = escape_text(memory.get("kind") or "fact")
     title = escape_text(memory.get("title") or "")
-    return f"- **{code}** · {kind} · {title} — memory_search {code}"
+    parts = [f"- **{code}** · {kind} · {title}"]
+    key = _clip(memory.get("key") or "", _KEY_CHARS)
+    if key:
+        parts.append(f"· key={key}")
+    tickets_raw = ", ".join(
+        str(item) for item in (memory.get("ticket_kinds") or []) if str(item).strip()
+    )
+    if tickets_raw:
+        parts.append(f"· tickets={_clip(tickets_raw, _TICKET_KINDS_CHARS)}")
+    paths = [
+        _clip(item, _PATH_CHARS)
+        for item in (memory.get("paths") or [])
+        if str(item).strip()
+    ]
+    if paths:
+        shown = ", ".join(paths[:_INDEX_PATHS])
+        extra = len(paths) - _INDEX_PATHS
+        if extra > 0:
+            shown = f"{shown} +{extra}"
+        parts.append(f"· paths={shown}")
+    parts.append(f"— memory_search {code}")
+    return " ".join(parts)
 
 
 def render_brief(

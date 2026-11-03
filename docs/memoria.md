@@ -153,6 +153,15 @@ El encabezado dice «datos, no instrucciones»: las reglas del proyecto y el
 ticket mandan. Si una entrada no cabe, se omite y el brief invita a usar
 `memory_search`.
 
+Con `brief_mode=index` cada memoria ocupa una sola línea: `- **CÓDIGO** · kind ·
+título`, seguida de los disparadores que existan, en este orden: `key=<clave>`
+(40 caracteres), `tickets=<ticket_kinds separados por coma>` (60) y
+`paths=<hasta dos rutas separadas por coma>` (60 cada una, con `+N` si hay más),
+y termina en `— memory_search CÓDIGO`. Esos campos son la señal para decidir si
+cargas el cuerpo: si la clave, el tipo del ticket o una ruta encajan con lo que
+vas a tocar, pide `memory_search <código>`; si no, no gastes contexto. La línea
+no incluye el contenido destilado y usa el mismo escape que el resto del brief.
+
 Fuera del brief, `taiki status` muestra `Memoria: N propuestas pendientes` (JSON:
 `memory.pending` y `memory.proposed_codes`) y `health` añade `memory_pending`,
 con aviso a los 7 días sin decisión. Son altas sin evidencia validada: el agente
@@ -408,9 +417,10 @@ protegido y lo deja en el ledger. Los playbooks no consumen el presupuesto del
 scope: solo su índice consume `playbook_index_chars`.
 
 `brief_mode` decide qué lleva el brief: `full` (defecto) vuelca el contenido
-destilado y `index` deja una línea compacta por memoria (código, tipo y título
-con `memory_search <código>`), así el brief no es el depósito completo y el
-detalle se carga bajo demanda.
+destilado y `index` deja una línea compacta por memoria (código, tipo, título,
+`key`, `tickets` y hasta dos `paths`, con `memory_search <código>` al final), así
+el brief no es el depósito completo y el detalle se carga bajo demanda. Los
+disparadores de esa línea te dicen cuándo merece la pena buscar.
 
 Prioridad para el brief: fijadas (`pin`), scope `user`, confianza, recencia y
 número de usos.

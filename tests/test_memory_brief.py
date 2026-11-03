@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ticketlib import db
-from ticketlib.memory import add_memory
+from ticketlib.memory import add_memory, patch_memory
 from ticketlib.memory.brief import render_brief, write_brief
 from ticketlib.memory.config import resolve_memory_config
 from ticketlib.memory.render import escape_text
@@ -283,13 +283,23 @@ def run(h: Harness) -> None:
         "el brief acepta el config raíz sin memory y el bloque memory explícito se valida",
     )
 
+    patch_memory(
+        conn,
+        rama_code,
+        ticket_kinds=["bug"],
+        paths=["src/a.py", "src/b.py"],
+    )
     index_text = render_brief(conn, {"brief_mode": "index"}, budget=5000)["text"]
     full_text = render_brief(conn, {"brief_mode": "full"}, budget=5000)["text"]
     h.ok(
         rama_code in index_text
         and "Rama de integración" in index_text
         and "memory_search" in index_text
+        and "key=rama-integracion" in index_text
+        and "tickets=bug" in index_text
+        and "paths=src/a.py" in index_text
         and "develop integra con --ff-only." not in index_text
         and "develop integra con --ff-only." in full_text,
-        "brief_mode=index lista código y título sin contenido destilado; full lo conserva",
+        "brief_mode=index lista código, título y disparadores sin contenido destilado; "
+        "full lo conserva",
     )
