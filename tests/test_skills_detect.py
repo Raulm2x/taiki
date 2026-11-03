@@ -57,12 +57,15 @@ def _python(h: Harness) -> None:
     pipfile = h.tmp / "pipfile"
     pipfile.mkdir()
     _write(pipfile, "Pipfile", "[packages]\nrequests = '*'\n")
-    h.eq(detect_techs(pipfile), ["python", "requests"], "detecta desde Pipfile")
 
     setup = h.tmp / "setup"
     setup.mkdir()
     _write(setup, "setup.py", "from setuptools import setup\nsetup(name='x')\n")
-    h.eq(detect_techs(setup), ["python"], "setup.py basta para detectar Python")
+    h.ok(
+        detect_techs(pipfile) == ["python", "requests"]
+        and detect_techs(setup) == ["python"],
+        "detecta desde Pipfile y setup.py",
+    )
 
 
 def _django(h: Harness) -> None:
@@ -73,9 +76,12 @@ def _django(h: Harness) -> None:
 
     empty = h.tmp / "vacio"
     empty.mkdir()
-    h.eq(detect_techs(empty), [], "un proyecto sin señales no detecta nada")
-    h.eq(detect_techs(h.tmp / "no-existe"), [], "una raíz inexistente no falla")
-    h.eq(detect(empty)["count"], 0, "detect resume la lista con count")
+    h.ok(
+        detect_techs(empty) == []
+        and detect_techs(h.tmp / "no-existe") == []
+        and detect(empty)["count"] == 0,
+        "un proyecto vacío o inexistente no detecta nada y resume con count",
+    )
 
 
 def _javascript(h: Harness) -> None:
@@ -170,10 +176,13 @@ def _catalog(h: Harness) -> None:
         "suggest traduce tecnologías a skills presentes en el registro",
     )
     first = suggestions[0]
-    h.eq(first["source"], "midudev/autoskills", "cada sugerencia lleva source")
-    h.eq(first["hash"], "1" * 64, "cada sugerencia lleva el bundleHash")
-    h.eq(first["review"]["status"], "approved", "cada sugerencia lleva review")
-    h.eq(first["securityCheck"]["status"], "ok", "cada sugerencia lleva securityCheck")
+    h.ok(
+        first["source"] == "midudev/autoskills"
+        and first["hash"] == "1" * 64
+        and first["review"]["status"] == "approved"
+        and first["securityCheck"]["status"] == "ok",
+        "cada sugerencia lleva source, hash, review y securityCheck",
+    )
 
     deduped = suggest(["python", "pytest"], registry)
     h.eq(

@@ -44,14 +44,12 @@ def run(h: Harness) -> None:
     # ── Aviso de MCP desactualizado y huecos ────────────────────
     db.meta_set(conn, "mcp_fingerprint", "viejo0000000")
     stale = runtime.status(conn)
-    h.ok(
-        stale["stale"] and stale["stored"] == "viejo0000000",
-        "runtime detecta un MCP con código viejo",
-    )
     db.meta_set(conn, "mcp_fingerprint", runtime.code_fingerprint())
     h.ok(
-        not runtime.status(conn)["stale"],
-        "runtime reconoce el código actual",
+        stale["stale"]
+        and stale["stored"] == "viejo0000000"
+        and not runtime.status(conn)["stale"],
+        "runtime distingue un MCP viejo del código actual",
     )
     empty = db.connect(":memory:")
     try:
