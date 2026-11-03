@@ -70,7 +70,9 @@
 # el margen local y el de CI una sola vez y no se sube el benchmark de export.
 # Revisión especial: +15 checks de regresión (prefijos, sed --in-place,
 # -t/--target-directory, git en scope, redirecciones fd, chmod/chown/dd y cwd).
-max_seconds = 12.6
+# T-0060.05 ledger de sistema: +0.25s de test_sys; medido 13.6s con load 3.2;
+# revisión única, a partir de aquí podar.
+max_seconds = 13.6
 baseline_checks = 2041
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
@@ -82,7 +84,9 @@ max_seconds = 1.25
 # ruido. Se aplica con CI=true (o TAIKI_CI=true) y cada valor se puede
 # sobrescribir con TAIKI_SUITE_BUDGET / TAIKI_MODULE_BUDGET.
 [ci.suite]
-max_seconds = 13.0
+# T-0060.05 ledger de sistema: +0.25s de test_sys; medido 13.6s con load 3.2;
+# revisión única, a partir de aquí podar.
+max_seconds = 14.0
 
 [ci.module]
 max_seconds = 1.5
