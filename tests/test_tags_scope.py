@@ -141,3 +141,15 @@ def run(h: Harness) -> None:
     exp_proj, exp_path = util.resolve_scope("proyecto_personalizado", str(repo_subpath))
     h.ok(exp_proj == "proyecto_personalizado", "proyecto explícito prevalece sobre la detección automática")
     h.ok(exp_path == str(repo_subpath), "ruta se mantiene con proyecto explícito")
+
+    # ``project`` del workspace (.taiki/config.json) manda si no hay --project,
+    # y una etiqueta vacía o ausente vuelve a derivar de la raíz Git.
+    cfg_proj, _ = util.resolve_scope(None, str(synthetic_deep), {"project": " taiki-sys "})
+    cfg_default, _ = util.resolve_scope(None, str(synthetic_deep), {"guard": True})
+    cfg_explicit, _ = util.resolve_scope("explicito", str(synthetic_deep), {"project": "x"})
+    h.ok(
+        cfg_proj == "taiki-sys"
+        and cfg_default == "mock_project_git"
+        and cfg_explicit == "explicito",
+        "resolve_scope usa el project del workspace si no hay uno explícito",
+    )

@@ -98,6 +98,34 @@ def live_pattern(pattern: str, root: str | Path) -> str:
         return raw
 
 
+def _ignored(root: str | Path, patterns: Iterable[str]) -> list[str]:
+    """Rutas del ticket que ``git check-ignore`` marca como ignoradas.
+
+    Un ``paths`` que cae dentro de un patrón de ``.gitignore`` nunca llega al
+    índice: ``git add`` lo salta en silencio y ``taiki commit`` acaba con
+    "Nada en el índice" sin explicar por qué. El helper traduce los patrones
+    absolutos al root live (``live_pattern``) y pregunta a Git por las rutas
+    declaradas, sin depender de los globs. ``check-ignore`` sale con 1 cuando
+    ninguna ruta está ignorada, así que aquí no se usa ``_git`` (lanza).
+    """
+    candidates = []
+    for item in patterns or ():
+        translated = live_pattern(str(item), root)
+        if translated.strip():
+            candidates.append(translated.strip())
+    if not candidates:
+        return []
+    result = subprocess.run(
+        ["git", "-C", str(root), "check-ignore", "--", *candidates],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+    return sorted({line for line in result.stdout.splitlines() if line.strip()})
+
+
 def overlaps(left: Iterable[str], right: Iterable[str]) -> list[str]:
     """Pares de patrones que podrían tocar los mismos ficheros."""
     hits: list[str] = []
@@ -273,6 +301,7 @@ def check(
     root del repositorio que se commitea cuando ``taiki commit --repo`` apunta
     a otro árbol (dotfiles). ``scope`` conserva los patrones originales del
     ticket y ``commit_scope`` refleja los usados para validar el índice.
+    ``ignored`` lista las rutas del ticket que ``.gitignore`` descarta.
     """
     files = staged(root)
     name = current_branch(root) if branch is None else branch
@@ -296,6 +325,7 @@ def check(
         else list(scope)
     )
     resources = list(ticket.get("resources") or [])
+    ignored = _ignored(repo_root, commit_scope) if repo_root is not None else []
     scope_error: str | None = None
     if mode == "scope":
         if not scope:
@@ -347,6 +377,7 @@ def check(
         "scope_error": scope_error,
         "staged": files,
         "outside": outside,
+        "ignored": ignored,
         "conflicts": conflicts,
         "ok": (
             bool(files)

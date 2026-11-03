@@ -228,8 +228,8 @@ def cmd_new(args: argparse.Namespace) -> int:
         return 2
 
     body = _read_body(args.body, "Descripción (opcional): ")
-    project, path = resolve_scope(args.project, args.path)
     config = workspace.load_config()
+    project, path = resolve_scope(args.project, args.path, config)
     defaults = config.get("defaults") or {}
     kind = args.kind or defaults.get("kind") or "otro"
     priority = args.priority or defaults.get("priority") or "media"

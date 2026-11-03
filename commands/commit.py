@@ -105,6 +105,13 @@ def cmd_commit(args: argparse.Namespace) -> int:
             _active(conn, ticket["code"]),
             repo_root=root if target else None,
         )
+        if report.get("ignored"):
+            print(
+                "Aviso: rutas del ticket ignoradas por .gitignore: "
+                f"{', '.join(report['ignored'])}. Usa `git add -f <ruta>` o "
+                "añade una excepción `!ruta/`; taiki no stagea por ti.",
+                file=sys.stderr,
+            )
         if not report["staged"]:
             print("Nada en el índice: usa `git add <ruta>` primero", file=sys.stderr)
             return 1

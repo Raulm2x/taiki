@@ -281,6 +281,9 @@ El aislamiento es por ticket (`--isolation`) y el defecto sale de
   `external <repo>@<sha>`: la DB y el ticket no cambian de workspace. Los
   `paths` absolutos del ticket (`~/.config/hypr/`) se traducen al root del
   repo live antes de validar el índice; no dupliques la ruta del `--repo`.
+  Si un path declarado cae en `.gitignore`, el comando avisa con la ruta y
+  sugiere `git add -f <ruta>` o una excepción `!ruta/`: taiki no stagea por ti
+  y, sin el aviso, el commit acababa en «Nada en el índice».
 - **Reversión**: `taiki update --reversal '{"kind","ref","command"}'`.
   `reject --revert` (usuario) ejecuta `git revert` solo para `git-revert`; en
   `copy`/sistema imprime el comando y cancela el ticket. `worktree` no aplica.

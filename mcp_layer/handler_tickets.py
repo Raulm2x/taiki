@@ -70,8 +70,8 @@ def _handle_create(
                     },
                 )
 
-    project, path = resolve_scope(args.get("project"), args.get("path"))
     config = workspace.load_config()
+    project, path = resolve_scope(args.get("project"), args.get("path"), config)
     defaults = config.get("defaults") or {}
     kind = args.get("kind") or defaults.get("kind") or "otro"
     priority = args.get("priority") or defaults.get("priority") or "media"

@@ -291,6 +291,12 @@ taiki commit --repo ~/.config --ticket T-0044 -m "fix: hypr (T-0044)"
   con `worktree=false` y trabaja en el checkout vivo; solo inspecciona y stagea
   rutas concretas (`git -C <repo> status`, `git -C <repo> add <ruta>`). El
   commit lo hace el conductor en el repo live con `taiki commit --repo <ruta>`.
+- **Dotfiles**: si un path del ticket cae en `.gitignore`, `git add` lo salta
+  en silencio y `taiki commit --repo` no tiene nada que commitear; el comando
+  avisa con la ruta y propone `git add -f <ruta>` o una excepción `!ruta/`
+  (taiki no stagea por ti). El `project` del ticket es la etiqueta del
+  workspace (`.taiki/config.json`), no el nombre del repo Git que lo contiene;
+  `--project` la fuerza por ticket.
 - `risk` (`low`/`medium`/`high`) se deriva de paths y resources; las rutas
   sensibles marcan `requires_review` como aviso, no como bloqueo.
 - La reversión se registra con

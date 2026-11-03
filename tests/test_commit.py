@@ -395,13 +395,37 @@ def run(h: Harness) -> None:
                         json=False,
                     )
                 )
+            # ── --repo avisa de rutas declaradas pero ignoradas ─────────
+            ignored_repo = git_repo(tmp / "ignored")
+            (ignored_repo / ".gitignore").write_text("*\n!keep/\n", encoding="utf-8")
+            (ignored_repo / "keep").mkdir()
+            (ignored_repo / "keep" / "k.py").write_text("k\n", encoding="utf-8")
+            _git(ignored_repo, "add", "-f", ".gitignore", "keep/k.py")
+            _git(ignored_repo, "commit", "-m", "base")
+            ignored_ticket = repo.create_ticket(
+                conn,
+                title="Ruta ignorada por gitignore",
+                project="ignored",
+                isolation="scope",
+                paths=[str(ignored_repo / "drop")],
+            )
+            ignored_live = commits.check(
+                ignored_repo,
+                repo.get_ticket(conn, ignored_ticket["code"]),
+                repo_root=ignored_repo,
+            )
+            ignored_plain = commits.check(
+                ignored_repo, repo.get_ticket(conn, ignored_ticket["code"])
+            )
             h.ok(
                 translated["ok"]
                 and translated["scope"] == [str(dots / "hypr")]
                 and translated["commit_scope"] == ["hypr"]
                 and away["outside"] == ["other/b.py"]
                 and not away["ok"]
-                and dots_code == 0,
+                and dots_code == 0
+                and ignored_live["ignored"] == ["drop"]
+                and not ignored_plain["ignored"],
                 "repo_root traduce el path absoluto: dentro pasa, fuera no, "
                 "y taiki commit --repo lo acepta",
             )
