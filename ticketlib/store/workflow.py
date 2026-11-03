@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import shlex
 import sqlite3
+import subprocess
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from .. import db, env
@@ -20,6 +23,7 @@ from ..domain import (
     TransitionError,
     ValidationError,
     clean_isolation,
+    clean_reversal,
     requires_review,
 )
 from ..gitutil import resolve_commit
@@ -226,6 +230,150 @@ def transition(
         )
 
     return get_ticket(conn, code)
+
+
+def _cancel_after_revert(
+    conn: sqlite3.Connection,
+    code: Any,
+    note: str,
+    actor: str,
+    actor_type: str,
+    session_id: str | None,
+) -> dict[str, Any]:
+    """Lleva a ``cancelado`` desde estados abiertos o cerrados.
+
+    ``cancelado`` solo es alcanzable desde estados abiertos; un ticket
+    completado/verificado pasa primero por ``en_progreso`` para que la
+    máquina de estados siga siendo la única puerta de escritura.
+    """
+    row = row_by_code(conn, code)
+    if row["status"] == "cancelado":
+        return get_ticket(conn, code)
+    if "cancelado" not in TRANSITIONS.get(row["status"], set()):
+        transition(
+            conn,
+            code,
+            "en_progreso",
+            note=note,
+            actor=actor,
+            actor_type=actor_type,
+            session_id=session_id,
+        )
+    return transition(
+        conn,
+        code,
+        "cancelado",
+        note=note,
+        actor=actor,
+        actor_type=actor_type,
+        session_id=session_id,
+    )
+
+
+def revert_ticket(
+    conn: sqlite3.Connection,
+    code: Any,
+    why: str,
+    *,
+    actor: str = "usuario",
+    actor_type: str = "usuario",
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """Revierte el cambio de un ticket live y lo cancela.
+
+    Solo el usuario puede revertir. En ``git-revert`` el comando registrado se
+    valida con ``shlex.split`` y se ejecuta sin shell; el resto de reversiones
+    (copy, sistema, manual…) no se ejecutan: se devuelven para que el CLI
+    imprima el comando y el usuario decida.
+    """
+    if actor_type != "usuario":
+        raise PermissionDenied(
+            "Solo el usuario puede revertir un ticket con --revert."
+        )
+    why = (why or "").strip()
+    if not why:
+        raise ValidationError("Revertir un ticket requiere un motivo (--why)")
+
+    row = row_by_code(conn, code)
+    isolation = clean_isolation(row["isolation"])
+    if isolation == "worktree":
+        raise ValidationError(
+            f"{row['code']} usa aislamiento worktree: `reject --revert` solo "
+            "aplica a none/scope. Usa `taiki reject` normal para rework."
+        )
+
+    reversal = clean_reversal(row["reversal"])
+    if reversal is None:
+        raise ValidationError(
+            f"{row['code']} no tiene reversión registrada; añádela con "
+            "`taiki update --reversal` antes de revertir."
+        )
+
+    kind = reversal["kind"]
+    command = reversal.get("command") or ""
+    manual = kind != "git-revert"
+    if not manual:
+        ref = reversal.get("ref") or ""
+        if not ref or not Path(ref).is_dir():
+            raise ValidationError(
+                f"Reversión git-revert sin repo válido en 'ref': {ref!r}"
+            )
+        if "<sha>" in command:
+            prefix = f"{Path(ref).name}@"
+            linked = conn.execute(
+                "SELECT ref FROM links WHERE ticket_id = ? AND kind = 'external' "
+                "ORDER BY id DESC",
+                (row["id"],),
+            ).fetchall()
+            sha = next(
+                (
+                    item["ref"][len(prefix):]
+                    for item in linked
+                    if (item["ref"] or "").startswith(prefix)
+                    and item["ref"][len(prefix):]
+                ),
+                None,
+            )
+            if not sha:
+                raise ValidationError(
+                    f"{row['code']} no tiene SHA para <sha>; registra el "
+                    f"commit con `taiki link {row['code']} external "
+                    f"{prefix}<sha>`."
+                )
+            command = command.replace("<sha>", sha)
+        try:
+            tokens = shlex.split(command)
+        except ValueError as exc:
+            raise ValidationError(
+                f"Comando de reversión inválido: {exc}"
+            ) from exc
+        if (
+            len(tokens) < 5
+            or tokens[0] != "git"
+            or tokens[1] != "-C"
+            or Path(tokens[2]).resolve() != Path(ref).resolve()
+            or tokens[3] != "revert"
+        ):
+            raise ValidationError(
+                "Comando git-revert no permitido: se espera "
+                f"`git -C {ref} revert <sha>`; recibido {command!r}"
+            )
+        result = subprocess.run(
+            tokens, capture_output=True, text=True, check=False
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            raise TransitionError(
+                f"git revert falló en {ref}: {detail or 'sin detalle'}"
+            )
+        note = f"{why} · revertido: {command}"
+    else:
+        note = f"{why} · revert manual: {command or reversal.get('ref') or kind}"
+
+    ticket = _cancel_after_revert(
+        conn, code, note, actor, actor_type, session_id
+    )
+    return {"ticket": ticket, "manual": manual, "command": command, "note": why}
 
 
 def claim_ticket(

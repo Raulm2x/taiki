@@ -327,6 +327,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("code")
     p.add_argument("--why", required=True, help="Motivo del rechazo")
+    p.add_argument(
+        "--revert",
+        action="store_true",
+        help="Revierte el cambio live y cancela el ticket (solo usuario)",
+    )
     p.set_defaults(func=cmd_reject)
 
     p = sub.add_parser("reopen", help="Reabre un ticket")

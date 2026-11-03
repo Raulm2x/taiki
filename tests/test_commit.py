@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 
 from commands.commit import cmd_commit, cmd_hook_check_index
+from commands.workflow import cmd_reject
 from ticketlib import audit as audit_lib, commits, db, repo, workspace
 from ticketlib.util import clean_paths
 from tests.seeds import git_repo
@@ -347,22 +348,45 @@ def run(h: Harness) -> None:
             # ── Solapamientos en audit ──────────────────────────────────
             repo.update_ticket(conn, other["code"], paths=["src/a.py"])
             pairs = audit_lib.overlaps(conn)
-            h.ok(
-                any(
-                    {item["a"], item["b"]} == {ticket["code"], other["code"]}
-                    for item in pairs
-                ),
-                "audit detecta solapamiento entre tickets activos",
+            overlaps = any(
+                {item["a"], item["b"]} == {ticket["code"], other["code"]}
+                for item in pairs
             )
-            h.ok(
+            clean = (
                 "docs/b.md" not in audit_lib.dirty(root)
-                and "docs/b.md" not in commits.unstaged(root),
-                "sin cambios pendientes el checkout está limpio",
+                and "docs/b.md" not in commits.unstaged(root)
             )
             (root / "suelto.txt").write_text("x\n", encoding="utf-8")
+            untracked = "suelto.txt" in audit_lib.dirty(root)
             h.ok(
-                "suelto.txt" in audit_lib.dirty(root),
-                "audit lista los ficheros sin seguimiento",
+                overlaps and clean and untracked,
+                "audit detecta solapamientos, lista sin seguimiento y "
+                "el checkout queda limpio",
             )
         finally:
             conn.close()
+
+    # ── reject --revert: manual por CLI y rework normal intacto ─────────
+    live = repo.create_ticket(h.conn, title="CLI revert", isolation="none")
+    repo.update_ticket(
+        h.conn,
+        live["code"],
+        reversal={"kind": "copy", "command": "echo hola"},
+    )
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        manual_code = cmd_reject(
+            argparse.Namespace(code=live["code"], why="manual", revert=True)
+        )
+    normal = repo.create_ticket(h.conn, title="CLI rework", isolation="none")
+    with contextlib.redirect_stdout(io.StringIO()):
+        normal_code = cmd_reject(
+            argparse.Namespace(code=normal["code"], why="rework", revert=False)
+        )
+    h.ok(
+        manual_code == 0
+        and "ejecuta: echo hola" in out.getvalue()
+        and repo.get_ticket(h.conn, live["code"])["status"] == "cancelado"
+        and normal_code == 0
+        and repo.get_ticket(h.conn, normal["code"])["status"] == "en_progreso",
+        "reject --revert imprime el comando manual y sin flag mantiene el rework",
+    )

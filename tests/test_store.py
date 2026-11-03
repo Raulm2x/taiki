@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import subprocess
 import threading
 import time
 
 from ticketlib import db, domain, render, repo, workspace
 from ticketlib.store import queries, relations, workflow
+from tests.seeds import git_repo
 from tests.support import Harness
 
 
@@ -562,15 +564,18 @@ def run(h: Harness) -> None:
             legacy.execute(f"ALTER TABLE tickets DROP COLUMN {column}")
         legacy.execute("PRAGMA user_version = 6")
         db.migrate(legacy)
-        h.eq(db.schema_version(legacy), 7, "la migración sube de v6 a v7")
         migrated = repo.get_ticket(legacy, previous["code"])
-        h.eq(
-            (migrated["isolation"], migrated["resources"], migrated["reversal"]),
-            ("worktree", [], None),
-            "los tickets existentes quedan en worktree y sin recursos",
-        )
+        first = db.schema_version(legacy)
         db.migrate(legacy)
-        h.eq(db.schema_version(legacy), 7, "repetir la migración es idempotente")
+        h.eq(
+            (
+                first,
+                (migrated["isolation"], migrated["resources"], migrated["reversal"]),
+                db.schema_version(legacy),
+            ),
+            (7, ("worktree", [], None), 7),
+            "la migración sube a v7, deja worktree sin recursos y es idempotente",
+        )
     finally:
         legacy.close()
 
@@ -619,32 +624,15 @@ def run(h: Harness) -> None:
         ("none", ["service:sshd", "systemd:system/nginx.service"], "command", [], None),
         "update reemplaza y también puede vaciar isolation, recursos y reversión",
     )
-    h.raises(
-        domain.ValidationError,
+    invalid = [
         lambda: repo.create_ticket(conn, title="Mal", isolation="docker"),
-        "un aislamiento desconocido se rechaza",
-    )
-    h.raises(
-        domain.ValidationError,
         lambda: repo.create_ticket(
             conn, title="Mal", resources=["file:/etc/passwd"]
         ),
-        "un recurso no tipado se rechaza",
-    )
-    h.raises(
-        domain.ValidationError,
         lambda: repo.create_ticket(
             conn, title="Mal", resources=["package:git", "package:git"]
         ),
-        "los recursos duplicados se rechazan",
-    )
-    h.raises(
-        domain.ValidationError,
         lambda: repo.create_ticket(conn, title="Mal", resources=["package:"]),
-        "un recurso sin nombre se rechaza",
-    )
-    h.raises(
-        domain.ValidationError,
         lambda: repo.create_ticket(
             conn,
             title="Mal",
@@ -652,22 +640,144 @@ def run(h: Harness) -> None:
                 f"package:pkg{i}" for i in range(domain.MAX_RESOURCES + 1)
             ],
         ),
-        "el número de recursos tiene un límite",
-    )
-    h.raises(
-        domain.ValidationError,
         lambda: repo.create_ticket(
             conn, title="Mal", reversal={"ref": "sin kind"}
         ),
-        "la reversión exige kind",
+        lambda: repo.create_ticket(conn, title="Mal", reversal="{no-json}"),
+    ]
+    rejected = 0
+    for call in invalid:
+        try:
+            call()
+        except domain.ValidationError:
+            rejected += 1
+    h.eq(
+        rejected,
+        len(invalid),
+        "aislamiento, recursos y reversión rechazan valores inválidos",
+    )
+
+    # ── reject --revert: sólo live y sólo git-revert se ejecuta ─────────
+    no_reversal = repo.create_ticket(conn, title="Sin reversión", isolation="none")
+    h.raises(
+        domain.ValidationError,
+        lambda: workflow.revert_ticket(conn, no_reversal["code"], "sin reversal"),
+        "revert sin reversión registrada falla",
+    )
+    h.raises(
+        domain.PermissionDenied,
+        lambda: workflow.revert_ticket(
+            conn, no_reversal["code"], "agente", actor_type="agente"
+        ),
+        "revert está reservado al usuario",
+    )
+    worktree_ticket = repo.create_ticket(conn, title="Revert worktree")
+    repo.update_ticket(
+        conn,
+        worktree_ticket["code"],
+        reversal={"kind": "copy", "command": "true"},
     )
     h.raises(
         domain.ValidationError,
-        lambda: repo.create_ticket(conn, title="Mal", reversal="{no-json}"),
-        "una reversión con JSON inválido se rechaza",
+        lambda: workflow.revert_ticket(conn, worktree_ticket["code"], "worktree"),
+        "revert en worktree se rechaza y pide reject normal",
     )
 
-    # ── Riesgo derivado y autorización del usuario ──────────────────────
+    revert_repo = git_repo(h.tmp / "revert-repo")
+    note = revert_repo / "nota.txt"
+    note.write_text("uno\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(revert_repo), "add", "nota.txt"], check=True
+    )
+    subprocess.run(
+        ["git", "-C", str(revert_repo), "commit", "-qm", "uno"], check=True
+    )
+    note.write_text("dos\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(revert_repo), "commit", "-qam", "dos"], check=True
+    )
+    revert_sha = subprocess.run(
+        ["git", "-C", str(revert_repo), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    auto = repo.create_ticket(conn, title="Revert auto", isolation="none")
+    repo.update_ticket(
+        conn,
+        auto["code"],
+        reversal={
+            "kind": "git-revert",
+            "ref": str(revert_repo),
+            "command": f"git -C {revert_repo} revert --no-edit {revert_sha}",
+        },
+    )
+    auto_result = workflow.revert_ticket(conn, auto["code"], "auto")
+    h.ok(
+        auto_result["manual"] is False
+        and auto_result["ticket"]["status"] == "cancelado"
+        and note.read_text(encoding="utf-8") == "uno\n",
+        "git-revert se ejecuta, revierte el fichero y cancela el ticket",
+    )
+
+    note.write_text("tres\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(revert_repo), "commit", "-qam", "tres"], check=True
+    )
+    placeholder_sha = subprocess.run(
+        ["git", "-C", str(revert_repo), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    placeholder = repo.create_ticket(
+        conn, title="Revert placeholder", isolation="none"
+    )
+    repo.update_ticket(
+        conn,
+        placeholder["code"],
+        reversal={
+            "kind": "git-revert",
+            "ref": str(revert_repo),
+            "command": f"git -C {revert_repo} revert --no-edit <sha>",
+        },
+    )
+    missing_sha = False
+    try:
+        workflow.revert_ticket(conn, placeholder["code"], "sin enlace")
+    except domain.ValidationError:
+        missing_sha = True
+    repo.link_ticket(
+        conn,
+        placeholder["code"],
+        "external",
+        f"{revert_repo.name}@{placeholder_sha}",
+    )
+    placeholder_result = workflow.revert_ticket(conn, placeholder["code"], "enlace")
+    h.ok(
+        missing_sha
+        and not placeholder_result["manual"]
+        and placeholder_result["ticket"]["status"] == "cancelado"
+        and note.read_text(encoding="utf-8") == "uno\n",
+        "<sha> exige un external repo@sha y con él ejecuta el revert",
+    )
+
+    manual = repo.create_ticket(conn, title="Revert manual", isolation="scope", paths=["src/"])
+    manual_target = h.tmp / "no-crear.txt"
+    repo.update_ticket(
+        conn,
+        manual["code"],
+        reversal={"kind": "copy", "ref": "snap", "command": f"touch {manual_target}"},
+    )
+    manual_result = workflow.revert_ticket(conn, manual["code"], "manual")
+    h.ok(
+        manual_result["manual"] is True
+        and manual_result["ticket"]["status"] == "cancelado"
+        and not manual_target.exists(),
+        "copy no se ejecuta: devuelve manual=True y deja el ticket cancelado",
+    )
+
+
     h.eq(
         (
             domain.risk_for(["/etc/nginx/nginx.conf"], []),
