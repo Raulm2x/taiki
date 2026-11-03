@@ -197,22 +197,27 @@ de vuelta con un merge normal (`git switch develop && git merge --no-ff main`,
 sin reescribir `main`). El paso es idempotente (si `main` ya es ancestro no hace
 nada), restaura la rama en la que estabas y aparece en el resultado como
 `reconciled`. Sin él, la segunda release fallaría con *«main no es ancestro de
-develop»*. Si el merge diera conflicto, la release ya está publicada: el
-comando aborta el merge, avisa con `reconcile_error` y deja `develop` intacta
-para resolver a mano.
+develop»*. Si el merge tiene conflictos **solo** en
+`ticketlib/__init__.py`, `pyproject.toml` o `.taiki/releases.json`, se resuelven
+tomando la versión de `main` (la del release) y el merge continúa: la release es
+la fuente de verdad de esos ficheros. Cualquier otro conflicto aborta el merge,
+avisa con `reconcile_error` y deja `develop` para resolver a mano; la release ya
+está publicada.
 
 Además, la release registra el commit de integración publicado en
 `.taiki/releases.json`, un fichero **versionado** con una entrada
-`{tag, version, released_sha, date}` por release. El registro viaja en el mismo
-merge de reconciliación (o en un commit `chore(release): registrar vX.Y.Z` de
-`develop` si no hizo falta merge); `main` no recibe ningún commit propio por
-esto. La siguiente release usa el `released_sha` de la última entrada como
-inicio del rango, así que el squash de `main` no repite en el CHANGELOG commits
-ya publicados ni fuerza un bump por un `feat` antiguo. En repos sin marcador
-(primera release o proyectos anteriores a este fichero) se cae al rango
-`<tag>..develop`; si existe el merge de reconciliación de ese tag, se usa su
-primer padre. Si el rango no deja commits publicables, la release aborta con
-*«No hay commits nuevos desde vX.Y.Z»*.
+`{tag, version, released_sha, date}` por release. La entrada viaja en el
+**commit de release de `main`**: se escribe antes de reconciliar, así que no se
+pierde si la reconciliación falla, y `main` no recibe ningún commit extra por el
+marcador. El merge de reconciliación la trae a `develop`; en repos sin marcador
+(primera release o proyectos anteriores a este fichero) se completa en el merge
+o en un commit `chore(release): registrar vX.Y.Z` de `develop`. La siguiente
+release usa el `released_sha` de la última entrada como inicio del rango, así que
+el squash de `main` no repite en el CHANGELOG commits ya publicados ni fuerza un
+bump por un `feat` antiguo; si no hay marcador se cae al rango `<tag>..develop`,
+y si existe el merge de reconciliación de ese tag, se usa su primer padre. Si el
+rango no deja commits publicables, la release aborta con *«No hay commits nuevos
+desde vX.Y.Z»*.
 
 ```bash
 taiki release --push
