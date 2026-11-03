@@ -21,6 +21,8 @@ import json
 import os
 import re
 import subprocess
+import sys
+import threading
 import tomllib
 from argparse import Namespace
 from pathlib import Path
@@ -111,6 +113,42 @@ def _release_error(root: Path, **options) -> tuple[int, str]:
             contextlib.redirect_stderr(error):
         code = cmd_release(args)
     return code, error.getvalue().strip()
+
+
+def _release_gate_reads_stdin(root: Path, tmp: Path, seconds: float = 5.0) -> bool:
+    """``release`` con un gate que lee stdin no se cuelga.
+
+    El stdin del test se sustituye por una tubería sin datos: si el gate no
+    recibe ``DEVNULL`` se queda leyendo y el hilo no termina. Al cerrar la
+    tubería llega EOF y la suite nunca se cuelga esperando al hijo. Devuelve
+    ``True`` solo si el release terminó dentro del plazo y con éxito.
+    """
+    gate = tmp / "gate_stdin.py"
+    gate.write_text(
+        "import sys\nsys.stdin.read()\nprint('gate-ok')\n", encoding="utf-8"
+    )
+    read_fd, write_fd = os.pipe()
+    saved_fd = os.dup(0)
+    os.dup2(read_fd, 0)
+    os.close(read_fd)
+    box: dict[str, tuple[int, dict]] = {}
+
+    def target() -> None:
+        box["result"] = _release(
+            root, no_verify=False, verify_cmd=[sys.executable, str(gate)]
+        )
+
+    thread = threading.Thread(target=target, daemon=True)
+    try:
+        thread.start()
+        thread.join(seconds)
+        finished = not thread.is_alive()
+    finally:
+        os.close(write_fd)
+        os.dup2(saved_fd, 0)
+        os.close(saved_fd)
+    thread.join(seconds)
+    return finished and box.get("result", (1, {}))[0] == 0
 
 
 def _tag_exists(root: Path, tag: str) -> bool:
@@ -816,6 +854,15 @@ def run(h) -> None:
     _commit(conflict, "c.txt", "c\n", "fix: main diverge (T-0004)")
     conflict_rc, conflict_payload = _release(conflict, dry_run=True)
 
+    # Un gate que lee stdin no debe colgar la release si hay un TTY delante.
+    stdin_root = git_repo(tmp / "stdin-gate")
+    _seed_versions(stdin_root)
+    _commit(stdin_root, "app.py", "v0\n", "chore: base")
+    _git(stdin_root, "branch", "-m", "main")
+    _git(stdin_root, "checkout", "-b", "develop")
+    _commit(stdin_root, "gate.txt", "gate\n", "feat: gate con stdin (T-0006)")
+    stdin_gate = _release_gate_reads_stdin(stdin_root, tmp)
+
     negative = {
         "dry_rc": dry_rc,
         "dry_tag": dry.get("tag"),
@@ -826,6 +873,7 @@ def run(h) -> None:
         "red_wrote_tag": red_tag,
         "conflict_rc": conflict_rc,
         "conflict_wrote": bool(conflict_payload),
+        "stdin_gate": stdin_gate,
     }
     expected_negative = {
         "dry_rc": 0,
@@ -837,6 +885,7 @@ def run(h) -> None:
         "red_wrote_tag": False,
         "conflict_rc": 1,
         "conflict_wrote": False,
+        "stdin_gate": True,
     }
 
     sync_actual, sync_expected = _sync_cases(tmp)
