@@ -673,6 +673,48 @@ def run(h: Harness) -> None:
         "una reversión con JSON inválido se rechaza",
     )
 
+    # ── complete live: exige commit o external enlazado ────────────────
+    live_none = repo.create_ticket(
+        conn, title="Live sin evidencia", isolation="none"
+    )
+    repo.claim_ticket(conn, live_none["code"], agent="opencode")
+    h.raises(
+        domain.ValidationError,
+        lambda: repo.complete_ticket(
+            conn, live_none["code"], resolution="sin commit"
+        ),
+        "complete en aislamiento none sin commit falla",
+    )
+    live_external = repo.create_ticket(
+        conn,
+        title="Live con external",
+        isolation="scope",
+        paths=["src/"],
+    )
+    repo.claim_ticket(conn, live_external["code"], agent="opencode")
+    repo.link_ticket(
+        conn, live_external["code"], "external", "dotfiles@abc1234"
+    )
+    external_done = repo.complete_ticket(
+        conn, live_external["code"], resolution="con external"
+    )
+    live_commit = repo.create_ticket(
+        conn, title="Live con commit", isolation="none"
+    )
+    repo.claim_ticket(conn, live_commit["code"], agent="opencode")
+    commit_done = repo.complete_ticket(
+        conn, live_commit["code"], resolution="con commit", commit="abc1234"
+    )
+    h.ok(
+        external_done["status"] == "completado"
+        and any(
+            item["kind"] == "external" and item["ref"] == "dotfiles@abc1234"
+            for item in external_done["links"]
+        )
+        and commit_done["status"] == "completado",
+        "complete live pasa con external repo@sha o con commit",
+    )
+
     config = workspace.default_config(h.tmp)
     h.eq(
         workspace.isolation_settings(config),

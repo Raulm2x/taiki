@@ -43,6 +43,9 @@ PRIORITY_RANK = {"urgente": 0, "alta": 1, "media": 2, "baja": 3}
 
 LINK_KINDS = (
     "commit",
+    # Commit de otro repositorio (por ejemplo, dotfiles); ``ref`` es
+    # ``repo@sha`` y lo crea ``taiki commit --repo <ruta>``.
+    "external",
     "archivo",
     "url",
     "sesion",

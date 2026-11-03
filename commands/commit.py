@@ -6,9 +6,11 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 from ticketlib import commits, db, env, render, repo, workspace
+from ticketlib.domain import TicketError
 
 from .common import _conn
 
@@ -76,7 +78,21 @@ def _message_body(message: str | list[str] | None) -> str:
 
 
 def cmd_commit(args: argparse.Namespace) -> int:
-    root = workspace.checkout_root()
+    target = getattr(args, "repo", None)
+    if target:
+        # ``--repo`` permite commitear el árbol vivo de otro repositorio
+        # (por ejemplo, dotfiles) manteniendo la DB y el ticket del workspace
+        # actual. El toplevel resuelve rutas hijas o submódulos.
+        try:
+            root = commits.toplevel(Path(target).expanduser())
+        except TicketError as exc:
+            print(
+                f"Error: --repo no apunta a un repositorio Git: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+    else:
+        root = workspace.checkout_root()
     with _conn() as conn:
         ticket = _resolve(conn, args.ticket)
         if ticket is None:
@@ -88,10 +104,12 @@ def cmd_commit(args: argparse.Namespace) -> int:
         if args.json and args.dry_run:
             print(render.to_json(report))
             return 0 if report["ok"] else 1
+        if report.get("scope_error"):
+            print(report["scope_error"], file=sys.stderr)
         if report["outside"]:
             print(
                 f"Fuera del alcance de {ticket['code']} "
-                f"({', '.join(report['scope'])}):",
+                f"({', '.join(report['scope']) or 'sin paths'}):",
                 file=sys.stderr,
             )
             for item in report["outside"]:
@@ -129,14 +147,30 @@ def cmd_commit(args: argparse.Namespace) -> int:
             else:
                 os.environ["TAIKI_TICKET"] = previous
         actor = (getattr(args, "agent", None) or "agente").strip() or "agente"
-        repo.link_ticket(
-            conn,
-            ticket["code"],
-            "commit",
-            sha,
-            actor=actor,
-            session_id=getattr(args, "session", None),
-        )
+        session = getattr(args, "session", None)
+        if target:
+            # Enlace cross-repo: el hash vive en otro repositorio, así que se
+            # registra como ``external`` con ref ``repo@sha``. El workspace de
+            # sistema conserva el ticket y la DB.
+            external = f"{Path(root).name}@{sha}"
+            repo.link_ticket(
+                conn,
+                ticket["code"],
+                "external",
+                external,
+                actor=actor,
+                session_id=session,
+                resolve=False,
+            )
+        else:
+            repo.link_ticket(
+                conn,
+                ticket["code"],
+                "commit",
+                sha,
+                actor=actor,
+                session_id=session,
+            )
     leftover = commits.unstaged(root)
     if leftover:
         print(
@@ -144,7 +178,8 @@ def cmd_commit(args: argparse.Namespace) -> int:
             "no se tocaron.",
             file=sys.stderr,
         )
-    print(f"{ticket['code']} → commit {sha}")
+    detail = f" ({external})" if target else ""
+    print(f"{ticket['code']} → commit {sha}{detail}")
     return 0
 
 

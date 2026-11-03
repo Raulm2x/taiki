@@ -52,6 +52,34 @@ def run(h: Harness) -> None:
         "no confunde .env con env",
     )
 
+    # ── Rama live: solo none/scope fuera de un worktree ─────────────────
+    h.ok(
+        commits.branch_policy(
+            "main", "T-0001", agent=True, isolation="none", live_branch="main"
+        )["ok"]
+        and commits.branch_policy(
+            "main", "T-0001", agent=True, isolation="scope", live_branch="main"
+        )["ok"],
+        "la rama live acepta commits de agente con ticket en none/scope",
+    )
+    h.ok(
+        not commits.branch_policy(
+            "main",
+            "T-0001",
+            agent=True,
+            isolation="none",
+            live_branch="main",
+            worktree=True,
+        )["ok"]
+        and not commits.branch_policy(
+            "main", "T-0001", agent=True, isolation="worktree", live_branch="main"
+        )["ok"]
+        and not commits.branch_policy(
+            "develop", "T-0001", agent=True, isolation="none", live_branch="main"
+        )["ok"],
+        "main sigue bloqueado en worktree/worktree y la excepción live es solo la rama configurada",
+    )
+
     root = git_repo(tmp / "repo")
     (root / "src").mkdir()
     (root / "src" / "a.py").write_text("a\n", encoding="utf-8")
@@ -230,6 +258,91 @@ def run(h: Harness) -> None:
             )
             _git(root, "reset", "-q", "docs/b.md")
             _git(root, "checkout", "--", "docs/b.md")
+
+            # ── Scope estricto: fuera y vacío (B7, fail-closed) ─────────
+            scoped = repo.create_ticket(
+                conn,
+                title="Scope estricto",
+                project="repo",
+                isolation="scope",
+                paths=["src/"],
+            )
+            (root / "docs" / "b.md").write_text("b3\n", encoding="utf-8")
+            _git(root, "add", "docs/b.md")
+            scoped_report = commits.check(
+                root, repo.get_ticket(conn, scoped["code"])
+            )
+            _git(root, "reset", "-q", "docs/b.md")
+            _git(root, "checkout", "--", "docs/b.md")
+
+            empty_scope = repo.create_ticket(
+                conn,
+                title="Scope vacío",
+                project="repo",
+                isolation="scope",
+                paths=[],
+            )
+            (root / "src" / "a.py").write_text("a4\n", encoding="utf-8")
+            _git(root, "add", "src/a.py")
+            empty_report = commits.check(
+                root, repo.get_ticket(conn, empty_scope["code"])
+            )
+            h.ok(
+                scoped_report["outside"] == ["docs/b.md"]
+                and scoped_report["isolation"] == "scope"
+                and not scoped_report["ok"]
+                and empty_report["scope_error"] is not None
+                and empty_report["outside"] == ["src/a.py"]
+                and not empty_report["ok"],
+                "scope rechaza el staged fuera y el scope vacío deniega todo (fail-closed)",
+            )
+            _git(root, "reset", "-q", "src/a.py")
+            _git(root, "checkout", "--", "src/a.py")
+
+            # ── --repo: commit en el árbol vivo y enlace external ───────
+            live = git_repo(tmp / "live")
+            (live / "dot.txt").write_text("x\n", encoding="utf-8")
+            _git(live, "add", "dot.txt")
+            live_ticket = repo.create_ticket(
+                conn,
+                title="Dotfiles live",
+                project="live",
+                isolation="none",
+            )
+            repo.claim_ticket(
+                conn,
+                live_ticket["code"],
+                agent="worker",
+                session_id="ses_live",
+            )
+            with h.env(TAIKI_DB=str(info["db"])), contextlib.chdir(
+                root
+            ), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
+                io.StringIO()
+            ):
+                repo_code = cmd_commit(
+                    argparse.Namespace(
+                        message="dotfiles",
+                        ticket=live_ticket["code"],
+                        repo=str(live),
+                        agent="worker",
+                        session="ses_live",
+                        dry_run=False,
+                        json=False,
+                    )
+                )
+            live_sha = _git(live, "rev-parse", "--short", "HEAD").strip()
+            live_links = [
+                item
+                for item in repo.get_ticket(conn, live_ticket["code"])["links"]
+                if item["kind"] == "external"
+            ]
+            h.ok(
+                repo_code == 0
+                and live_links
+                and live_links[0]["ref"] == f"live@{live_sha}",
+                "taiki commit --repo commitea en el repo live y enlaza external repo@sha",
+            )
 
             # ── Solapamientos en audit ──────────────────────────────────
             repo.update_ticket(conn, other["code"], paths=["src/a.py"])

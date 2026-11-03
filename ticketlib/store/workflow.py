@@ -19,6 +19,7 @@ from ..domain import (
     PermissionDenied,
     TransitionError,
     ValidationError,
+    clean_isolation,
 )
 from ..gitutil import resolve_commit
 from ..util import (
@@ -408,6 +409,26 @@ def complete_ticket(
     resolution = (resolution or "").strip()
     if not resolution:
         raise ValidationError("La resolución es obligatoria al completar un ticket")
+
+    # En los modos live (none/scope) el trabajo no vive en un worktree con
+    # rama por ticket: la evidencia es un commit enlazado o un enlace
+    # ``external`` (``repo@sha``) de otro repositorio. Sin evidencia no se
+    # cierra; ``force`` es el bypass consciente, igual que en las transiciones.
+    row = row_by_code(conn, code)
+    isolation = clean_isolation(row["isolation"])
+    pending = (commit or "").strip()
+    if isolation in ("none", "scope") and not pending and not force:
+        linked = conn.execute(
+            "SELECT 1 FROM links WHERE ticket_id = ? "
+            "AND kind IN ('commit', 'external') LIMIT 1",
+            (row["id"],),
+        ).fetchone()
+        if linked is None:
+            raise ValidationError(
+                f"{row['code']} usa aislamiento {isolation}: completa con un "
+                "commit enlazado (`taiki commit`) o un enlace external "
+                "repo@sha; usa force=true para el bypass consciente."
+            )
 
     # Resolver git antes de abrir la transacción: rev-parse puede tardar y no
     # debe mantener el lock de escritura mientras otro proceso espera.
