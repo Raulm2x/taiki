@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import fnmatch
 import re
 import shlex
 from pathlib import Path
+from typing import Iterable, Sequence
 
 HOME = Path.home()
 EXEMPT_ROOTS = tuple(
@@ -36,7 +38,7 @@ _MUTATING = re.compile(
     | \bgit\s+(?:apply|am|rebase|merge|reset|checkout|switch|stash|clean|
                   cherry-pick|revert|init)\b
     | \bsystemctl\s+(?:--user\s+)?(?:start|stop|restart|enable|disable|reload|
-                                   daemon-reload|mask|unmask)\b
+                                   daemon-reload|mask|unmask|edit)\b
     | \bhyprctl\s+(?:keyword|reload|dispatch|setprop|output)\b
     | \bnoctalia\s+msg\b
     | \b(?:pacman|yay|paru|pip|pipx|npm|pnpm|yarn|cargo|uv)\s+
@@ -117,7 +119,7 @@ _PREFIX_COMMANDS = {"sudo", "env", "time", "timeout", "command", "nohup", "exec"
 _HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 
 # Redirección a un fichero (ignora 2>&1, >/dev/null y comparaciones).
-_REDIRECT = re.compile(r"(?<![-=<>0-9])>>?\s*(?!/dev/null)\S+")
+_REDIRECT = re.compile(r"(?<![-=<>0-9])>>?\s*(?!/dev/null)(\S+)")
 
 # Escrituras dentro de scripts (python/heredocs y code mode).
 _SCRIPT_WRITE = re.compile(
@@ -130,31 +132,84 @@ _SCRIPT_WRITE = re.compile(
 _ABSOLUTE = re.compile(r"(?<![\w~])(?:/[\w.@%+,:=-]+)+")
 
 
-def path_guarded(path: str | Path | None) -> bool:
-    """Solo se vigilan escrituras dentro del HOME y fuera de rutas efímeras."""
+def _resolve(value: str | Path, base: Path) -> Path:
+    """Ruta absoluta; las relativas se resuelven contra ``base``."""
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    try:
+        return candidate.resolve()
+    except (OSError, RuntimeError):
+        return candidate.absolute()
+
+
+def _under(target: Path, root: Path) -> bool:
+    return target == root or root in target.parents
+
+
+def resolve_roots(
+    roots: Iterable[str | Path] | None = None, base: str | Path | None = None
+) -> tuple[Path, ...]:
+    """Raíces vigiladas: ``HOME`` por defecto; las relativas, contra ``base``.
+
+    El modo scope añade las raíces configuradas del proyecto, de modo que
+    ``/etc`` o un directorio de trabajo concreto dejen de considerarse
+    "outside". Las rutas fuera de toda raíz siguen fuera.
+    """
+    base_path = Path(base).expanduser() if base else Path.cwd()
+    try:
+        base_path = base_path.resolve()
+    except (OSError, RuntimeError):
+        base_path = base_path.absolute()
+    values: Sequence[str | Path] = (HOME,) if roots is None else tuple(roots)
+    resolved: list[Path] = []
+    for value in values:
+        item = _resolve(value, base_path)
+        if item not in resolved:
+            resolved.append(item)
+    return tuple(resolved)
+
+
+def path_guarded(
+    path: str | Path | None,
+    roots: Iterable[str | Path] | None = None,
+    base: str | Path | None = None,
+) -> bool:
+    """Solo se vigilan escrituras dentro de las raíces configuradas.
+
+    Sin ``roots`` se conserva el comportamiento clásico (el HOME, salvo rutas
+    efímeras). Con ``roots`` explícitas, una ruta fuera de todas ellas sigue
+    siendo "outside"; las raíces declaradas ganan a ``EXEMPT_ROOTS``.
+    """
     if not path:
         return True
-    try:
-        target = Path(path).expanduser().resolve()
-    except (OSError, RuntimeError):
-        target = Path(path).expanduser().absolute()
-    if target != HOME and HOME not in target.parents:
+    target = _resolve(path, Path(base).expanduser() if base else Path.cwd())
+    if not any(_under(target, root) for root in resolve_roots(roots, base)):
         return False
-    return not any(target == root or root in target.parents for root in EXEMPT_ROOTS)
+    if roots is None:
+        return not any(_under(target, root) for root in EXEMPT_ROOTS)
+    return True
 
 
-def command_touches_home(command: str, cwd: str | Path | None = None) -> bool:
-    """Distingue un comando de scratch (/tmp) de uno que toca el HOME.
+def command_touches_home(
+    command: str,
+    cwd: str | Path | None = None,
+    roots: Iterable[str | Path] | None = None,
+) -> bool:
+    """Distingue un comando de scratch (/tmp) de uno que toca una raíz vigilada.
 
     Sin rutas absolutas se asume que escribe en el directorio del proyecto.
+    Con ``roots`` se consideran también las raíces configuradas del proyecto.
     """
     paths = [item for item in _ABSOLUTE.findall(command) if len(item) > 1]
     if not paths:
         return True
-    home = str(HOME)
-    inside = [item for item in paths if item == home or item.startswith(home + "/")]
-    if inside:
-        return True
+    base = Path(cwd).expanduser() if cwd else Path.cwd()
+    resolved_roots = resolve_roots(roots, base)
+    for item in paths:
+        target = _resolve(item, base)
+        if any(_under(target, root) for root in resolved_roots):
+            return True
     exempt = tuple(str(root) for root in EXEMPT_ROOTS)
     return not all(item.startswith(exempt) for item in paths)
 
@@ -366,3 +421,189 @@ def command_is_mutating(command: str) -> bool:
         if _MUTATING.search(normalized):
             return True
     return False
+
+
+# ── Scope: ¿esta escritura cae dentro de los paths/recursos del ticket? ──
+
+# Intérpretes que ejecutan código arbitrario: el destino no es deducible.
+_SCRIPT_INTERPRETERS = {
+    "python",
+    "python3",
+    "perl",
+    "ruby",
+    "node",
+    "deno",
+    "bash",
+    "sh",
+    "zsh",
+    "fish",
+    "lua",
+    "php",
+}
+# Comandos cuyos argumentos posicionales son rutas que se escriben.
+_WRITE_ALL_PATHS = {
+    "rm",
+    "rmdir",
+    "mkdir",
+    "touch",
+    "chmod",
+    "chown",
+    "truncate",
+    "dd",
+    "unlink",
+    "shred",
+    "tee",
+}
+# Comandos en los que solo el último argumento es el destino escrito.
+_WRITE_DEST_ONLY = {"cp", "install", "rsync", "scp", "ln"}
+_AMBIGUOUS_TREES = {"find", "xargs"}
+_PACKAGE_MANAGERS = {"pacman", "yay", "paru", "pip", "pipx", "npm", "pnpm", "yarn", "cargo", "uv"}
+_PACKAGE_VERBS = {
+    "install",
+    "add",
+    "remove",
+    "uninstall",
+    "update",
+    "upgrade",
+    "sync",
+    "reinstall",
+}
+
+
+def _redirect_targets(segment: str) -> list[str]:
+    return [
+        match.group(1).strip("'\"")
+        for match in _REDIRECT.finditer(segment)
+        if match.group(1)
+    ]
+
+
+def path_in_scope(
+    target: str | Path,
+    patterns: Iterable[str] | None,
+    base: str | Path | None = None,
+) -> bool:
+    """¿La ruta cae en algún ``paths`` del ticket (directorio, fichero o glob)?"""
+    scopes = [str(item) for item in patterns or () if str(item).strip()]
+    if not scopes:
+        return False
+    base_path = Path(base).expanduser() if base else Path.cwd()
+    resolved = _resolve(target, base_path)
+    for raw in scopes:
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = base_path / candidate
+        text = str(candidate)
+        if fnmatch.fnmatch(str(resolved), text):
+            return True
+        try:
+            resolved.relative_to(candidate)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _systemd_problem(args: list[str], allowed: set[str]) -> str | None:
+    scope = "system"
+    verb = ""
+    units: list[str] = []
+    for arg in args:
+        if arg == "--user":
+            scope = "user"
+            continue
+        if arg.startswith("-"):
+            continue
+        if not verb:
+            verb = arg
+            continue
+        units.append(arg)
+    for unit in units:
+        resource = f"systemd:{scope}/{unit}"
+        if resource not in allowed:
+            return f"el recurso {resource!r}"
+    return None
+
+
+def _package_problem(args: list[str], allowed: set[str]) -> str | None:
+    names = [
+        arg
+        for arg in args
+        if not arg.startswith("-") and arg not in _PACKAGE_VERBS
+    ]
+    for name in names:
+        resource = f"package:{name}"
+        if resource not in allowed:
+            return f"el recurso {resource!r}"
+    return None
+
+
+def command_scope_problem(
+    command: str,
+    patterns: Iterable[str] | None,
+    resources: Iterable[str] | None = None,
+    base: str | Path | None = None,
+) -> str | None:
+    """Motivo por el que un comando no cabe en el scope del ticket.
+
+    Devuelve ``None`` si todos los destinos son demostrables dentro del scope.
+    Un comando ambiguo (``python -c``, ``sed -i``, ``tee``, ``cp``, ``mv``,
+    ``install``, ``systemctl edit``) sin destino comprobable se bloquea: el
+    guard no adivina.
+    """
+    base_path = Path(base).expanduser() if base else Path.cwd()
+    scopes = list(patterns or ())
+    allowed = {str(item) for item in resources or ()}
+    text = _strip_heredocs(command or "")
+    for segment in split_commands(text):
+        if not command_is_mutating(segment):
+            continue
+        name, args = _base_command(segment)
+        if not name:
+            continue
+        if name != "git":
+            for target in _redirect_targets(segment):
+                if not path_in_scope(target, scopes, base_path):
+                    return f"la redirección a {target!r}"
+        if name == "git":
+            # El staging y el commit se validan en la capa de commits.
+            continue
+        if name in _SAFE_COMMANDS:
+            # P. ej. ``echo hola > f``: la redirección ya se validó arriba.
+            continue
+        if name in _SCRIPT_INTERPRETERS:
+            return f"`{name}` puede escribir en cualquier ruta"
+        if name == "systemctl":
+            problem = _systemd_problem(args, allowed)
+            if problem is not None:
+                return problem
+            continue
+        if name in _PACKAGE_MANAGERS:
+            problem = _package_problem(args, allowed)
+            if problem is not None:
+                return problem
+            continue
+        if name in _AMBIGUOUS_TREES:
+            return f"`{name}` puede escribir fuera del scope"
+        positionals = [arg for arg in args if not arg.startswith("-")]
+        if name == "sed":
+            if not any(arg.startswith("-") and "i" in arg for arg in args):
+                continue
+            if not positionals:
+                return "`sed -i` sin fichero"
+            targets = positionals[-1:]
+        elif name == "mv":
+            targets = positionals
+        elif name in _WRITE_ALL_PATHS:
+            targets = positionals
+        elif name in _WRITE_DEST_ONLY:
+            targets = positionals[-1:]
+        else:
+            absolute = [item for item in _ABSOLUTE.findall(segment) if len(item) > 1]
+            if not absolute:
+                return f"no se puede probar el destino de `{name}`"
+            targets = absolute
+        for target in targets:
+            if not path_in_scope(target, scopes, base_path):
+                return f"la ruta {target!r}"
+    return None

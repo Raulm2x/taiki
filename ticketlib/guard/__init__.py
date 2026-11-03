@@ -13,8 +13,11 @@ from .commands import (
     EXEMPT_ROOTS,
     HOME,
     command_is_mutating,
+    command_scope_problem,
     command_touches_home,
     path_guarded,
+    path_in_scope,
+    resolve_roots,
     risky_git,
     split_commands,
 )
@@ -24,12 +27,16 @@ from .context import (
     find_pending,
     find_session_epic,
     session_chain,
+    ticket_isolation,
+    ticket_paths,
+    ticket_resources,
 )
 from .hook import is_mutating, normalize_tool, parse_hook_input
 from .policy import auto_mode, disabled, evaluate
 
 __all__ = [
     "command_is_mutating",
+    "command_scope_problem",
     "command_touches_home",
     "risky_git",
     "disabled",
@@ -43,6 +50,11 @@ __all__ = [
     "normalize_tool",
     "parse_hook_input",
     "path_guarded",
+    "path_in_scope",
+    "resolve_roots",
     "session_chain",
     "split_commands",
+    "ticket_isolation",
+    "ticket_paths",
+    "ticket_resources",
 ]

@@ -63,19 +63,24 @@
 # T-0060.01 aislamiento/scope: +31 comprobaciones (migración v7, CRUD,
 # validaciones de recursos/reversión, config, CLI y contrato MCP). Revisión
 # única del techo por el modelo nuevo; a partir de aquí, podar.
-max_seconds = 11.6
-baseline_checks = 1997
+# T-0060.02 guard mode-aware: +29 comprobaciones (roots, comandos ambiguos,
+# modos none/scope/worktree, solapes y decodificación de filas). Revisión única
+# del techo por el comportamiento nuevo; a partir de aquí, podar.
+# Medido 12.2-12.5s con carga alta (load 3.5) en el gate de merge; se amplía
+# el margen local y el de CI una sola vez y no se sube el benchmark de export.
+max_seconds = 12.6
+baseline_checks = 2026
 # Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
 checks_tolerance = 12
 
 [module]
-max_seconds = 1.1
+max_seconds = 1.25
 
 # Perfil de CI: los runners compartidos son más lentos y no deben fallar por
 # ruido. Se aplica con CI=true (o TAIKI_CI=true) y cada valor se puede
 # sobrescribir con TAIKI_SUITE_BUDGET / TAIKI_MODULE_BUDGET.
 [ci.suite]
-max_seconds = 12.0
+max_seconds = 13.0
 
 [ci.module]
 max_seconds = 1.5

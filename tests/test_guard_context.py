@@ -354,3 +354,51 @@ def run(h: Harness) -> None:
         "taiki guard devuelve 3 y JSON",
     )
 
+    # ── Decodificación de isolation/paths/resources ──────────────
+    raw = {
+        "isolation": None,
+        "paths": '["src/", "docs/"]',
+        "resources": '["package:jq"]',
+    }
+    h.eq(
+        guard.ticket_isolation(raw),
+        "worktree",
+        "una fila sin isolation cae al modo retrocompatible",
+    )
+    h.eq(
+        guard.ticket_paths(raw),
+        ["src/", "docs/"],
+        "ticket_paths decodifica el JSON de la fila",
+    )
+    h.eq(
+        guard.ticket_resources(raw),
+        ["package:jq"],
+        "ticket_resources decodifica el JSON de la fila",
+    )
+    h.ok(
+        guard.ticket_paths({"paths": None}) == []
+        and guard.ticket_resources({"resources": None}) == []
+        and guard.ticket_isolation({"isolation": "scope"}) == "scope",
+        "los campos vacíos no rompen la decodificación",
+    )
+    ctx_ticket = repo.create_ticket(
+        conn,
+        title="Ticket con scope crudo",
+        isolation="scope",
+        paths=["src/"],
+        resources=["systemd:user/foo.service"],
+        created_by="opencode",
+        actor_type="agente",
+        session_id="ses_ctx_raw",
+    )
+    repo.claim_ticket(
+        conn, ctx_ticket["code"], agent="opencode", session_id="ses_ctx_raw"
+    )
+    row = guard.find_active(conn, ["ses_ctx_raw"], "opencode")
+    h.ok(
+        guard.ticket_isolation(row) == "scope"
+        and guard.ticket_paths(row) == ["src/"]
+        and guard.ticket_resources(row) == ["systemd:user/foo.service"],
+        "find_active devuelve filas que el guard decodifica",
+    )
+

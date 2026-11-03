@@ -2,10 +2,41 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 from .. import sessions
+from ..domain import DEFAULT_ISOLATION
+
+
+def _decoded_list(raw: Any) -> list[str]:
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = [raw]
+        raw = parsed
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return [str(item) for item in raw if str(item).strip()]
+
+
+def ticket_isolation(ticket: dict[str, Any]) -> str:
+    """Modo de aislamiento del ticket (``worktree`` si la fila no lo trae)."""
+    value = str(ticket.get("isolation") or "").strip().lower()
+    return value or DEFAULT_ISOLATION
+
+
+def ticket_paths(ticket: dict[str, Any]) -> list[str]:
+    """``paths`` del ticket, decodificados de la fila (JSON o lista)."""
+    return _decoded_list(ticket.get("paths"))
+
+
+def ticket_resources(ticket: dict[str, Any]) -> list[str]:
+    """``resources`` tipados del ticket, decodificados de la fila."""
+    return _decoded_list(ticket.get("resources"))
+
 
 def session_chain(session_id: str | None) -> list[str]:
     """Sesión y sus ancestros (los subagentes heredan el ticket del padre)."""
