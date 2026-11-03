@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import re
 from pathlib import Path
@@ -158,6 +159,53 @@ def _under_prefix(path: str, prefix: str) -> bool:
     target = str(Path(path).expanduser())
     root = str(Path(prefix).expanduser())
     return target == root or target.startswith(root.rstrip("/") + "/")
+
+
+# Rutas del propio taiki (guard, agentes, dominio, gates). Un cambio ahí exige
+# una revisión explícita del usuario antes de pasar a ``verificado``.
+SENSITIVE_PATHS = (
+    "ticketlib/guard/",
+    ".opencode/agents/",
+    "tests/budget.toml",
+    "ticketlib/domain.py",
+    "ticketlib/store/workflow.py",
+    "tests/coverage_gate.py",
+    "tests/benchmarks.py",
+)
+
+
+def _sensitive_match(path: str, sensitive: str) -> bool:
+    path = path.strip().replace("\\", "/")
+    while path.startswith("./"):
+        path = path[2:]
+    if not path:
+        return False
+    if sensitive.endswith("/"):
+        root = sensitive.rstrip("/")
+        return (
+            path == root
+            or path.startswith(sensitive)
+            or fnmatch.fnmatch(root, path)
+        )
+    return (
+        path == sensitive
+        or fnmatch.fnmatch(path, sensitive)
+        or fnmatch.fnmatch(sensitive, path)
+    )
+
+
+def requires_review(paths: Any) -> bool:
+    """¿El ticket posee rutas que exigen revisión explícita del usuario?
+
+    Acepta rutas exactas, directorios con ``/`` final y globs. No cambia el
+    estado del ticket: solo marca la necesidad de ``taiki review``.
+    """
+    return any(
+        _sensitive_match(str(item), sensitive)
+        for item in (paths or [])
+        if str(item).strip()
+        for sensitive in SENSITIVE_PATHS
+    )
 
 
 def risk_for(paths: Any, resources: Any) -> str:

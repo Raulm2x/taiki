@@ -9,7 +9,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from ticketlib import db, presentation, render, repo, scratch, sessions, workspace
-from ticketlib.domain import OPEN_STATUSES, TicketError, risk_for
+from ticketlib.domain import OPEN_STATUSES, TicketError, requires_review, risk_for
 from ticketlib.memory.config import load_memory_config
 from ticketlib.memory.curate import auto_curate
 from ticketlib.util import resolve_scope
@@ -64,6 +64,7 @@ def _tree_rows(tickets: list[dict]) -> list[dict]:
 def _json_summary(ticket: dict) -> dict:
     data = presentation.summary(ticket)
     data["risk"] = risk_for(ticket.get("paths"), ticket.get("resources"))
+    data["requires_review"] = requires_review(ticket.get("paths"))
     return data
 
 
@@ -131,6 +132,7 @@ def cmd_list(args: argparse.Namespace) -> int:
             }
             item["session_id"] = session_map.get(ticket["code"])
             item["risk"] = risk_for(ticket.get("paths"), ticket.get("resources"))
+            item["requires_review"] = requires_review(ticket.get("paths"))
             payload.append(item)
         scope = (
             "tree"
@@ -191,6 +193,7 @@ def cmd_show(args: argparse.Namespace) -> int:
     roots = workspace.scope_roots()
     ticket["scope"] = roots
     ticket["risk"] = risk_for(ticket.get("paths"), ticket.get("resources"))
+    ticket["requires_review"] = requires_review(ticket.get("paths"))
     _show(
         ticket,
         args.json or args.compact,
@@ -201,6 +204,7 @@ def cmd_show(args: argparse.Namespace) -> int:
         print(
             f"Aislamiento: {ticket.get('isolation')} · "
             f"Riesgo: {ticket['risk']} · "
+            f"Revisión: {'requerida' if ticket['requires_review'] else 'no'} · "
             f"Scope: {', '.join(roots)}"
         )
         if ticket.get("resources"):

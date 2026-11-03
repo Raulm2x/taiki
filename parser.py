@@ -65,7 +65,7 @@ from commands import (
     cmd_worktree_merge,
     cmd_worktree_remove,
 )
-from commands.workflow import cmd_authorize
+from commands.workflow import cmd_authorize, cmd_review
 from ticketlib import domain
 from ticketlib.domain import (
     ISOLATION_MODES,
@@ -293,6 +293,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--why", required=True, help="Motivo de la autorización"
     )
     p.set_defaults(func=cmd_authorize)
+
+    p = sub.add_parser(
+        "review",
+        help="Revisa un ticket sensible (solo usuario)",
+        description="Deja constancia de que el usuario revisó un ticket que "
+        "toca rutas sensibles; sin esto no puede pasar a 'verificado'.",
+    )
+    p.add_argument("code")
+    p.add_argument(
+        "--why", required=True, help="Motivo o alcance de la revisión"
+    )
+    p.set_defaults(func=cmd_review)
 
     p = sub.add_parser(
         "confirm",

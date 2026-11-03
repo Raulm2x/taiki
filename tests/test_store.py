@@ -411,40 +411,36 @@ def run(h: Harness) -> None:
         conn, bounded["code"], links_limit=3, subtasks_limit=3
     )
     h.eq(
-        [link["ref"] for link in recent["links"]],
-        ["L23", "L24", "L25"],
-        "links_limit devuelve los 3 enlaces más recientes",
-    )
-    h.eq(
-        [sub["code"] for sub in recent["subtasks"]],
-        [f"{bounded['code']}.{index:02d}" for index in (23, 24, 25)],
-        "subtasks_limit devuelve las 3 tareas más recientes",
-    )
-    h.eq(
-        (recent["links_total"], recent["subtasks_total"]),
-        (25, 25),
-        "los totales reflejan el conjunto completo",
-    )
-    h.eq(
-        recent["progress"]["total"],
-        25,
-        "progress se calcula sobre todas las subtareas, no sobre el recorte",
+        (
+            [link["ref"] for link in recent["links"]],
+            [sub["code"] for sub in recent["subtasks"]],
+            (recent["links_total"], recent["subtasks_total"]),
+            recent["progress"]["total"],
+        ),
+        (
+            ["L23", "L24", "L25"],
+            [f"{bounded['code']}.{index:02d}" for index in (23, 24, 25)],
+            (25, 25),
+            25,
+        ),
+        "límites devuelven lo más reciente, los totales y progress completos",
     )
     default_limit = repo.get_ticket(
         conn, bounded["code"], links_limit=20, subtasks_limit=20
-    )
-    h.eq(
-        [link["ref"] for link in default_limit["links"]],
-        [f"L{index}" for index in range(6, 26)],
-        "el límite por defecto 20 devuelve los 20 enlaces más recientes",
     )
     unbounded = repo.get_ticket(
         conn, bounded["code"], links_limit=0, subtasks_limit=0
     )
     h.eq(
-        [link["ref"] for link in unbounded["links"]],
-        [f"L{index}" for index in range(1, 26)],
-        "sin límite se conserva el orden ascendente completo",
+        (
+            [link["ref"] for link in default_limit["links"]],
+            [link["ref"] for link in unbounded["links"]],
+        ),
+        (
+            [f"L{index}" for index in range(6, 26)],
+            [f"L{index}" for index in range(1, 26)],
+        ),
+        "el límite por defecto es 20 y sin límite se conserva el orden completo",
     )
 
     # ── Dependencias entre tareas y registro de capacidades ──────────────
@@ -586,18 +582,21 @@ def run(h: Harness) -> None:
         reversal='{"kind": "manual", "ref": "T-0001"}',
     )
     h.eq(
-        (scoped["isolation"], scoped["resources"], scoped["reversal"]),
+        (
+            scoped["isolation"],
+            scoped["resources"],
+            scoped["reversal"],
+            repo.create_ticket(conn, title="Aislamiento por defecto")[
+                "isolation"
+            ],
+        ),
         (
             "scope",
             ["systemd:user/taiki.service", "package:git"],
             {"kind": "manual", "ref": "T-0001"},
+            "worktree",
         ),
-        "create guarda isolation, recursos tipados y reversión",
-    )
-    h.eq(
-        repo.create_ticket(conn, title="Aislamiento por defecto")["isolation"],
-        "worktree",
-        "el aislamiento por defecto es worktree",
+        "create guarda isolation/recursos/reversión y usa worktree por defecto",
     )
     updated_scope = repo.update_ticket(
         conn,
@@ -606,22 +605,19 @@ def run(h: Harness) -> None:
         resources=["service:sshd", "systemd:system/nginx.service"],
         reversal={"kind": "command", "command": "systemctl restart nginx"},
     )
+    cleared = repo.update_ticket(
+        conn, scoped["code"], resources=[], reversal=None
+    )
     h.eq(
         (
             updated_scope["isolation"],
             updated_scope["resources"],
             updated_scope["reversal"]["kind"],
+            cleared["resources"],
+            cleared["reversal"],
         ),
-        ("none", ["service:sshd", "systemd:system/nginx.service"], "command"),
-        "update reemplaza isolation, recursos y reversión",
-    )
-    cleared = repo.update_ticket(
-        conn, scoped["code"], resources=[], reversal=None
-    )
-    h.eq(
-        (cleared["resources"], cleared["reversal"]),
-        ([], None),
-        "update puede vaciar recursos y reversión",
+        ("none", ["service:sshd", "systemd:system/nginx.service"], "command", [], None),
+        "update reemplaza y también puede vaciar isolation, recursos y reversión",
     )
     h.raises(
         domain.ValidationError,
@@ -719,6 +715,70 @@ def run(h: Harness) -> None:
         note="fin del escenario de autorización",
         actor="usuario",
         actor_type="usuario",
+    )
+
+    # ── Revisión especial de rutas sensibles ────────────────────────────
+    h.eq(
+        (
+            domain.requires_review(["ticketlib/domain.py"]),
+            domain.requires_review(["ticketlib/guard/policy.py"]),
+            domain.requires_review([".opencode/agents/worker-high.md"]),
+            domain.requires_review(["tests/coverage_gate.py"]),
+            domain.requires_review(["ticketlib/*.py"]),
+            domain.requires_review(["commands/tickets.py"]),
+        ),
+        (True, True, True, True, True, False),
+        "requires_review detecta exactos, prefijos, globs y no sensibles",
+    )
+    sensitive = repo.create_ticket(
+        conn,
+        title="Sensible sin revisar",
+        isolation="none",
+        paths=["ticketlib/guard/policy.py"],
+    )
+    repo.claim_ticket(conn, sensitive["code"], agent="opencode")
+    h.raises(
+        domain.PermissionDenied,
+        lambda: workflow.review_ticket(
+            conn, sensitive["code"], "revisado", actor_type="agente"
+        ),
+        "solo el usuario puede revisar",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: workflow.review_ticket(conn, sensitive["code"], "  "),
+        "la revisión exige motivo",
+    )
+    before = workflow.review_active(conn, sensitive)
+    repo.transition(
+        conn, sensitive["code"], "completado", note="listo", actor="opencode"
+    )
+    h.raises(
+        domain.TransitionError,
+        lambda: workflow.transition(
+            conn, sensitive["code"], "verificado", note="tests"
+        ),
+        "sin revisión el ticket sensible no pasa a verificado",
+    )
+    reviewed = workflow.review_ticket(
+        conn, sensitive["code"], "revisado por el usuario"
+    )
+    h.ok(
+        not before
+        and workflow.review_active(conn, reviewed)
+        and any(
+            event["action"] == "revisar"
+            and event["note"] == "revisado por el usuario"
+            for event in reviewed["events"]
+        ),
+        "review_active pasa de falso a verdadero y deja evento",
+    )
+    h.eq(
+        workflow.transition(
+            conn, sensitive["code"], "verificado", note="tests"
+        )["status"],
+        "verificado",
+        "con revisión el ticket sensible sí pasa a verificado",
     )
 
     # ── complete live: exige commit o external enlazado ────────────────

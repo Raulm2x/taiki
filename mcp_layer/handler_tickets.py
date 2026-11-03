@@ -191,6 +191,7 @@ def _handle_list(
             item["risk"] = domain.risk_for(
                 row.get("paths"), row.get("resources")
             )
+            item["requires_review"] = domain.requires_review(row.get("paths"))
             if not detail:
                 item["isolation"] = row.get("isolation")
     return {
@@ -245,6 +246,7 @@ def _handle_get(
         ticket["risk"] = domain.risk_for(
             ticket.get("paths"), ticket.get("resources")
         )
+        ticket["requires_review"] = domain.requires_review(ticket.get("paths"))
     return ticket
 
 

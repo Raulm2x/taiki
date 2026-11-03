@@ -20,6 +20,7 @@ from ..domain import (
     TransitionError,
     ValidationError,
     clean_isolation,
+    requires_review,
 )
 from ..gitutil import resolve_commit
 from ..util import (
@@ -30,7 +31,7 @@ from ..util import (
     normalize_code,
     now,
 )
-from .common import UNSET, event, row_by_code
+from .common import UNSET, _decode_list, event, row_by_code
 from .relations import link_ticket
 from .queries import get_ticket
 
@@ -142,6 +143,19 @@ def transition(
         raise ValidationError(
             "Marcar un ticket como 'verificado' requiere evidencia en 'note' "
             "(tests, CI, revisión)"
+        )
+
+    if (
+        status == "verificado"
+        and requires_review(_decode_list(row["paths"]))
+        and not review_active(
+            conn, {"id": row["id"], "started_at": row["started_at"]}
+        )
+    ):
+        raise TransitionError(
+            f"{row['code']} toca rutas sensibles y necesita revisión del "
+            f"usuario: ejecuta `taiki review {row['code']} --why ...` antes "
+            "de marcarlo como 'verificado'."
         )
 
     if status in ("completado", "verificado", "confirmado"):
@@ -427,6 +441,57 @@ def authorization_active(
 
     Sin ``started_at`` (ticket aún no reclamado) vale cualquier autorización.
     """
+    return _user_event_active(conn, ticket, "autorizar")
+
+
+def review_ticket(
+    conn: sqlite3.Connection,
+    code: Any,
+    why: str | None,
+    actor: str = "usuario",
+    actor_type: str = "usuario",
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """Registra la revisión del usuario para un ticket sensible.
+
+    No cambia el estado: deja un evento ``revisar`` que ``transition`` exige
+    antes de pasar a ``verificado``. Los agentes no pueden revisar.
+    """
+    if actor_type != "usuario":
+        raise PermissionDenied(
+            "Solo el usuario puede revisar un ticket sensible; "
+            "un agente debe pedirlo con `taiki review T-XXXX --why ...`."
+        )
+    reason = (why or "").strip()
+    if not reason:
+        raise ValidationError("La revisión necesita un motivo (--why)")
+    row = row_by_code(conn, code)
+    with db.tx(conn):
+        event(
+            conn,
+            row["id"],
+            "revisar",
+            actor,
+            actor_type,
+            session_id,
+            row["status"],
+            row["status"],
+            reason,
+        )
+    return get_ticket(conn, code)
+
+
+def review_active(conn: sqlite3.Connection, ticket: Any) -> bool:
+    """¿Hay una revisión del usuario posterior al inicio del ticket?
+
+    Sin ``started_at`` (ticket aún no reclamado) vale cualquier revisión.
+    """
+    return _user_event_active(conn, ticket, "revisar")
+
+
+def _user_event_active(
+    conn: sqlite3.Connection, ticket: Any, action: str
+) -> bool:
     if isinstance(ticket, dict):
         ticket_id = ticket.get("id")
         started = ticket.get("started_at")
@@ -437,10 +502,10 @@ def authorization_active(
         row = row_by_code(conn, ticket)
         ticket_id, started = row["id"], row["started_at"]
     sql = (
-        "SELECT 1 FROM events WHERE ticket_id = ? AND action = 'autorizar' "
+        "SELECT 1 FROM events WHERE ticket_id = ? AND action = ? "
         "AND actor_type = 'usuario'"
     )
-    params: list[Any] = [ticket_id]
+    params: list[Any] = [ticket_id, action]
     if started:
         sql += " AND ts >= ?"
         params.append(started)
