@@ -476,6 +476,7 @@ def merge(
             capture_output=True,
             text=True,
             env=test_env,
+            stdin=subprocess.DEVNULL,
         )
         tested = True
         if result.returncode != 0:

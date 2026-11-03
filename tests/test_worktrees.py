@@ -6,8 +6,11 @@ import argparse
 import contextlib
 import io
 import json
+import os
 import shutil
 import subprocess
+import sys
+import threading
 from pathlib import Path
 
 from commands.tickets import cmd_claim
@@ -35,6 +38,47 @@ def _commit(repo_dir: Path, message: str = "init") -> None:
         check=True,
         capture_output=True,
     )
+
+
+def _merge_reads_stdin(
+    root: Path, path: Path, seconds: float = 5.0
+) -> tuple[bool, dict]:
+    """``merge`` con un ``test_cmd`` que lee stdin no se cuelga.
+
+    El stdin del test se sustituye por una tubería sin datos: sin ``DEVNULL``
+    el comando del gate se queda leyendo y el hilo no termina. Al cerrar la
+    tubería llega EOF, así que la suite nunca se cuelga esperando al hijo.
+    """
+    gate = root.parent / "gate_stdin.py"
+    gate.write_text(
+        "import sys\nsys.stdin.read()\nprint('gate-ok')\n", encoding="utf-8"
+    )
+    read_fd, write_fd = os.pipe()
+    saved_fd = os.dup(0)
+    os.dup2(read_fd, 0)
+    os.close(read_fd)
+    box: dict[str, object] = {}
+
+    def target() -> None:
+        try:
+            box["merged"] = worktree.merge(
+                root, path, delete=True, test_cmd=[sys.executable, str(gate)]
+            )
+        except BaseException as exc:  # se reporta como fallo del test
+            box["error"] = exc
+
+    thread = threading.Thread(target=target, daemon=True)
+    try:
+        thread.start()
+        thread.join(seconds)
+        finished = not thread.is_alive()
+    finally:
+        os.close(write_fd)
+        os.dup2(saved_fd, 0)
+        os.close(saved_fd)
+    thread.join(seconds)
+    merged = box.get("merged")
+    return finished and "error" not in box, merged if isinstance(merged, dict) else {}
 
 
 def run(h: Harness) -> None:
@@ -389,7 +433,7 @@ def run(h: Harness) -> None:
         "merge exige el checkout principal limpio",
     )
     _git(root, "checkout", "--", "src/app.py")
-    merged = worktree.merge(root, merge_path, delete=True)
+    gate_ok, merged = _merge_reads_stdin(root, merge_path)
     registered = [
         Path(item["path"]).resolve() for item in worktree.list_worktrees(root)
     ]
@@ -401,8 +445,13 @@ def run(h: Harness) -> None:
         "merge ff-only integra el cambio y retira el worktree (dir y registro)",
     )
     h.ok(
-        merged["branch"] not in _git(root, "branch", "--format=%(refname:short)").split(),
+        merged.get("branch")
+        not in _git(root, "branch", "--format=%(refname:short)").split(),
         "merge --delete elimina la rama",
+    )
+    h.ok(
+        gate_ok,
+        "merge cierra el stdin del gate: un test_cmd que lee stdin no cuelga",
     )
 
     # ── merge --delete: si la retirada falla, no se miente ───────────────

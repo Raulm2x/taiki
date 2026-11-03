@@ -840,7 +840,11 @@ def run(
     if not no_verify:
         command = _verify_command(verify_cmd)
         result = subprocess.run(
-            command, cwd=str(base), capture_output=True, text=True
+            command,
+            cwd=str(base),
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
         )
         if result.returncode != 0:
             output = (result.stdout + result.stderr).strip().splitlines()
