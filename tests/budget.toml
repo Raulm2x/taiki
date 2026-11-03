@@ -74,23 +74,27 @@
 # revisión única, a partir de aquí podar.
 # T-0060.09 seguridad: riesgo/autorización/guard; +0.4s; medido 14.0s con
 # load 2.4; revisión única, a partir de aquí podar.
-max_seconds = 14.4
-baseline_checks = 2041
-# Revisión P4: margen estrecho para que cualquier adición vuelva a avisar.
-checks_tolerance = 12
+# T-0062.05 cierre de la poda: 1584 checks y 9.08s de pared con la suite en
+# frío (la suma de módulos que compara el gate es menor). Se cachea el parseo
+# de higiene (una lectura/AST por fichero) y el parser de argparse, que se
+# reconstruía en cada invocación del CLI en los tests (~2s de la suite). El
+# techo baja con la suite: 8 de tolerancia y margen de +0.5s local y CI. No se
+# tocan los umbrales de cobertura.
+max_seconds = 9.5
+baseline_checks = 1584
+# Margen estrecho para que cualquier adición vuelva a avisar.
+checks_tolerance = 8
 
 [module]
-max_seconds = 1.4
+# El módulo más lento es test_release (1.11s medido); +0.2s de margen.
+max_seconds = 1.3
 
 # Perfil de CI: los runners compartidos son más lentos y no deben fallar por
 # ruido. Se aplica con CI=true (o TAIKI_CI=true) y cada valor se puede
 # sobrescribir con TAIKI_SUITE_BUDGET / TAIKI_MODULE_BUDGET.
 [ci.suite]
-# T-0060.05 ledger de sistema: +0.25s de test_sys; medido 13.6s con load 3.2;
-# revisión única, a partir de aquí podar.
-# T-0060.09 seguridad: riesgo/autorización/guard; +0.4s; medido 14.0s con
-# load 2.4; revisión única, a partir de aquí podar.
-max_seconds = 14.8
+# T-0062.05: margen de +0.5s sobre el presupuesto local.
+max_seconds = 10.0
 
 [ci.module]
-max_seconds = 1.5
+max_seconds = 1.4

@@ -7,6 +7,7 @@ entrada/salida. Los lotes de confirmación se agrupan en un check por caso.
 from __future__ import annotations
 
 import contextlib
+import functools
 import io
 import json
 import os
@@ -14,11 +15,17 @@ import subprocess
 from pathlib import Path
 
 import cli
+import parser as cli_parser
 from ticketlib import db, domain, repo
 from tui import actions as tui_actions
 from tests.support import Harness
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# ``parse_args`` reconstruye el parser de argparse en cada invocación (≈40
+# subcomandos). Es puro y reutilizable, así que la suite lo cachea una vez por
+# proceso: los módulos CLI posteriores comparten proceso y heredan la caché.
+cli_parser.build_parser = functools.cache(cli_parser.build_parser)
 
 
 def _ok(h: Harness, *condiciones: tuple[bool, str]) -> None:
