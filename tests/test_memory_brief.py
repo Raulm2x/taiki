@@ -289,6 +289,16 @@ def run(h: Harness) -> None:
         ticket_kinds=["bug"],
         paths=["src/a.py", "src/b.py"],
     )
+    long_title = "T" * 130
+    add_memory(
+        conn,
+        title=long_title,
+        content="Título largo.",
+        kind="fact",
+        key="titulo-largo",
+        scope="project",
+        source="user",
+    )
     index_text = render_brief(conn, {"brief_mode": "index"}, budget=5000)["text"]
     full_text = render_brief(conn, {"brief_mode": "full"}, budget=5000)["text"]
     h.ok(
@@ -298,6 +308,8 @@ def run(h: Harness) -> None:
         and "key=rama-integracion" in index_text
         and "tickets=bug" in index_text
         and "paths=src/a.py" in index_text
+        and long_title[:80] in index_text
+        and long_title not in index_text
         and "develop integra con --ff-only." not in index_text
         and "develop integra con --ff-only." in full_text,
         "brief_mode=index lista código, título y disparadores sin contenido destilado; "

@@ -26,6 +26,7 @@ _SECTION_TITLES = {
     "warnings": "Avisos",
 }
 _SECTION_CHOICES = ("project", "user", "all")
+_TITLE_CHARS = 80
 _KEY_CHARS = 40
 _TICKET_KINDS_CHARS = 60
 _PATH_CHARS = 60
@@ -87,7 +88,7 @@ def index_line(memory: dict[str, Any]) -> str:
     """
     code = escape_text(memory.get("code") or "M-?")
     kind = escape_text(memory.get("kind") or "fact")
-    title = escape_text(memory.get("title") or "")
+    title = _clip(memory.get("title") or "", _TITLE_CHARS)
     parts = [f"- **{code}** · {kind} · {title}"]
     key = _clip(memory.get("key") or "", _KEY_CHARS)
     if key:
