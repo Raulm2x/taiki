@@ -60,6 +60,9 @@ def run(h: Harness) -> None:
     conductor, conductor_body = _frontmatter("conductor.md")
     worker, worker_body = _frontmatter("worker.md")
     reviewer, reviewer_body = _frontmatter("reviewer.md")
+    worker_shell = [
+        item for item in worker["permissions"] if item.get("action") == "shell"
+    ]
 
     h.ok(
         conductor["mode"] == "primary"
@@ -104,8 +107,10 @@ def run(h: Harness) -> None:
         and _rule(worker, "shell", "git merge*") == "deny"
         and _rule(worker, "shell", "taiki confirm*") == "deny"
         and _rule(worker, "shell", "taiki worktree merge*") == "deny"
-        and _rule(worker, "shell", "*>*") == "deny"
-        and _rule(worker, "shell", "*2>/dev/null*") == "allow"
+        and _rule(worker, "shell", "*2>/dev/null*") is None
+        and worker_shell[-1].get("resource") == "*>*"
+        and worker_shell[-1].get("effect") == "deny"
+        and not any("2>" in item["resource"] for item in worker_shell)
         and all(
             _rule(_frontmatter(f"{name}.md")[0], "shell", rule) == "deny"
             for name in ("worker", "worker-low", "worker-medium", "worker-high")

@@ -245,9 +245,13 @@ Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
 - **Stagea rutas concretas** (`git add <ruta>`). Si otra sesión tiene un ticket
   activo, el guard bloquea `git add -A`, `git add .`, `git commit -a`,
   `git stash`, `git reset`, `git clean` y `git checkout -- .`.
-- **Allowlist de shell**: no es un sandbox: se evalúa por segmento. Cerrados
-  `>`/`>>`, `find -exec/-delete/-ok/-fprintf/-fls`, `sort -o` y `uniq IN OUT`;
-  permitidos `2>/dev/null`, `2>&1`, tuberías y `&&` entre comandos permitidos.
+- **Allowlist de shell**: no es un sandbox: se evalúa por segmento. Toda
+  redirección queda denegada, incluida `2>` (`2>/dev/null`, `2>&1`); también
+  `find -exec/-delete/-ok/-fprintf/-fls`, `sort -o` y `uniq IN OUT`. No hay
+  atajos para `2>`: cualquier allow que lo contenga reabre la escritura, porque
+  `echo x > fichero 2>&1` casa con el patrón y la última regla gana. Se
+  mantienen las tuberías y los `&&` entre comandos permitidos. Los workers no
+  silencian stderr con redirección: si lo necesitan, lo pide el conductor.
   La frontera real es el guard de tickets y la revisión del conductor.
   (Evidencia: taiki-sys T-0014/T-0015, commits f1e51c7 y 7ceddd9.)
 - **Borrado seguro**: los subagentes no borran por su cuenta. Si un worker

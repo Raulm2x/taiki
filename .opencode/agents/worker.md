@@ -288,12 +288,6 @@ permissions:
   - action: shell
     resource: "*>*"
     effect: deny
-  - action: shell
-    resource: "*2>/dev/null*"
-    effect: allow
-  - action: shell
-    resource: "*2>&1*"
-    effect: allow
 ---
 
 Implementas **una** tarea de Taiki. No planificas la épica, no lanzas
