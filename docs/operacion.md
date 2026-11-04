@@ -140,6 +140,13 @@ Dentro de la lista blanca de los workers:
   staging masivo (`git add -A`, `git add .`, `git commit -a`). El conductor
   conserva la excepción consciente de `git add .opencode/*`.
 
+La allowlist se evalúa **por segmento** y no es un sandbox: se cierran las
+redirecciones de escritura (`>`/`>>`), `find -exec/-delete/-ok/-fprintf/-fls`,
+`sort -o` y `uniq IN OUT` (se escribe sin redirección, con entrada por stdin),
+mientras que se permiten las redirecciones inocuas de los segmentos de
+inspección (`2>/dev/null`, `2>&1`), las tuberías y los `&&` entre comandos
+permitidos. La frontera real es el guard de tickets y la revisión del conductor.
+
 El límite de confianza es explícito: estas reglas evitan prompts repetidos y
 reducen el daño accidental, **no son un sandbox de seguridad**. La garantía
 sigue siendo el guard de tickets, la revisión del conductor y los gates.

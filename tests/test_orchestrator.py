@@ -104,6 +104,13 @@ def run(h: Harness) -> None:
         and _rule(worker, "shell", "git merge*") == "deny"
         and _rule(worker, "shell", "taiki confirm*") == "deny"
         and _rule(worker, "shell", "taiki worktree merge*") == "deny"
+        and _rule(worker, "shell", "*>*") == "deny"
+        and _rule(worker, "shell", "*2>/dev/null*") == "allow"
+        and all(
+            _rule(_frontmatter(f"{name}.md")[0], "shell", rule) == "deny"
+            for name in ("worker", "worker-low", "worker-medium", "worker-high")
+            for rule in ("find * -exec*", "find * -delete*", "sort * -o*")
+        )
         and "Borrado seguro" in worker_body
         and "OK al conductor" in worker_body,
         "el worker edita sin lanzar subagentes y pide OK para borrar",

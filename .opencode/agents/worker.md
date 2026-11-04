@@ -264,6 +264,36 @@ permissions:
   - action: shell
     resource: "sh *"
     effect: deny
+  - action: shell
+    resource: "find * -exec*"
+    effect: deny
+  - action: shell
+    resource: "find * -delete*"
+    effect: deny
+  - action: shell
+    resource: "find * -ok*"
+    effect: deny
+  - action: shell
+    resource: "find * -fprintf*"
+    effect: deny
+  - action: shell
+    resource: "find * -fls*"
+    effect: deny
+  - action: shell
+    resource: "sort -o*"
+    effect: deny
+  - action: shell
+    resource: "sort * -o*"
+    effect: deny
+  - action: shell
+    resource: "*>*"
+    effect: deny
+  - action: shell
+    resource: "*2>/dev/null*"
+    effect: allow
+  - action: shell
+    resource: "*2>&1*"
+    effect: allow
 ---
 
 Implementas **una** tarea de Taiki. No planificas la épica, no lanzas
