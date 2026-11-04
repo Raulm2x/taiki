@@ -148,7 +148,12 @@ que lo contenga reabre la escritura, porque `echo x > fichero 2>&1` casa con el
 patrón y la última regla gana. Se mantienen las tuberías y los `&&` entre
 comandos permitidos. Los workers no silencian stderr con redirección: si lo
 necesitan, lo pide el conductor. La frontera real es el guard de tickets y la
-revisión del conductor.
+revisión del conductor. Los workers pueden verificar e inspeccionar en
+read-only (`python3 tests/run.py`, validadores como `bash -n`, `fish -n`,
+`desktop-file-validate` y `systemd-analyze verify`, utilidades de texto como
+`sort`, `cut`, `tr`, `column` y `jq`, además de `ss`, `pacman -Q` y
+`systemctl --user status/list-timers/is-*`); sigue prohibido lo mutante y la
+allowlist no es un sandbox.
 
 El límite de confianza es explícito: estas reglas evitan prompts repetidos y
 reducen el daño accidental, **no son un sandbox de seguridad**. La garantía

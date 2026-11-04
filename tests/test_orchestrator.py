@@ -111,6 +111,10 @@ def run(h: Harness) -> None:
         and worker_shell[-1].get("resource") == "*>*"
         and worker_shell[-1].get("effect") == "deny"
         and not any("2>" in item["resource"] for item in worker_shell)
+        and _rule(worker, "shell", "python3 tests/run.py*") == "allow"
+        and _rule(worker, "shell", "bash -n *") == "allow"
+        and _rule(worker, "shell", "sort *") == "allow"
+        and _rule(worker, "shell", "systemctl --user status*") == "allow"
         and all(
             _rule(_frontmatter(f"{name}.md")[0], "shell", rule) == "deny"
             for name in ("worker", "worker-low", "worker-medium", "worker-high")

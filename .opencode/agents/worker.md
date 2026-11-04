@@ -265,6 +265,81 @@ permissions:
     resource: "sh *"
     effect: deny
   - action: shell
+    resource: "bash -n *"
+    effect: allow
+  - action: shell
+    resource: "fish -n *"
+    effect: allow
+  - action: shell
+    resource: "desktop-file-validate *"
+    effect: allow
+  - action: shell
+    resource: "systemd-analyze verify *"
+    effect: allow
+  - action: shell
+    resource: "python3 tests/run.py*"
+    effect: allow
+  - action: shell
+    resource: "sort *"
+    effect: allow
+  - action: shell
+    resource: "cut *"
+    effect: allow
+  - action: shell
+    resource: "tr *"
+    effect: allow
+  - action: shell
+    resource: "column *"
+    effect: allow
+  - action: shell
+    resource: "jq *"
+    effect: allow
+  - action: shell
+    resource: "basename *"
+    effect: allow
+  - action: shell
+    resource: "dirname *"
+    effect: allow
+  - action: shell
+    resource: "realpath *"
+    effect: allow
+  - action: shell
+    resource: "readlink *"
+    effect: allow
+  - action: shell
+    resource: "du *"
+    effect: allow
+  - action: shell
+    resource: "df *"
+    effect: allow
+  - action: shell
+    resource: "date *"
+    effect: allow
+  - action: shell
+    resource: "command -v *"
+    effect: allow
+  - action: shell
+    resource: "which *"
+    effect: allow
+  - action: shell
+    resource: "ss *"
+    effect: allow
+  - action: shell
+    resource: "pacman -Q*"
+    effect: allow
+  - action: shell
+    resource: "systemctl --user status*"
+    effect: allow
+  - action: shell
+    resource: "systemctl --user list-timers*"
+    effect: allow
+  - action: shell
+    resource: "systemctl --user is-enabled*"
+    effect: allow
+  - action: shell
+    resource: "systemctl --user is-active*"
+    effect: allow
+  - action: shell
     resource: "find * -exec*"
     effect: deny
   - action: shell

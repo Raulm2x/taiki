@@ -253,6 +253,12 @@ Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
   mantienen las tuberías y los `&&` entre comandos permitidos. Los workers no
   silencian stderr con redirección: si lo necesitan, lo pide el conductor.
   La frontera real es el guard de tickets y la revisión del conductor.
+  Los workers pueden verificar e inspeccionar en read-only (`python3
+  tests/run.py`, validadores como `bash -n`, `fish -n`,
+  `desktop-file-validate` y `systemd-analyze verify`, utilidades de texto como
+  `sort`, `cut`, `tr`, `column` y `jq`, además de `ss`, `pacman -Q` y
+  `systemctl --user status/list-timers/is-*`); sigue prohibido lo mutante y la
+  allowlist no es un sandbox.
   (Evidencia: taiki-sys T-0014/T-0015, commits f1e51c7 y 7ceddd9.)
 - **Borrado seguro**: los subagentes no borran por su cuenta. Si un worker
   necesita eliminar algo, publica un `checkpoint`/`comment` con las rutas
