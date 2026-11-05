@@ -31,6 +31,7 @@ __all__ = [
     "create_ticket",
     "detach_tickets",
     "fill_gaps",
+    "reorg_apply",
     "reorg_plan",
     "renumber_children",
     "renumber_plan",
@@ -677,6 +678,209 @@ def reorg_plan(
     if action == "promote":
         return _plan_promote(conn, rows)
     return _plan_demote(conn, rows, children_to, parent)
+
+
+_REORG_LINK_KINDS = ("depende", "relacionado")
+
+
+def _reorg_parent_id(
+    conn: sqlite3.Connection, parent_code: str | None
+) -> int | None:
+    if parent_code is None:
+        return None
+    return row_by_code(conn, parent_code)["id"]
+
+
+def _reorg_rewrite_references(
+    conn: sqlite3.Connection, old_code: str, new_code: str
+) -> dict[str, int]:
+    """Reapunta referencias estructuradas y limpia duplicados obsoletos.
+
+    ``UPDATE OR IGNORE`` deja intacta la fila que choca con una referencia
+    ya existente al código nuevo; después se borra el resto viejo para no
+    reventar por ``UNIQUE`` ni dejar referencias huérfanas.
+    """
+    marks = ",".join("?" for _ in _REORG_LINK_KINDS)
+    links = conn.execute(
+        f"UPDATE OR IGNORE links SET ref = ? "
+        f"WHERE kind IN ({marks}) AND ref = ?",
+        (new_code, *_REORG_LINK_KINDS, old_code),
+    ).rowcount
+    leftovers = conn.execute(
+        f"DELETE FROM links WHERE kind IN ({marks}) AND ref = ?",
+        (*_REORG_LINK_KINDS, old_code),
+    ).rowcount
+    evidence = conn.execute(
+        "UPDATE OR IGNORE memory_evidence SET ref = ? "
+        "WHERE kind = 'ticket' AND ref = ?",
+        (new_code, old_code),
+    ).rowcount
+    evidence += conn.execute(
+        "DELETE FROM memory_evidence WHERE kind = 'ticket' AND ref = ?",
+        (old_code,),
+    ).rowcount
+    memories = conn.execute(
+        "UPDATE memories SET ticket_id = ? WHERE ticket_id = ?",
+        (new_code, old_code),
+    ).rowcount
+    return {
+        "links": links + leftovers,
+        "evidence": evidence,
+        "memories": memories,
+    }
+
+
+def reorg_apply(
+    conn: sqlite3.Connection,
+    action: str,
+    codes: Any = None,
+    parent: Any = None,
+    children_to: Any = UNSET,
+    include_adopted: bool = False,
+    renumber: bool | None = None,
+    actor: str = "agente",
+    actor_type: str = "agente",
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """Aplica un plan de :func:`reorg_plan` en una transacción atómica.
+
+    Actualiza códigos y padres, reapunta las referencias estructuradas
+    (``links``, ``memory_evidence`` y ``memories.ticket_id``) y registra los
+    eventos de renumerado y cambio de padre. Los eventos, comentarios y
+    enlaces históricos (``kind='otro'``) no se reescriben. Si algo falla, el
+    rollback revierte todo y el error se propaga.
+    """
+    plan = reorg_plan(
+        conn,
+        action,
+        codes,
+        parent=parent,
+        children_to=children_to,
+        include_adopted=include_adopted,
+        renumber=renumber,
+    )
+    items = plan["items"]
+    references = {"links": 0, "evidence": 0, "memories": 0}
+    if not items:
+        return {**plan, "references": references, "events": 0}
+
+    events = 0
+    ts = now()
+    with db.tx(conn):
+        # Parent anterior y estado real: se captura antes de tocar códigos.
+        previous = {
+            item["id"]: conn.execute(
+                "SELECT parent_id, status FROM tickets WHERE id = ?",
+                (item["id"],),
+            ).fetchone()
+            for item in items
+        }
+        old_parent_codes = {
+            parent_id: conn.execute(
+                "SELECT code FROM tickets WHERE id = ?", (parent_id,)
+            ).fetchone()["code"]
+            for parent_id in {
+                row["parent_id"]
+                for row in previous.values()
+                if row["parent_id"] is not None
+            }
+        }
+        parent_ids = {
+            item["id"]: _reorg_parent_id(conn, item["parent_code"])
+            for item in items
+        }
+
+        # (a) Renombrado en dos fases: un código temporal evita colisiones
+        # UNIQUE cuando los códigos finales chocan entre sí o con los viejos.
+        renamed = [
+            item for item in items if item["new_code"] != item["code"]
+        ]
+        for item in renamed:
+            conn.execute(
+                "UPDATE tickets SET code = ? WHERE id = ?",
+                (f"__reorg__{item['id']}__", item["id"]),
+            )
+        for item in renamed:
+            conn.execute(
+                "UPDATE tickets SET code = ? WHERE id = ?",
+                (item["new_code"], item["id"]),
+            )
+
+        # (b) Parent_id resuelto desde el padre destino del plan.
+        for item in items:
+            conn.execute(
+                "UPDATE tickets SET parent_id = ? WHERE id = ?",
+                (parent_ids[item["id"]], item["id"]),
+            )
+
+        # (c) Solo referencias estructuradas; lo histórico se conserva.
+        for item in renamed:
+            touched = _reorg_rewrite_references(
+                conn, item["code"], item["new_code"]
+            )
+            for key, value in touched.items():
+                references[key] += value
+
+        # (d) Eventos: renumerado y cambios reales de padre.
+        for item in items:
+            row = previous[item["id"]]
+            status = item["status"]
+            if item["new_code"] != item["code"]:
+                event(
+                    conn,
+                    item["id"],
+                    "renumerar",
+                    actor,
+                    actor_type,
+                    session_id,
+                    status,
+                    status,
+                    f"{item['code']} → {item['new_code']}",
+                )
+                events += 1
+            old_parent = row["parent_id"]
+            new_parent = parent_ids[item["id"]]
+            if old_parent != new_parent:
+                if new_parent is None:
+                    event(
+                        conn,
+                        item["id"],
+                        "desvincular",
+                        actor,
+                        actor_type,
+                        session_id,
+                        status,
+                        status,
+                        f"desde {old_parent_codes.get(old_parent, old_parent)}",
+                    )
+                else:
+                    event(
+                        conn,
+                        item["id"],
+                        "vincular",
+                        actor,
+                        actor_type,
+                        session_id,
+                        status,
+                        status,
+                        f"bajo {item['parent_code']}",
+                    )
+                events += 1
+
+        # (e) Solo cambian code, parent_id y updated_at.
+        for item in items:
+            conn.execute(
+                "UPDATE tickets SET updated_at = ? WHERE id = ?",
+                (ts, item["id"]),
+            )
+
+    return {
+        "action": plan["action"],
+        "items": items,
+        "warnings": plan["warnings"],
+        "references": references,
+        "events": events,
+    }
 
 
 def renumber_plan(conn: sqlite3.Connection) -> list[dict[str, Any]]:
