@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from .. import db
@@ -31,6 +33,8 @@ __all__ = [
     "create_ticket",
     "detach_tickets",
     "fill_gaps",
+    "purge_apply",
+    "purge_plan",
     "reorg_apply",
     "reorg_plan",
     "renumber_children",
@@ -1088,3 +1092,222 @@ def fill_gaps(
                 f"Hueco de numeración {item['code']} cubierto",
             )
     return plan
+
+
+# ── Purga de tickets cancelados ──────────────────────────────────────────
+
+PURGE_STATUS = "cancelado"
+_PURGE_ROOT = re.compile(r"^T-(\d+)$")
+
+
+def _purge_rows(
+    conn: sqlite3.Connection, codes: Any
+) -> list[sqlite3.Row]:
+    """Filas únicas de los códigos indicados, en orden de id."""
+    if isinstance(codes, str):
+        codes = [codes]
+    codes = list(codes or [])
+    if not codes:
+        raise ValidationError("Indica al menos un ticket para purgar")
+    rows: dict[int, sqlite3.Row] = {}
+    for code in codes:
+        row = row_by_code(conn, code)
+        rows[row["id"]] = row
+    return [rows[key] for key in sorted(rows)]
+
+
+def _purge_reasons(
+    conn: sqlite3.Connection, row: sqlite3.Row
+) -> list[str]:
+    """Motivos por los que un ticket no se puede purgar (vacío si se puede)."""
+    reasons: list[str] = []
+    if row["status"] != PURGE_STATUS:
+        reasons.append(
+            f"{row['code']}: status '{row['status']}' no es {PURGE_STATUS}; "
+            "cancélalo antes de purgarlo"
+        )
+    children = conn.execute(
+        "SELECT code FROM tickets WHERE parent_id = ? ORDER BY code",
+        (row["id"],),
+    ).fetchall()
+    if children:
+        reasons.append(
+            f"{row['code']}: tiene tareas ({', '.join(child['code'] for child in children)}); "
+            "purgarlas o moverlas primero"
+        )
+    link_kinds = [
+        link["kind"]
+        for link in conn.execute(
+            "SELECT DISTINCT kind FROM links WHERE ref = ?", (row["code"],)
+        )
+    ]
+    if link_kinds:
+        reasons.append(
+            f"{row['code']}: referenciado por enlaces ({', '.join(link_kinds)}); "
+            "quita la referencia antes de purgarlo"
+        )
+    evidence = conn.execute(
+        "SELECT COUNT(*) FROM memory_evidence "
+        "WHERE kind = 'ticket' AND ref = ?",
+        (row["code"],),
+    ).fetchone()[0]
+    if evidence:
+        reasons.append(
+            f"{row['code']}: es evidencia de {evidence} memoria(s); "
+            "actualiza la memoria antes de purgarlo"
+        )
+    memories = conn.execute(
+        "SELECT COUNT(*) FROM memories WHERE ticket_id = ?", (row["code"],)
+    ).fetchone()[0]
+    if memories:
+        reasons.append(
+            f"{row['code']}: es ticket_id de {memories} memoria(s); "
+            "desvincula la memoria antes de purgarlo"
+        )
+    return reasons
+
+
+def _purge_counter(
+    conn: sqlite3.Connection, rows: list[sqlite3.Row]
+) -> tuple[dict[str, int], list[str]]:
+    """Proyección del contador: solo baja al liberar un sufijo de raíces."""
+    before = int(db.meta_get(conn, TICKET_COUNTER, "1") or "1")
+    counter = {"before": before, "after": before}
+    released = sorted(
+        int(match.group(1))
+        for row in rows
+        if (match := _PURGE_ROOT.match(row["code"]))
+    )
+    if not released:
+        return counter, []
+    purged_ids = {row["id"] for row in rows}
+    remaining = [
+        int(match.group(1))
+        for row in conn.execute("SELECT id, code FROM tickets")
+        if row["id"] not in purged_ids
+        and (match := _PURGE_ROOT.match(row["code"]))
+    ]
+    highest = max(remaining, default=0)
+    if released[0] > highest:
+        counter["after"] = min(before, released[0])
+        return counter, []
+    return counter, [
+        "El contador no baja: quedan raíces por encima del sufijo liberado; "
+        "revisa los huecos con 'taiki repair-gaps'"
+    ]
+
+
+def purge_plan(
+    conn: sqlite3.Connection, codes: Any
+) -> dict[str, Any]:
+    """Plan puro de purga: no escribe y rechaza cualquier referencia viva.
+
+    Solo admite tickets ``cancelado`` sin hijos, sin enlaces que apunten a su
+    código y sin memorias o evidencias que lo referencien. Devuelve ``items``,
+    la proyección del contador y ``warnings``.
+    """
+    rows = _purge_rows(conn, codes)
+    failures: list[str] = []
+    for row in rows:
+        failures.extend(_purge_reasons(conn, row))
+    if failures:
+        raise ValidationError(
+            "No se puede purgar:\n- " + "\n- ".join(failures)
+        )
+    counter, warnings = _purge_counter(conn, rows)
+    items = [
+        {
+            "id": row["id"],
+            "code": row["code"],
+            "title": row["title"],
+            "status": row["status"],
+        }
+        for row in rows
+    ]
+    return {"items": items, "counter": counter, "warnings": warnings}
+
+
+def _database_file(conn: sqlite3.Connection) -> Path:
+    """Ruta real de la DB principal; ``:memory:`` no se puede respaldar."""
+    rows = conn.execute("PRAGMA database_list").fetchall()
+    raw = next((row[2] for row in rows if row[1] == "main"), "")
+    path = Path(raw).expanduser() if raw else None
+    if path is None or not path.is_file():
+        raise ValidationError(
+            "purge --apply necesita una base de datos en fichero para hacer "
+            "el backup obligatorio; las bases :memory: no se pueden purgar"
+        )
+    return path
+
+
+def _purge_backup(path: Path) -> Path:
+    """Copia consistente de la DB antes de borrar; sin copia no hay purga."""
+    target = (
+        path.parent / "backups" / f"taiki-{datetime.now():%Y%m%d-%H%M%S-%f}.db"
+    )
+    from ..workspace import _copy_database
+
+    try:
+        _copy_database(path, target)
+    except (OSError, sqlite3.Error) as exc:
+        raise ValidationError(
+            f"No se pudo crear el backup en {target}: {exc}. No se purga nada"
+        ) from exc
+    if not target.is_file():
+        raise ValidationError(
+            f"El backup {target} no se creó. No se purga nada"
+        )
+    return target
+
+
+def purge_apply(
+    conn: sqlite3.Connection,
+    codes: Any,
+    actor: str = "usuario",
+    actor_type: str = "usuario",
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """Purga tickets cancelados con backup previo y guardrails.
+
+    Calcula el plan (si algo falla no escribe), copia la DB a
+    ``<dir_db>/backups/taiki-<timestamp>.db`` y borra en una sola transacción
+    el ticket y sus eventos, comentarios, enlaces y etiquetas. Los triggers de
+    FTS limpian el índice; después se comprueba su integridad. El contador solo
+    baja cuando se libera un sufijo de raíces (ver :func:`_purge_counter`).
+    """
+    plan = purge_plan(conn, codes)
+    if not plan["items"]:
+        return {**plan, "backup": None}
+    path = _database_file(conn)
+    backup = _purge_backup(path)
+    ticket_ids = [item["id"] for item in plan["items"]]
+    with db.tx(conn):
+        for ticket_id in ticket_ids:
+            for table in ("events", "comments", "links", "tags"):
+                conn.execute(
+                    f"DELETE FROM {table} WHERE ticket_id = ?", (ticket_id,)
+                )
+            conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
+        conn.execute(
+            "INSERT INTO tickets_fts(tickets_fts) VALUES('integrity-check')"
+        )
+        if plan["counter"]["after"] != plan["counter"]["before"]:
+            db.meta_set(
+                conn, TICKET_COUNTER, str(plan["counter"]["after"])
+            )
+        db.meta_set(
+            conn,
+            "last_purge",
+            json.dumps(
+                {
+                    "ts": now(),
+                    "actor": actor,
+                    "actor_type": actor_type,
+                    "session_id": session_id,
+                    "codes": [item["code"] for item in plan["items"]],
+                    "backup": str(backup),
+                },
+                ensure_ascii=False,
+            ),
+        )
+    return {**plan, "backup": str(backup)}

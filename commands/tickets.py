@@ -280,6 +280,39 @@ def cmd_repair_gaps(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_purge(args: argparse.Namespace) -> int:
+    """Purga tickets cancelados; sin --apply solo simula."""
+    if args.apply and not args.force:
+        raise TicketError(
+            "purge --apply borra tickets: repite con --force para confirmar"
+        )
+    with _conn() as conn:
+        if args.apply:
+            plan = repo.purge_apply(
+                conn,
+                args.codes,
+                actor=args.agent or "usuario",
+                actor_type="agente" if args.agent else "usuario",
+            )
+        else:
+            plan = repo.purge_plan(conn, args.codes)
+    if args.json:
+        print(render.to_json(plan))
+        return 0
+    for item in plan["items"]:
+        print(f"{item['code']}  {item['title']} ({item['status']})")
+    counter = plan.get("counter", {})
+    if counter and counter.get("after") != counter.get("before"):
+        print(f"Contador: {counter['before']} → {counter['after']}")
+    if plan.get("backup"):
+        print(f"Backup: {plan['backup']}")
+    for warning in plan.get("warnings", []):
+        print(f"Aviso: {warning}")
+    if not args.apply:
+        print("(simulación; usa --apply --force para purgar)")
+    return 0
+
+
 def _reorg_plan_args(args: argparse.Namespace) -> dict:
     return {
         "action": "renumber",

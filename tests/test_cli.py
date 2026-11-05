@@ -655,3 +655,63 @@ def run(h: Harness) -> None:
         ),
     )
 
+    # ── Purge por CLI: dry-run, --force y JSON ──────────────────────
+    def cancelado_cli(title: str) -> dict:
+        created = repo.create_ticket(conn, title=title)
+        conn.execute(
+            "UPDATE tickets SET status = 'cancelado' WHERE id = ?",
+            (created["id"],),
+        )
+        conn.commit()
+        return repo.get_ticket(conn, created["code"])
+
+    purga = cancelado_cli("Purga CLI")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        dry_purge = cli.main(["purge", purga["code"]])
+    sigue = repo.get_ticket(conn, purga["code"])
+
+    json_purga = cancelado_cli("Purga CLI json")
+    json_out = io.StringIO()
+    with contextlib.redirect_stdout(json_out):
+        json_exit = cli.main(["purge", json_purga["code"], "--json"])
+    payload = json.loads(json_out.getvalue())
+
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        sin_force = cli.main(["purge", purga["code"], "--apply"])
+    sigue_tras = repo.get_ticket(conn, purga["code"])
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        applied_purge = cli.main(
+            ["purge", purga["code"], "--apply", "--force"]
+        )
+    borrado = conn.execute(
+        "SELECT COUNT(*) FROM tickets WHERE code = ?", (purga["code"],)
+    ).fetchone()[0]
+    _ok(
+        h,
+        (
+            dry_purge == 0
+            and "Purga CLI" in out.getvalue()
+            and sigue["status"] == "cancelado",
+            "purge simula por defecto y muestra el ticket",
+        ),
+        (
+            json_exit == 0
+            and payload["items"][0]["code"] == json_purga["code"]
+            and payload["counter"]["before"] >= payload["counter"]["after"],
+            "purge --json devuelve el plan y el contador",
+        ),
+        (
+            sin_force == 1
+            and "Error:" in err.getvalue()
+            and sigue_tras["id"] == purga["id"],
+            "purge --apply sin --force falla y no borra",
+        ),
+        (
+            applied_purge == 0 and borrado == 0,
+            "purge --apply --force borra el ticket cancelado",
+        ),
+    )
+

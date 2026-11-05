@@ -68,6 +68,7 @@ from commands import (
     cmd_worktree_merge,
     cmd_worktree_remove,
 )
+from commands.tickets import cmd_purge
 from commands.workflow import cmd_authorize, cmd_review
 from ticketlib import domain
 from ticketlib.domain import (
@@ -256,6 +257,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--parent")
     p.set_defaults(func=cmd_new)
+
+    p = sub.add_parser(
+        "purge",
+        help="Purga tickets cancelados con backup (dry-run por defecto)",
+        description="Borra tickets cancelados sin referencias (hijos, "
+        "enlaces, memorias o evidencias) tras copiar la base de datos. "
+        "Simula por defecto; --apply exige --force.",
+    )
+    p.add_argument("codes", nargs="+", help="Tickets cancelados a purgar")
+    p.add_argument(
+        "--apply", action="store_true", help="Ejecuta la purga si hay --force"
+    )
+    p.add_argument(
+        "--force", action="store_true", help="Confirma el borrado con --apply"
+    )
+    p.add_argument("--agent", help="Agente que ejecuta la purga")
+    p.add_argument("--json", action="store_true", help="Emite JSON")
+    p.set_defaults(func=cmd_purge)
 
     p = sub.add_parser(
         "repair-gaps",

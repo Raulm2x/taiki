@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import threading
 import time
+from pathlib import Path
 
 from ticketlib import db, domain, render, repo, workspace
 from ticketlib.store import queries, relations, workflow
@@ -1459,4 +1460,249 @@ def run(h: Harness) -> None:
             "reorg_apply: fallan " + ", ".join(failures),
         )
         rconn.close()
+
+    # ── Purga de cancelados: backup, guardrails y contador ─────────────
+    with h.env(TAIKI_DB=str(h.tmp / "purge.db")):
+        pconn = db.connect()
+        try:
+            ts = "2026-01-01T00:00:00-05:00"
+
+            def cancelado(title: str) -> dict:
+                ticket = repo.create_ticket(pconn, title=title)
+                pconn.execute(
+                    "UPDATE tickets SET status = 'cancelado' WHERE id = ?",
+                    (ticket["id"],),
+                )
+                pconn.commit()
+                return ticket
+
+            viva = cancelado("Raíz viva")
+            pconn.execute(
+                "UPDATE tickets SET code = 'T-0097' WHERE id = ?",
+                (viva["id"],),
+            )
+            purga_a, purga_b = cancelado("zafiro A"), cancelado("zafiro B")
+            pconn.execute(
+                "UPDATE tickets SET code = 'T-0098' WHERE id = ?",
+                (purga_a["id"],),
+            )
+            pconn.execute(
+                "UPDATE tickets SET code = 'T-0099' WHERE id = ?",
+                (purga_b["id"],),
+            )
+            pconn.execute(
+                "INSERT INTO tags(ticket_id, tag) VALUES (?, 'x')",
+                (purga_b["id"],),
+            )
+            pconn.execute(
+                "INSERT INTO comments(ticket_id, ts, author, body) "
+                "VALUES (?, ?, 'test', 'nota')",
+                (purga_b["id"], ts),
+            )
+            pconn.execute(
+                "INSERT INTO links(ticket_id, kind, ref, created_at) "
+                "VALUES (?, 'otro', 'nota', ?)",
+                (purga_b["id"], ts),
+            )
+            db.meta_set(pconn, domain.TICKET_COUNTER, "100")
+            pconn.commit()
+
+            dry = repo.purge_plan(pconn, ["T-0098", "T-0099"])
+            h.ok(
+                [item["code"] for item in dry["items"]]
+                == ["T-0098", "T-0099"]
+                and dry["counter"] == {"before": 100, "after": 98}
+                and pconn.execute(
+                    "SELECT COUNT(*) FROM tickets "
+                    "WHERE code IN ('T-0098', 'T-0099')"
+                ).fetchone()[0]
+                == 2
+                and not (h.tmp / "backups").exists(),
+                "purge_plan simula, proyecta el contador y no escribe",
+            )
+
+            result = repo.purge_apply(
+                pconn, ["T-0098", "T-0099"], actor="test"
+            )
+            ids = (purga_a["id"], purga_b["id"])
+            orphans = sum(
+                pconn.execute(
+                    f"SELECT COUNT(*) FROM {table} "
+                    "WHERE ticket_id IN (?, ?)",
+                    ids,
+                ).fetchone()[0]
+                for table in ("events", "comments", "links", "tags")
+            )
+            backup = Path(result["backup"])
+            backup_conn = db.connect(backup)
+            try:
+                kept = backup_conn.execute(
+                    "SELECT COUNT(*) FROM tickets "
+                    "WHERE code IN ('T-0098', 'T-0099')"
+                ).fetchone()[0]
+            finally:
+                backup_conn.close()
+            h.ok(
+                pconn.execute(
+                    "SELECT COUNT(*) FROM tickets WHERE id IN (?, ?)", ids
+                ).fetchone()[0]
+                == 0
+                and orphans == 0
+                and backup.is_file()
+                and kept == 2
+                and pconn.execute(
+                    "SELECT COUNT(*) FROM tickets_fts "
+                    "WHERE tickets_fts MATCH 'zafiro'"
+                ).fetchone()[0]
+                == 0
+                and result["counter"] == {"before": 100, "after": 98}
+                and int(db.meta_get(pconn, domain.TICKET_COUNTER)) == 98,
+                "purge aplica con backup, limpia FTS y baja el contador",
+            )
+        finally:
+            pconn.close()
+
+    with h.env(TAIKI_DB=str(h.tmp / "purge-reject.db")):
+        rconn = db.connect()
+        try:
+            ts = "2026-01-01T00:00:00-05:00"
+
+            def rechazable(title: str, status: str = "cancelado") -> dict:
+                ticket = repo.create_ticket(rconn, title=title)
+                rconn.execute(
+                    "UPDATE tickets SET status = ? WHERE id = ?",
+                    (status, ticket["id"]),
+                )
+                rconn.commit()
+                return ticket
+
+            def memoria(code: str, ticket_ref: str | None = None) -> int:
+                return rconn.execute(
+                    "INSERT INTO memories(code, kind, \"key\", title, content, "
+                    "status, confidence, source, ticket_id, created_at, "
+                    "updated_at, fingerprint) VALUES (?, 'pitfall', ?, 't', "
+                    "'c', 'proposed', 0.5, 'agent', ?, ?, ?, ?)",
+                    (code, code.lower(), ticket_ref, ts, ts, f"fp-{code}"),
+                ).lastrowid
+
+            abierto = rechazable("Abierto", status="nuevo")
+            padre = rechazable("Padre cancelado")
+            repo.create_ticket(
+                rconn, title="Hija del padre", parent_id=padre["code"]
+            )
+            con_link = rechazable("Con enlace entrante")
+            repo.link_ticket(
+                rconn, abierto["code"], "depende", con_link["code"], actor="t"
+            )
+            con_evidencia = rechazable("Con evidencia")
+            rconn.execute(
+                "INSERT INTO memory_evidence(memory_id, kind, ref, created_at) "
+                "VALUES (?, 'ticket', ?, ?)",
+                (memoria("M-9101"), con_evidencia["code"], ts),
+            )
+            con_memoria = rechazable("Con memoria")
+            memoria("M-9102", con_memoria["code"])
+            rconn.commit()
+
+            h.raises(
+                domain.ValidationError,
+                lambda: repo.purge_plan(rconn, [abierto["code"]]),
+                "purge rechaza un ticket abierto",
+            )
+            h.raises(
+                domain.ValidationError,
+                lambda: repo.purge_plan(rconn, [padre["code"]]),
+                "purge rechaza una épica con tareas",
+            )
+            h.raises(
+                domain.ValidationError,
+                lambda: repo.purge_plan(rconn, [con_link["code"]]),
+                "purge rechaza un ticket referenciado por un enlace",
+            )
+            h.raises(
+                domain.ValidationError,
+                lambda: repo.purge_plan(rconn, [con_evidencia["code"]]),
+                "purge rechaza un ticket con evidencia de memoria",
+            )
+            h.raises(
+                domain.ValidationError,
+                lambda: repo.purge_plan(rconn, [con_memoria["code"]]),
+                "purge rechaza un ticket con memories.ticket_id",
+            )
+        finally:
+            rconn.close()
+
+    with h.env(TAIKI_DB=str(h.tmp / "purge-gap.db")):
+        gconn = db.connect()
+        try:
+            hueco = repo.create_ticket(gconn, title="Hueco")
+            gconn.execute(
+                "UPDATE tickets SET code = 'T-0024', status = 'cancelado' "
+                "WHERE id = ?",
+                (hueco["id"],),
+            )
+            vivo = repo.create_ticket(gconn, title="Vivo")
+            gconn.execute(
+                "UPDATE tickets SET code = 'T-0025' WHERE id = ?",
+                (vivo["id"],),
+            )
+            db.meta_set(gconn, domain.TICKET_COUNTER, "26")
+            gconn.commit()
+            gap = repo.purge_plan(gconn, ["T-0024"])
+            applied = repo.purge_apply(gconn, ["T-0024"])
+            h.ok(
+                gap["counter"]["after"] == 26
+                and applied["counter"]["after"] == 26
+                and int(db.meta_get(gconn, domain.TICKET_COUNTER)) == 26
+                and any("repair-gaps" in item for item in gap["warnings"])
+                and repo.get_ticket(gconn, "T-0025")["id"] == vivo["id"],
+                "purge con hueco no baja el contador y avisa de repair-gaps",
+            )
+
+            fallo = repo.create_ticket(gconn, title="Backup imposible")
+            gconn.execute(
+                "UPDATE tickets SET code = 'T-0096', status = 'cancelado' "
+                "WHERE id = ?",
+                (fallo["id"],),
+            )
+            gconn.commit()
+            original = workspace._copy_database
+
+            def boom(source, target):
+                raise OSError("sin espacio")
+
+            workspace._copy_database = boom
+            try:
+                abortado = False
+                try:
+                    repo.purge_apply(gconn, ["T-0096"])
+                except domain.ValidationError:
+                    abortado = True
+            finally:
+                workspace._copy_database = original
+            h.ok(
+                abortado
+                and gconn.execute(
+                    "SELECT COUNT(*) FROM tickets WHERE code = 'T-0096'"
+                ).fetchone()[0]
+                == 1,
+                "si el backup falla no se borra nada",
+            )
+        finally:
+            gconn.close()
+
+        mem = db.connect(":memory:")
+        try:
+            en_memoria = repo.create_ticket(mem, title="En memoria")
+            mem.execute(
+                "UPDATE tickets SET status = 'cancelado' WHERE id = ?",
+                (en_memoria["id"],),
+            )
+            h.raises(
+                domain.ValidationError,
+                lambda: repo.purge_apply(mem, [en_memoria["code"]]),
+                "purge apply rechaza una base :memory: sin backup posible",
+            )
+        finally:
+            mem.close()
 
