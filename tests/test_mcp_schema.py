@@ -18,6 +18,7 @@ def run(h: Harness) -> None:
         "comment", "link", "stats", "next", "agents", "status", "whoami",
         "heartbeat", "checkpoint", "retry", "reassign", "schedule",
         "worktree_create", "worktree_list", "promote", "scratch_drop",
+        "reorg_plan", "reorg_apply",
         "health", "brief", "memory_search", "memory_write",
         "memory_playbook", "memory_checklist", "memory_candidates",
         "memory_stats", "skills_suggest",
@@ -38,6 +39,7 @@ def run(h: Harness) -> None:
         {
             "list", "get", "stats", "next", "agents", "schedule",
             "status", "whoami", "worktree_list", "health", "brief",
+            "reorg_plan",
             "memory_search", "memory_playbook", "memory_checklist",
             "memory_candidates", "memory_stats", "skills_suggest",
         },
@@ -84,6 +86,22 @@ def run(h: Harness) -> None:
         in transition_tool["inputSchema"]["properties"]["status"]["enum"]
         and "verificado" in schemas.INSTRUCTIONS,
         "el catálogo MCP expone y documenta el estado verificado",
+    )
+    reorg_plan = next(
+        tool for tool in schemas.TOOLS if tool["name"] == "reorg_plan"
+    )
+    reorg_apply = next(
+        tool for tool in schemas.TOOLS if tool["name"] == "reorg_apply"
+    )
+    reorg_actions = {"move", "renumber", "promote", "demote", "purge"}
+    h.ok(
+        set(reorg_plan["inputSchema"]["properties"]["action"]["enum"])
+        == reorg_actions
+        and reorg_plan["inputSchema"]["required"] == ["action"]
+        and reorg_apply["inputSchema"]["required"] == ["action", "apply"]
+        and reorg_plan["inputSchema"]["additionalProperties"] is False
+        and reorg_apply["inputSchema"]["additionalProperties"] is False,
+        "reorg_plan/reorg_apply declaran acción, apply y cierran el esquema",
     )
 
     # Precedencia en resolve_session: meta > args > env y claves alternativas

@@ -548,6 +548,131 @@ def run(h: Harness) -> None:
         ),
     )
 
+    # ── reorg_plan/reorg_apply: dry-run, apply y guardrails ─────────────
+    reorg_root = repo.create_ticket(
+        conn, title="Épica reorg MCP", project="mcp-reorg"
+    )
+    reorg_dest = repo.create_ticket(
+        conn, title="Destino reorg MCP", project="mcp-reorg"
+    )
+    reorg_child = repo.create_ticket(
+        conn,
+        title="Tarea reorg MCP",
+        project="mcp-reorg",
+        parent_id=reorg_root["code"],
+    )
+    reorg_planned = handlers.call_tool(
+        "reorg_plan",
+        {
+            "action": "move",
+            "codes": [reorg_child["code"]],
+            "parent": reorg_dest["code"],
+            "renumber": True,
+        },
+    )
+    still_planned = repo.get_ticket(conn, reorg_child["code"])
+    reorg_applied = handlers.call_tool(
+        "reorg_apply",
+        {
+            "action": "move",
+            "codes": [reorg_child["code"]],
+            "parent": reorg_dest["code"],
+            "renumber": True,
+            "apply": True,
+        },
+        meta={"sessionId": "session-reorg"},
+    )
+    new_code = reorg_applied["items"][0]["new_code"]
+    moved = repo.get_ticket(conn, new_code)
+    _ok(
+        h,
+        (
+            reorg_planned["items"][0]["new_code"] == f"{reorg_dest['code']}.01"
+            and still_planned["code"] == reorg_child["code"]
+            and still_planned["parent_code"] == reorg_root["code"],
+            "reorg_plan calcula el plan y no escribe",
+        ),
+        (
+            new_code == f"{reorg_dest['code']}.01"
+            and moved["parent_code"] == reorg_dest["code"]
+            and any(
+                event.get("session_id") == "session-reorg"
+                for event in moved["events"]
+            ),
+            "reorg_apply move con renumber escribe código, padre y evento",
+        ),
+    )
+
+    purgeable = repo.create_ticket(
+        conn, title="Cancelado purgable MCP", project="mcp-reorg"
+    )
+    conn.execute(
+        "UPDATE tickets SET status = 'cancelado' WHERE code = ?",
+        (purgeable["code"],),
+    )
+    conn.commit()
+    purge_preview = handlers.call_tool(
+        "reorg_plan", {"action": "purge", "codes": [purgeable["code"]]}
+    )
+    _ok(
+        h,
+        (
+            purge_preview["items"][0]["code"] == purgeable["code"]
+            and repo.get_ticket(conn, purgeable["code"])["status"]
+            == "cancelado",
+            "reorg_plan purge simula sobre cancelados sin borrar",
+        ),
+        (
+            set(
+                by_name["reorg_plan"]["inputSchema"]["properties"]["action"][
+                    "enum"
+                ]
+            )
+            == {"move", "renumber", "promote", "demote", "purge"}
+            and by_name["reorg_apply"]["inputSchema"]["required"]
+            == ["action", "apply"],
+            "el esquema declara la acción y apply obligatorio",
+        ),
+        (
+            _falla(
+                lambda: handlers.call_tool(
+                    "reorg_apply",
+                    {
+                        "action": "move",
+                        "codes": [reorg_dest["code"]],
+                        "parent": reorg_root["code"],
+                    },
+                ),
+                domain.ValidationError,
+            ),
+            "reorg_apply sin apply=true rechaza",
+        ),
+        (
+            _falla(
+                lambda: handlers.call_tool(
+                    "reorg_apply",
+                    {
+                        "action": "purge",
+                        "codes": [purgeable["code"]],
+                        "apply": True,
+                    },
+                ),
+                domain.ValidationError,
+            ),
+            "purge sin force rechaza",
+        ),
+        (
+            _falla(
+                lambda: handlers.call_tool(
+                    "reorg_plan",
+                    {"action": "move", "codes": [reorg_dest["code"]]},
+                ),
+                domain.ValidationError,
+            ),
+            "move sin parent rechaza",
+        ),
+    )
+
     # Errores de contrato del despachador
     _ok(
         h,

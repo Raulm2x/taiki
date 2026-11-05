@@ -23,9 +23,10 @@ from .schema_meta import (
     RESOURCE_TEMPLATES,
     SKILL_SPECS,
 )
+from .schema_reorg import REORG_SPECS
 from .schema_tickets import TICKET_SPECS
 
-TOOL_SPECS = [*TICKET_SPECS, *MEMORY_SPECS, *SKILL_SPECS]
+TOOL_SPECS = [*TICKET_SPECS, *REORG_SPECS, *MEMORY_SPECS, *SKILL_SPECS]
 
 TOOLS = [spec.schema() for spec in TOOL_SPECS]
 

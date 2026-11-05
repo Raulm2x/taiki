@@ -532,3 +532,91 @@ def _handle_next(
     if args.get("detail"):
         return {"ticket": ticket}
     return {"ticket": _summary(ticket, preview=True)}
+
+
+_REORG_ACTIONS = ("move", "renumber", "promote", "demote", "purge")
+
+
+def _reorg_validate(args: dict[str, Any], action: str) -> None:
+    """Valida lo que el esquema no puede expresar por acción."""
+    if action not in _REORG_ACTIONS:
+        raise domain.ValidationError(
+            f"Acción de reorganización desconocida: {action}. "
+            f"Usa una de: {', '.join(_REORG_ACTIONS)}"
+        )
+    codes = args.get("codes")
+    if action == "purge":
+        if not codes:
+            raise domain.ValidationError(
+                "purge exige codes con al menos un ticket cancelado"
+            )
+    elif action in ("move", "promote", "demote") and not codes:
+        raise domain.ValidationError(f"{action} exige al menos un code")
+    if action == "move" and not args.get("parent"):
+        raise domain.ValidationError(
+            "move exige parent: la épica destino del ticket"
+        )
+    if action == "demote" and "children_to" not in args:
+        raise domain.ValidationError(
+            "demote exige children_to: otra épica o 'root'"
+        )
+
+
+def _reorg_kwargs(args: dict[str, Any]) -> dict[str, Any]:
+    children_to = args.get("children_to")
+    if isinstance(children_to, str) and children_to.strip().lower() == "root":
+        children_to = None
+    return {
+        "codes": args.get("codes"),
+        "parent": args.get("parent"),
+        "children_to": children_to,
+        "include_adopted": bool(args.get("include_adopted", False)),
+        "renumber": bool(args.get("renumber", False)),
+    }
+
+
+def _handle_reorg_plan(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    _session: str | None = None,
+    _actor: str = "agente",
+) -> dict[str, Any]:
+    action = str(args.get("action") or "")
+    _reorg_validate(args, action)
+    if action == "purge":
+        return repo.purge_plan(conn, args.get("codes") or [])
+    return repo.reorg_plan(conn, action, **_reorg_kwargs(args))
+
+
+def _handle_reorg_apply(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    session: str | None = None,
+    actor: str = "agente",
+) -> dict[str, Any]:
+    action = str(args.get("action") or "")
+    _reorg_validate(args, action)
+    if args.get("apply") is not True:
+        raise domain.ValidationError(
+            "reorg_apply exige apply=true; usa reorg_plan para simular"
+        )
+    if action == "purge":
+        if args.get("force") is not True:
+            raise domain.ValidationError(
+                "purge con reorg_apply borra tickets: exige force=true"
+            )
+        return repo.purge_apply(
+            conn,
+            args.get("codes") or [],
+            actor=actor,
+            actor_type="agente",
+            session_id=session,
+        )
+    return repo.reorg_apply(
+        conn,
+        action,
+        actor=actor,
+        actor_type="agente",
+        session_id=session,
+        **_reorg_kwargs(args),
+    )
