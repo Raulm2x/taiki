@@ -108,6 +108,20 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    Una dependencia solo se cierra al `verificado`/`confirmado`, no al
    `completado`.
 
+## Reorganización de tickets
+
+`move`, `promote`, `demote`, `renumber` y `purge` comparten plan y aplicación:
+sin `--apply` solo simulan. `move --parent` cambia de épica y `--renumber`
+ajusta el código; `--keep-code` (defecto) equivale a `attach` y conserva el
+código. `promote` desvincula una tarea para convertirla en épica; `demote
+--children-to <epic|root>` reparte sus tareas y la degrada; `renumber [codes]
+[--adopted]` renombra códigos planos (los adoptados solo con `--adopted`);
+`purge --apply --force` borra cancelados con backup en `.taiki/backups/`.
+Solo hay un nivel épica→tarea, sin ciclos ni padre archivado. El contador solo
+baja al liberar el sufijo final de raíces y `repair-gaps` cubre los huecos con
+cancelados. Por MCP: `reorg_plan` (read-only) y `reorg_apply` (`apply=true`,
+`force=true` para purgar). `attach` sigue conservando los códigos.
+
 ## Playbooks, routing y revisión
 
 - **Playbooks**: procedimientos con evidencia y apoyos en `references/`,

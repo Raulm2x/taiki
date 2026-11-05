@@ -4,7 +4,7 @@ Volver a [README](../README.md) · [Índice de documentación](README.md)
 
 ## Herramientas MCP
 
-El servidor expone 32 herramientas. El nombre real no lleva prefijo (`list`,
+El servidor expone 34 herramientas. El nombre real no lleva prefijo (`list`,
 `claim`…), aunque algunos clientes las muestren como `taiki_*`.
 
 | Herramienta | Uso |
@@ -17,6 +17,7 @@ El servidor expone 32 herramientas. El nombre real no lleva prefijo (`list`,
 | `heartbeat` | Renueva el lease en comandos largos |
 | `status`, `whoami` | Sesiones, claims, worktrees y tu ticket activo |
 | `worktree_create`, `worktree_list` | Aislan la escritura por tarea (`worktree`) |
+| `reorg_plan`, `reorg_apply` | Reorganizan tickets (`move`, `renumber`, `promote`, `demote`, `purge`); `reorg_plan` es read-only, `reorg_apply` exige `apply=true` y `force=true` para purgar |
 | `promote` | Convierte un scratch `S-####` en `T-####` |
 | `scratch_drop` | Archiva y cancela un scratch sin consumir `T-####` |
 | `health` | MCP, hooks, claims caducados, solapamientos, worktrees e integridad de memoria (`memory`) |
@@ -63,7 +64,7 @@ cualquier worktree; no se crea una DB vacía dentro de `.worktrees/`.
 
 ## Recursos y prompts MCP
 
-El catálogo de 32 herramientas está en [Herramientas MCP](#herramientas-mcp) y
+El catálogo de 34 herramientas está en [Herramientas MCP](#herramientas-mcp) y
 se genera desde `mcp_layer/schemas.py`. Aquí solo quedan los recursos y prompts:
 
 Recursos: `taiki://inbox`, `taiki://stats`, `taiki://ticket/{code}`,

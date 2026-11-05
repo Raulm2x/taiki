@@ -85,7 +85,8 @@ baseline_checks = 1584
 # Margen estrecho para que cualquier adición vuelva a avisar.
 # T-0071/T-0072: grouped, stats índice/almacenamiento, tags y capa 0; techo 1604.
 # T-0078.04: +14 checks purge; revisión única (techo 1618).
-checks_tolerance = 34
+# T-0078.06: +2 checks E2E reorg; revisión única (techo 1620).
+checks_tolerance = 36
 
 [module]
 # El módulo más lento es test_release (1.11s medido); +0.2s de margen.

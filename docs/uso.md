@@ -31,8 +31,14 @@ taiki new -t "Cambio grande" --isolation worktree # .worktrees/ (defecto)
 taiki new -t "Subtarea" --parent T-0014  # crea T-0014.01, T-0014.02…
 taiki attach T-0014 T-0008 T-0009   # agrupa tickets existentes bajo una épica
 taiki detach T-0008                  # la devuelve a la raíz
+taiki move T-0024 T-0025 --parent T-0014 --keep-code  # como attach: conserva códigos
+taiki move T-0024 T-0025 --parent T-0014 --renumber --apply  # pasa a T-0014.01, .02…
+taiki promote T-0024                # tarea → épica (dry-run)
+taiki demote T-0014 --children-to root --apply  # épica → tarea; reparte sus tareas
 taiki renumber                      # simula pasar T-0023… a T-0022.01, .02…
+taiki renumber T-0024 --adopted --apply  # incluye los adoptados con attach
 taiki renumber --apply              # renombra los códigos planos
+taiki purge T-0099 --apply --force  # borra cancelados con backup previo
 taiki repair-gaps                   # simula cubrir T-XXXX que nunca existieron
 taiki repair-gaps --apply           # los cubre con tickets genéricos cancelados
 taiki claim T-0001
@@ -332,7 +338,8 @@ tareas colgando de él. Así la lista no crece con cada paso.
 - **Siguiente**: `next` nunca devuelve una épica, solo trabajo accionable.
 - **Códigos planos**: si un proceso antiguo creó tareas con código normal
   (`T-0023` bajo `T-0022`), `taiki renumber --apply` los pasa a `.01`, `.02`…
-  `taiki audit` los lista. Los adoptados con `attach` nunca se tocan.
+  `taiki audit` los lista. Los adoptados con `attach` se conservan por defecto;
+  solo se renumeran si se pide con `--adopted`.
 
 ```
 T-0014       Jerarquía de tickets          [2/3]
@@ -340,6 +347,31 @@ T-0014       Jerarquía de tickets          [2/3]
     .02       TUI con árbol                 completado
     .03       MCP, docs y migración         en_progreso
 ```
+
+#### Reorganizar la jerarquía
+
+`move`, `promote`, `demote`, `renumber` y `purge` simulan por defecto: sin
+`--apply` solo muestran el plan. `move` exige `--parent` y elige el código con
+`--renumber` o `--keep-code` (defecto, equivalente a `attach`); `demote` exige
+`--children-to <epic|root>` y admite `--parent` y `--renumber`; `renumber`
+acepta códigos concretos y `--adopted`. Solo hay un nivel épica→tarea, sin
+ciclos ni padres archivados. La aplicación es atómica y `purge --apply --force`
+copia antes la base a `.taiki/backups/`. El contador solo baja al liberar el
+final de la secuencia de raíces; `repair-gaps` cubre los huecos con tickets
+cancelados para no reutilizar números.
+
+Caso real (taiki-sys, 2026-11-05): T-0023 nació como tarea y pasó a épica con
+T-0024..T-0027 colgadas con código plano. Para dejarlas como `T-0023.01`…`04`:
+
+```bash
+taiki move T-0024 T-0025 T-0026 T-0027 --parent T-0023 --renumber --apply
+```
+
+Sin `--renumber` (o con `--keep-code`) el movimiento conserva los códigos, como
+`taiki attach T-0023 T-0024 …`. `promote T-0023` la desvincula de su padre para
+que pueda tener tareas; `demote T-0023 --children-to root` reparte las tareas y
+la convierte en tarea. Los enlaces `depende`/`relacionado`, las evidencias de
+memoria y el índice FTS se reapuntan al código nuevo.
 
 ### Numeración sin huecos
 

@@ -445,6 +445,44 @@ push se rechaza, publica con `taiki release` o deshaz la release con
 `git revert` en `main`.
 
 
+## Reorganización y purga
+
+`move`, `promote`, `demote`, `renumber` y `purge` comparten un contrato de plan
+y aplicación. El CLI simula por defecto y solo escribe con `--apply`; `purge`
+exige además `--force`. `move` requiere `--parent` y decide el código con
+`--renumber` o `--keep-code` (defecto, equivalente a `attach`); `demote` exige
+`--children-to` (código de épica o `root`) y admite `--parent` y `--renumber`;
+`renumber` acepta códigos concretos y `--adopted` para incluir los tickets
+adoptados con `attach`.
+
+Por MCP el mismo contrato se expone como `reorg_plan` (solo lectura, nunca
+escribe) y `reorg_apply` (mutante, requiere `apply=true`; para `purge`,
+`force=true`). `action` es `move`, `renumber`, `promote`, `demote` o `purge`.
+Ambas reciben `codes`, `parent`, `children_to`, `include_adopted` y `renumber`.
+`reorg_apply` aplica el plan en una transacción atómica: si algo falla, no deja
+cambios.
+
+Solo se admiten dos niveles (épica → tarea): un ticket con tareas no puede ser
+hijo y un padre no puede ser su propia descendencia. La aplicación actualiza:
+
+- `links.ref` con `kind` `depende` o `relacionado`.
+- `memory_evidence.ref` con `kind = 'ticket'`.
+- `memories.ticket_id`.
+- `tickets_fts` mediante el trigger `AFTER UPDATE OF title, body, code`.
+
+No se reescriben los eventos ni los comentarios históricos, los marcadores
+`links` con `kind='otro'` (`renumerado:OLD->NEW`) ni los mensajes de commit.
+
+`purge` solo borra tickets `cancelado` sin hijos, enlaces, memorias ni
+evidencias que los referencien. Antes de borrar copia la base a
+`.taiki/backups/taiki-<timestamp>.db`; si el backup falla, no purga. Borra el
+ticket y sus eventos, comentarios, enlaces y etiquetas en una transacción y
+comprueba la integridad de FTS. El contador `next_ticket_number` solo baja si se
+libera un sufijo final de raíces; si quedan raíces por encima, avisa y
+`repair-gaps` cubre los huecos con tickets cancelados para no reutilizar
+números.
+
+
 ## Tickets temporales (scratch)
 
 Para pruebas o exploración sin ensuciar la tabla:
@@ -649,7 +687,7 @@ detectar saltos, no como valor absoluto.
 
 | Métrica | Valor | Objetivo | Comando |
 | --- | --- | --- | --- |
-| `tools/list`: tools / bytes | 32 tools / 30.734 bytes (30,0 KiB) | ≤ 32 KiB | `python3 -m tests.benchmarks` |
+| `tools/list`: tools / bytes | 34 tools / 35.100 bytes (34,3 KiB) | ≤ 32 KiB | `python3 -m tests.benchmarks` |
 | Arranque del CLI (`list`) | 201 ms (mediana de 3) | ≤ 300 ms | `python3 -m tests.benchmarks` |
 | Suite `--strict-budget` | 1.968 comprobaciones / 10,86 s | ≤ 11 s (presupuesto 11,6 s) | `python3 tests/run.py --strict-budget` |
 | Brief | 2.443 chars (54 % de 4.500) | ≤ `brief_budget_chars` | `wc -c .taiki/generated/brief.md` |
@@ -668,7 +706,9 @@ detectar saltos, no como valor absoluto.
   T-0058 con la métrica y la fecha, y se decide con datos; no se optimiza a
   ciegas. El benchmark avisa pero no falla por tiempo: es dependiente de la
   máquina y no debe bloquear el gate.
-- No se tocó código de producción: las tres métricas están dentro de objetivo.
+- La tabla conserva la línea base. Con las tools de reorganización,
+  `tools/list` supera el objetivo de 32 KiB y el benchmark avisa; se decide con
+  datos en una tarea aparte, sin optimizar a ciegas.
 
 
 ## Notas de diseño

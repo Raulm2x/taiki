@@ -8,7 +8,7 @@ from pathlib import Path
 import cli
 import tui
 from mcp_layer import handlers
-from ticketlib import audit as audit_lib, deeplink, domain, repo, util
+from ticketlib import audit as audit_lib, db, deeplink, domain, repo, util
 from tests.seeds import git_repo
 from tests.support import Harness
 
@@ -456,3 +456,69 @@ def run(h: Harness) -> None:
         repo.renumber_plan(conn) == [],
         "tras renumerar no queda nada pendiente",
     )
+
+    # ── E2E del caso real: T-0023 + T-0024..T-0027 → T-0023.01..04 ──
+    with h.env(TAIKI_DB=str(h.tmp / "reorg_cli.db")):
+        econn = db.connect()
+        real_codes = ["T-0023", "T-0024", "T-0025", "T-0026", "T-0027"]
+        created = [
+            repo.create_ticket(econn, title=f"Caso real {code}")
+            for code in real_codes
+        ]
+        for ticket, code in zip(created, real_codes):
+            econn.execute(
+                "UPDATE tickets SET code = ? WHERE id = ?",
+                (code, ticket["id"]),
+            )
+        econn.commit()
+        repo.link_ticket(econn, "T-0027", "depende", "T-0024", actor="test")
+        econn.close()
+        with contextlib.redirect_stdout(io.StringIO()):
+            cli.main(
+                [
+                    "move", "T-0024", "T-0025", "T-0026", "T-0027",
+                    "--parent", "T-0023", "--renumber", "--apply",
+                ]
+            )
+        econn = db.connect()
+        moved = [
+            repo.get_ticket(econn, f"T-0023.0{number}")
+            for number in (1, 2, 3, 4)
+        ]
+        link = econn.execute(
+            "SELECT ref FROM links WHERE ticket_id = ? AND kind = 'depende'",
+            (moved[3]["id"],),
+        ).fetchone()["ref"]
+        fused = True
+        try:
+            econn.execute(
+                "INSERT INTO tickets_fts(tickets_fts) VALUES('integrity-check')"
+            )
+        except Exception:
+            fused = False
+        h.ok(
+            [ticket["title"] for ticket in moved]
+            == [f"Caso real {code}" for code in real_codes[1:]]
+            and all(ticket["parent_code"] == "T-0023" for ticket in moved)
+            and repo.get_ticket(econn, "T-0023")["progress"]["total"] == 4
+            and link == "T-0023.01"
+            and fused,
+            "move --renumber reproduce el caso T-0023: códigos, padre, "
+            "enlace y FTS",
+        )
+        loose = repo.create_ticket(econn, title="Adjunto sin renumerar")
+        econn.execute(
+            "UPDATE tickets SET code = 'T-0040' WHERE id = ?",
+            (loose["id"],),
+        )
+        econn.commit()
+        econn.close()
+        with contextlib.redirect_stdout(io.StringIO()):
+            cli.main(["attach", "T-0023", "T-0040"])
+        econn = db.connect()
+        attached = repo.get_ticket(econn, "T-0040")
+        h.ok(
+            attached["parent_code"] == "T-0023"
+            and attached["code"] == "T-0040",
+            "attach sin flags conserva el código",
+        )

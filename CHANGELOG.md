@@ -1,5 +1,24 @@
 # Changelog
 
+## No publicado
+
+Tickets: T-0078.01, T-0078.02, T-0078.03, T-0078.04, T-0078.05, T-0078.06
+
+### feat
+- feat: plan de reorganizacion de tickets (T-0078.01)
+- feat: aplicar reorganizacion y referencias (T-0078.02)
+- feat: CLI de reorganizacion de tickets (T-0078.03)
+- feat: purge de tickets con backup y guardrails (T-0078.04)
+- feat: tools MCP de reorganizacion (T-0078.05)
+
+### docs
+- docs: reorganizacion de tickets y E2E T-0023 (T-0078.06)
+
+La reorganización cubre move/promote/demote/renumber/purge con dry-run por
+defecto, un solo nivel, backup y repair-gaps. El E2E reproduce el caso real de
+taiki-sys: T-0024..T-0027 bajo T-0023 pasan a T-0023.01..04 y se reapuntan
+enlaces y FTS.
+
 ## v0.4.1 — 2026-11-03
 
 Tickets: T-0061
