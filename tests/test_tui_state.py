@@ -5,10 +5,24 @@ from __future__ import annotations
 import time
 import tui
 from ticketlib import domain, repo, sessions
+from tui import app as tui_app
 from tui import data as tui_data
 from tui import detail as tui_detail
 from tests.seeds import seed_tui
 from tests.support import Harness
+
+
+class _AgentLayout:
+    """Layout mínimo: la fila 0 de la lista y la columna AGENTE."""
+
+    detail_visible = False
+    detail_x = 200
+    columns_y = 0
+    list_top = 4
+    list_height = 10
+
+    def column_at(self, _x: int) -> str:
+        return "agent"
 
 
 def _ok(h: Harness, *condiciones: tuple[bool, str]) -> None:
@@ -728,5 +742,38 @@ def run(h: Harness) -> None:
         (
             hidden_sel.selected_codes() == [],
             "la selección oculta no se confirma al cambiar de ámbito",
+        ),
+    )
+
+    # ── Clic en AGENTE: solo enfoca, no abre la sesión ─────────────
+    click_state = tui.TuiState()
+    click_state.load(repo.list_tickets(conn, limit=None))
+    click_state.focus = "detail"
+    click_state.cursor = 0
+    click_state.scroll = 0
+    opened: list[object] = []
+    original_getmouse = tui_app.curses.getmouse
+    original_open = tui_app.actions_ui.open_session
+    try:
+        tui_app.curses.getmouse = lambda: (
+            0,
+            1,
+            4,
+            0,
+            tui_app.curses.BUTTON1_PRESSED,
+        )
+        tui_app.actions_ui.open_session = lambda state, ticket: opened.append(
+            ticket
+        )
+        tui_app._handle_mouse(click_state, _AgentLayout())
+    finally:
+        tui_app.curses.getmouse = original_getmouse
+        tui_app.actions_ui.open_session = original_open
+    _ok(
+        h,
+        (opened == [], "el clic en AGENTE no abre la sesión"),
+        (
+            click_state.focus == "list" and click_state.cursor == 0,
+            "el clic en AGENTE solo enfoca la fila",
         ),
     )
