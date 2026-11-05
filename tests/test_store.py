@@ -954,3 +954,248 @@ def run(h: Harness) -> None:
         ),
         "la configuración rechaza un isolation inválido",
     )
+
+    # ── Plan puro de reorganización (move/renumber/promote/demote) ──────
+    def reorg_rejects(label: str, func) -> str:
+        try:
+            func()
+        except domain.ValidationError:
+            return label
+        raise AssertionError(f"{label}: no se rechazó")
+
+    reorg_a = repo.create_ticket(conn, title="Épica reorganización A")
+    reorg_b = repo.create_ticket(conn, title="Épica reorganización B")
+    moved = repo.create_ticket(conn, title="Tarea plana movible")
+    conn.execute(
+        "UPDATE tickets SET code = 'T-9101' WHERE id = ?", (moved["id"],)
+    )
+    repo.create_ticket(
+        conn, title="Hija ya numerada", parent_id=reorg_b["code"]
+    )
+    conn.commit()
+    moved = repo.get_ticket(conn, "T-9101")
+
+    before = {
+        row["code"]: row["parent_id"]
+        for row in conn.execute("SELECT code, parent_id FROM tickets")
+    }
+    move_plan = repo.reorg_plan(
+        conn,
+        "move",
+        [moved["code"]],
+        parent=reorg_b["code"],
+        renumber=True,
+    )
+    keep_plan = repo.reorg_plan(
+        conn,
+        "move",
+        [moved["code"]],
+        parent=reorg_b["code"],
+        renumber=False,
+    )
+    after = {
+        row["code"]: row["parent_id"]
+        for row in conn.execute("SELECT code, parent_id FROM tickets")
+    }
+    h.ok(
+        move_plan["items"][0]["new_code"] == reorg_b["code"] + ".02"
+        and move_plan["items"][0]["parent_code"] == reorg_b["code"]
+        and keep_plan["items"][0]["new_code"] == "T-9101"
+        and any("conserva" in item for item in keep_plan["warnings"])
+        and reorg_rejects(
+            "move sin renumber",
+            lambda: repo.reorg_plan(
+                conn, "move", [moved["code"]], parent=reorg_b["code"]
+            ),
+        )
+        == "move sin renumber"
+        and before == after,
+        "move con renumber evita colisiones, sin renumber conserva el "
+        "código con aviso, sin flag se rechaza y no escribe",
+    )
+
+    ren_epic = repo.create_ticket(conn, title="Épica renumerado plan")
+    ren_flat_a = repo.create_ticket(
+        conn, title="Plana A", parent_id=ren_epic["code"]
+    )
+    ren_flat_b = repo.create_ticket(
+        conn, title="Plana B", parent_id=ren_epic["code"]
+    )
+    conn.execute(
+        "UPDATE tickets SET code = 'T-9102' WHERE id = ?",
+        (ren_flat_a["id"],),
+    )
+    conn.execute(
+        "UPDATE tickets SET code = 'T-9103' WHERE id = ?",
+        (ren_flat_b["id"],),
+    )
+    occupied = repo.create_ticket(conn, title="Código ocupado")
+    conn.execute(
+        "UPDATE tickets SET code = ? WHERE id = ?",
+        (ren_epic["code"] + ".01", occupied["id"]),
+    )
+    adopted = repo.create_ticket(conn, title="Adoptada plan")
+    repo.attach_tickets(
+        conn, ren_epic["code"], [adopted["code"]], actor="test"
+    )
+    conn.commit()
+    ren_flat_a = repo.get_ticket(conn, "T-9102")
+    ren_flat_b = repo.get_ticket(conn, "T-9103")
+
+    before = {
+        row["code"]: row["parent_id"]
+        for row in conn.execute("SELECT code, parent_id FROM tickets")
+    }
+    default_plan = repo.reorg_plan(conn, "renumber")
+    adopted_plan = repo.reorg_plan(conn, "renumber", include_adopted=True)
+    after = {
+        row["code"]: row["parent_id"]
+        for row in conn.execute("SELECT code, parent_id FROM tickets")
+    }
+    h.ok(
+        [
+            (item["code"], item["new_code"])
+            for item in default_plan["items"]
+        ]
+        == [
+            ("T-9102", ren_epic["code"] + ".02"),
+            ("T-9103", ren_epic["code"] + ".03"),
+        ]
+        and adopted["code"]
+        in {item["code"] for item in adopted_plan["items"]}
+        and len(adopted_plan["items"]) == 3
+        and not any(
+            item["code"].startswith(item["parent_code"] + ".")
+            for item in adopted_plan["items"]
+        )
+        and before == after,
+        "renumber numera por id, salta códigos ocupados, excluye adoptados "
+        "por defecto, los incluye con include_adopted, respeta los ya "
+        "numerados y no escribe",
+    )
+
+    archived_epic = repo.create_ticket(conn, title="Épica archivada")
+    conn.execute(
+        "UPDATE tickets SET archived = 1 WHERE id = ?",
+        (archived_epic["id"],),
+    )
+    conn.commit()
+    rejected = [
+        reorg_rejects(
+            "auto-padre",
+            lambda: repo.reorg_plan(
+                conn,
+                "move",
+                [moved["code"]],
+                parent=moved["code"],
+                renumber=True,
+            ),
+        ),
+        reorg_rejects(
+            "descendencia",
+            lambda: repo.reorg_plan(
+                conn,
+                "move",
+                [ren_epic["code"]],
+                parent=ren_flat_a["code"],
+                renumber=True,
+            ),
+        ),
+        reorg_rejects(
+            "dos niveles",
+            lambda: repo.reorg_plan(
+                conn,
+                "move",
+                [moved["code"]],
+                parent=ren_flat_a["code"],
+                renumber=True,
+            ),
+        ),
+        reorg_rejects(
+            "padre archivado",
+            lambda: repo.reorg_plan(
+                conn,
+                "move",
+                [moved["code"]],
+                parent=archived_epic["code"],
+                renumber=True,
+            ),
+        ),
+        reorg_rejects(
+            "hijo con hijos",
+            lambda: repo.reorg_plan(
+                conn,
+                "move",
+                [ren_epic["code"]],
+                parent=reorg_a["code"],
+                renumber=True,
+            ),
+        ),
+        reorg_rejects(
+            "padre en el plan",
+            lambda: repo.reorg_plan(
+                conn,
+                "move",
+                [reorg_a["code"], reorg_b["code"]],
+                parent=reorg_a["code"],
+                renumber=True,
+            ),
+        ),
+    ]
+    h.eq(
+        rejected,
+        [
+            "auto-padre",
+            "descendencia",
+            "dos niveles",
+            "padre archivado",
+            "hijo con hijos",
+            "padre en el plan",
+        ],
+        "el plan rechaza auto-padre, ciclo, dos niveles, padre archivado, "
+        "hijo con hijos y padre dentro del plan",
+    )
+
+    demote_epic = repo.create_ticket(conn, title="Épica a degradar")
+    demote_child = repo.create_ticket(
+        conn, title="Tarea reasignable", parent_id=demote_epic["code"]
+    )
+    dest_epic = repo.create_ticket(conn, title="Épica destino")
+    demote_plan = repo.reorg_plan(
+        conn,
+        "demote",
+        [demote_epic["code"]],
+        children_to=dest_epic["code"],
+        parent=reorg_a["code"],
+    )
+    demote_items = {
+        item["code"]: item["parent_code"]
+        for item in demote_plan["items"]
+    }
+    promote_root = repo.create_ticket(conn, title="Raíz promovible")
+    promote_plan = repo.reorg_plan(
+        conn, "promote", [promote_root["code"], demote_child["code"]]
+    )
+    h.ok(
+        demote_items[demote_epic["code"]] == reorg_a["code"]
+        and demote_items[demote_child["code"]] == dest_epic["code"]
+        and reorg_rejects(
+            "demote sin children_to",
+            lambda: repo.reorg_plan(
+                conn, "demote", [demote_epic["code"]]
+            ),
+        )
+        == "demote sin children_to"
+        and {
+            item["code"]: item["parent_code"]
+            for item in promote_plan["items"]
+        }
+        == {promote_root["code"]: None, demote_child["code"]: None}
+        and any("potencial" in item for item in promote_plan["warnings"])
+        and any("desvincula" in item for item in promote_plan["warnings"])
+        and repo.reorg_plan(conn, "renumber", include_adopted=True)
+        == repo.reorg_plan(conn, "renumber", include_adopted=True),
+        "demote reasigna los hijos y mueve la épica, exige children_to, "
+        "promote deja la raíz como no-op y desvincula las tareas, y el "
+        "plan es determinista",
+    )

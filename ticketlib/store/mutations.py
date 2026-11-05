@@ -15,6 +15,7 @@ from ..domain import (
     SCRATCH_COUNTER,
     TICKET_COUNTER,
     TOMBSTONE_TAG,
+    NotFoundError,
     ValidationError,
     clean_isolation,
     clean_resources,
@@ -30,6 +31,7 @@ __all__ = [
     "create_ticket",
     "detach_tickets",
     "fill_gaps",
+    "reorg_plan",
     "renumber_children",
     "renumber_plan",
     "update_ticket",
@@ -345,6 +347,338 @@ def update_ticket(
     return get_ticket(conn, code)
 
 
+REORG_ACTIONS = ("move", "renumber", "promote", "demote")
+
+
+def _reorg_codes(codes: Any) -> list[Any]:
+    if codes is None:
+        return []
+    if isinstance(codes, str):
+        codes = [codes]
+    return [code for code in codes if code is not None and str(code).strip()]
+
+
+def _reorg_row(conn: sqlite3.Connection, code: Any) -> sqlite3.Row:
+    try:
+        return row_by_code(conn, code)
+    except NotFoundError as exc:
+        raise ValidationError(str(exc)) from exc
+
+
+def _reorg_rows(
+    conn: sqlite3.Connection, codes: Any
+) -> list[sqlite3.Row]:
+    """Resuelve y valida los tickets del plan (existentes y no archivados)."""
+    rows: list[sqlite3.Row] = []
+    seen: set[int] = set()
+    for code in _reorg_codes(codes):
+        row = _reorg_row(conn, code)
+        if row["archived"]:
+            raise ValidationError(f"{row['code']} está archivado")
+        if row["id"] in seen:
+            raise ValidationError(
+                f"El ticket {row['code']} aparece más de una vez en el plan"
+            )
+        seen.add(row["id"])
+        rows.append(row)
+    return sorted(rows, key=lambda row: row["id"])
+
+
+def _reorg_parent(
+    conn: sqlite3.Connection, parent: Any, moving_ids: set[int]
+) -> sqlite3.Row:
+    """Valida el padre destino: existe, no archivado y es raíz."""
+    if parent is None or not str(parent).strip():
+        raise ValidationError("Indica un padre para la reorganización")
+    parent_row = _reorg_row(conn, parent)
+    if parent_row["archived"]:
+        raise ValidationError(f"El padre {parent_row['code']} está archivado")
+    if parent_row["id"] in moving_ids:
+        raise ValidationError(
+            f"{parent_row['code']} no puede ser su propio padre ni formar "
+            "parte del plan"
+        )
+    if parent_row["parent_id"] is not None:
+        if parent_row["parent_id"] in moving_ids:
+            raise ValidationError(
+                "No se puede mover un ticket a su propia descendencia "
+                f"({parent_row['code']})"
+            )
+        raise ValidationError(
+            f"{parent_row['code']} ya es una tarea; solo se admite un nivel "
+            "(épica → tarea)"
+        )
+    return parent_row
+
+
+def _reorg_item(
+    row: sqlite3.Row, new_code: str, parent_code: str | None
+) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "code": row["code"],
+        "new_code": new_code,
+        "title": row["title"],
+        "status": row["status"],
+        "parent_code": parent_code,
+    }
+
+
+def _reorg_finish(
+    action: str,
+    items: list[dict[str, Any]],
+    warnings: list[str],
+) -> dict[str, Any]:
+    new_codes = [item["new_code"] for item in items]
+    if len(new_codes) != len(set(new_codes)):
+        raise ValidationError("El plan genera códigos duplicados")
+    return {"action": action, "items": items, "warnings": warnings}
+
+
+def _plan_move(
+    conn: sqlite3.Connection,
+    rows: list[sqlite3.Row],
+    parent: Any,
+    renumber: bool | None,
+) -> dict[str, Any]:
+    if renumber is None:
+        raise ValidationError(
+            "Indica renumber=True o renumber=False para mover: no se adivina "
+            "si el código debe cambiar"
+        )
+    parent_row = _reorg_parent(conn, parent, {row["id"] for row in rows})
+    for row in rows:
+        if _has_children(conn, row["id"]):
+            raise ValidationError(
+                f"{row['code']} tiene tareas; una épica no puede convertirse "
+                "en tarea"
+            )
+
+    used = {
+        row["code"] for row in conn.execute("SELECT code FROM tickets")
+    } - {row["code"] for row in rows}
+    warnings: list[str] = []
+    items: list[dict[str, Any]] = []
+    number = 1
+    for row in rows:
+        if renumber:
+            while f"{parent_row['code']}.{number:02d}" in used:
+                number += 1
+            new_code = f"{parent_row['code']}.{number:02d}"
+            used.add(new_code)
+            number += 1
+        else:
+            new_code = row["code"]
+            if not new_code.startswith(parent_row["code"] + "."):
+                warnings.append(
+                    f"{row['code']} conserva su código plano bajo "
+                    f"{parent_row['code']}"
+                )
+        if row["parent_id"] == parent_row["id"]:
+            warnings.append(
+                f"{row['code']} ya está bajo {parent_row['code']}"
+            )
+        items.append(_reorg_item(row, new_code, parent_row["code"]))
+    return _reorg_finish("move", items, warnings)
+
+
+def _child_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT c.id, c.code, c.title, c.status, c.created_at, c.parent_id, "
+        "p.code AS parent_code, p.created_at AS parent_created, "
+        "p.archived AS parent_archived "
+        "FROM tickets c JOIN tickets p ON p.id = c.parent_id "
+        "WHERE c.archived = 0"
+    ).fetchall()
+
+
+def _plan_renumber(
+    conn: sqlite3.Connection,
+    rows: list[sqlite3.Row],
+    include_adopted: bool,
+) -> dict[str, Any]:
+    adopted = {
+        row["ticket_id"]
+        for row in conn.execute(
+            "SELECT DISTINCT ticket_id FROM events WHERE action = 'vincular'"
+        )
+    }
+    children = {row["id"]: row for row in _child_rows(conn)}
+    if rows:
+        selected: list[sqlite3.Row] = []
+        for row in rows:
+            child = children.get(row["id"])
+            if child is None:
+                raise ValidationError(
+                    f"{row['code']} no es una tarea; no hay nada que renumerar"
+                )
+            if child["parent_archived"]:
+                raise ValidationError(
+                    f"El padre de {row['code']} está archivado"
+                )
+            selected.append(child)
+    else:
+        selected = list(children.values())
+
+    def eligible(row: sqlite3.Row) -> bool:
+        if row["parent_archived"]:
+            return False
+        if row["code"].startswith(row["parent_code"] + "."):
+            return False
+        if row["id"] in adopted:
+            return include_adopted
+        return row["created_at"] >= row["parent_created"]
+
+    candidates = [row for row in selected if eligible(row)]
+    used = {
+        row["code"] for row in conn.execute("SELECT code FROM tickets")
+    } - {row["code"] for row in candidates}
+    groups: dict[int, list[sqlite3.Row]] = {}
+    for row in candidates:
+        groups.setdefault(row["parent_id"], []).append(row)
+
+    items: list[dict[str, Any]] = []
+    for parent_id in sorted(groups):
+        group = sorted(groups[parent_id], key=lambda row: row["id"])
+        prefix = group[0]["parent_code"] + "."
+        number = 1
+        for row in group:
+            while f"{prefix}{number:02d}" in used:
+                number += 1
+            new_code = f"{prefix}{number:02d}"
+            used.add(new_code)
+            items.append(
+                _reorg_item(row, new_code, row["parent_code"])
+            )
+            number += 1
+    warnings: list[str] = []
+    if rows and not items:
+        warnings.append("No hay tareas que renumerar con esos filtros")
+    return _reorg_finish("renumber", items, warnings)
+
+
+def _plan_promote(
+    conn: sqlite3.Connection, rows: list[sqlite3.Row]
+) -> dict[str, Any]:
+    warnings: list[str] = []
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        if row["parent_id"] is None:
+            if _has_children(conn, row["id"]):
+                warnings.append(f"{row['code']} ya es una épica con tareas")
+            else:
+                warnings.append(f"{row['code']} ya es una épica potencial")
+        else:
+            parent = row_by_code(conn, row["parent_id"])
+            warnings.append(
+                f"{row['code']} se desvincula de {parent['code']} para poder "
+                "tener tareas"
+            )
+        items.append(_reorg_item(row, row["code"], None))
+    return _reorg_finish("promote", items, warnings)
+
+
+def _plan_demote(
+    conn: sqlite3.Connection,
+    rows: list[sqlite3.Row],
+    children_to: Any,
+    parent: Any,
+) -> dict[str, Any]:
+    if children_to is UNSET:
+        raise ValidationError(
+            "Indica children_to: otra épica o None para dejar las tareas en "
+            "la raíz"
+        )
+    moving_ids = {row["id"] for row in rows}
+    target: sqlite3.Row | None = None
+    if children_to is not None and str(children_to).strip():
+        target = _reorg_row(conn, children_to)
+        if target["archived"]:
+            raise ValidationError(
+                f"El destino {target['code']} está archivado"
+            )
+        if target["id"] in moving_ids:
+            raise ValidationError(
+                "El destino de las tareas no puede ser uno de los tickets "
+                "degradados"
+            )
+        if target["parent_id"] is not None:
+            raise ValidationError(
+                f"{target['code']} ya es una tarea; solo se admite un nivel "
+                "(épica → tarea)"
+            )
+    dest_parent = None
+    if parent is not None and str(parent).strip():
+        dest_parent = _reorg_parent(conn, parent, moving_ids)
+
+    items: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for row in rows:
+        children = conn.execute(
+            "SELECT * FROM tickets WHERE parent_id = ? ORDER BY id",
+            (row["id"],),
+        ).fetchall()
+        if not children:
+            raise ValidationError(
+                f"{row['code']} no tiene tareas que reasignar"
+            )
+        if target is not None and any(
+            child["id"] == target["id"] for child in children
+        ):
+            raise ValidationError(
+                f"{target['code']} es una tarea de {row['code']}; no puede "
+                "ser el destino"
+            )
+        parent_code = dest_parent["code"] if dest_parent else None
+        items.append(_reorg_item(row, row["code"], parent_code))
+        for child in children:
+            items.append(
+                _reorg_item(
+                    child,
+                    child["code"],
+                    target["code"] if target else None,
+                )
+            )
+        if target is None:
+            warnings.append(
+                f"{row['code']}: {len(children)} tarea(s) pasan a la raíz"
+            )
+    return _reorg_finish("demote", items, warnings)
+
+
+def reorg_plan(
+    conn: sqlite3.Connection,
+    action: str,
+    codes: Any = None,
+    parent: Any = None,
+    children_to: Any = UNSET,
+    include_adopted: bool = False,
+    renumber: bool | None = None,
+) -> dict[str, Any]:
+    """Plan puro de reorganización: no escribe en la base de datos.
+
+    ``action`` es ``move`` (cambiar de épica), ``renumber`` (códigos
+    ``padre.NN``), ``promote`` (tarea → raíz/épica) o ``demote`` (épica →
+    tarea, repartiendo sus hijos). Devuelve ``action``, ``items`` y
+    ``warnings``; ``apply`` vive en la tarea que ejecuta el plan.
+    """
+    if action not in REORG_ACTIONS:
+        raise ValidationError(
+            f"Acción de reorganización desconocida: {action}. "
+            f"Usa una de: {', '.join(REORG_ACTIONS)}"
+        )
+    rows = _reorg_rows(conn, codes)
+    if action != "renumber" and not rows:
+        raise ValidationError("Indica al menos un ticket para reorganizar")
+    if action == "move":
+        return _plan_move(conn, rows, parent, renumber)
+    if action == "renumber":
+        return _plan_renumber(conn, rows, include_adopted)
+    if action == "promote":
+        return _plan_promote(conn, rows)
+    return _plan_demote(conn, rows, children_to, parent)
+
+
 def renumber_plan(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """Tareas con código plano que deberían ser ``T-XXXX.NN``.
 
@@ -352,54 +686,7 @@ def renumber_plan(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     por ``attach``: los tickets adoptados conservan su código a propósito
     (T-0008… bajo T-0015).
     """
-    rows = conn.execute(
-        "SELECT c.id, c.code, c.title, c.status, c.created_at, "
-        "p.id AS parent_id, p.code AS parent_code, p.created_at AS parent_created "
-        "FROM tickets c JOIN tickets p ON p.id = c.parent_id "
-        "WHERE c.archived = 0 AND p.archived = 0 ORDER BY c.parent_id, c.id"
-    ).fetchall()
-    existing = {
-        row["code"] for row in conn.execute("SELECT code FROM tickets")
-    }
-    adopted = {
-        row["ticket_id"]
-        for row in conn.execute(
-            "SELECT DISTINCT ticket_id FROM events WHERE action = 'vincular'"
-        )
-    }
-
-    groups: dict[int, list[Any]] = {}
-    parents: dict[int, str] = {}
-    for row in rows:
-        if row["code"].startswith(row["parent_code"] + "."):
-            continue
-        if row["id"] in adopted:
-            continue
-        if row["created_at"] < row["parent_created"]:
-            continue
-        groups.setdefault(row["parent_id"], []).append(row)
-        parents[row["parent_id"]] = row["parent_code"]
-
-    plan: list[dict[str, Any]] = []
-    for parent_id, items in groups.items():
-        prefix = parents[parent_id] + "."
-        number = 1
-        for item in sorted(items, key=lambda row: row["id"]):
-            while f"{prefix}{number:02d}" in existing:
-                number += 1
-            new_code = f"{prefix}{number:02d}"
-            existing.add(new_code)
-            plan.append(
-                {
-                    "id": item["id"],
-                    "code": item["code"],
-                    "new_code": new_code,
-                    "title": item["title"],
-                    "status": item["status"],
-                }
-            )
-            number += 1
-    return plan
+    return reorg_plan(conn, "renumber")["items"]
 
 
 def renumber_children(
