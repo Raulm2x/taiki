@@ -56,62 +56,45 @@ def run(h: Harness) -> None:
 
     c1, c2, c3 = completado("uno"), completado("dos"), completado("tres")
     report = repo.confirm_tickets(conn, [c1["code"], c2["code"]])
-    _ok(
-        h,
-        (
-            report["confirmed"] == [c1["code"], c2["code"]],
-            "confirm_tickets confirma varios a la vez",
-        ),
-        (
-            report["already"] == [] and report["errors"] == {},
-            "un lote válido no reporta incidencias",
-        ),
-    )
     again = repo.confirm_tickets(conn, [c1["code"], c3["code"]])
+    t_pending = repo.create_ticket(conn, title="Sin completar")
+    c4, c5 = completado("cuatro"), completado("cinco")
+    bad = repo.confirm_tickets(conn, [c4["code"], t_pending["code"]])
+    missing = repo.confirm_tickets(conn, [c5["code"], "T-9999"])
+    c4_status = repo.get_ticket(conn, c4["code"])["status"]
+    c5_status = repo.get_ticket(conn, c5["code"])["status"]
+    dup = repo.confirm_tickets(conn, [c5["code"], c5["code"]])
     _ok(
         h,
+        (
+            report["confirmed"] == [c1["code"], c2["code"]]
+            and report["already"] == []
+            and report["errors"] == {},
+            "confirm_tickets confirma varios a la vez sin incidencias",
+        ),
         (
             again["already"] == [c1["code"]]
             and again["confirmed"] == [c3["code"]],
             "los ya confirmados se omiten sin romper el lote",
         ),
-    )
-
-    t_pending = repo.create_ticket(conn, title="Sin completar")
-    c4, c5 = completado("cuatro"), completado("cinco")
-    bad = repo.confirm_tickets(conn, [c4["code"], t_pending["code"]])
-    missing = repo.confirm_tickets(conn, [c5["code"], "T-9999"])
-    _ok(
-        h,
         (
             bad["confirmed"] == []
-            and t_pending["code"] in bad["errors"],
-            "un ticket no completado se reporta como error",
-        ),
-        (
-            missing["confirmed"] == []
+            and t_pending["code"] in bad["errors"]
+            and missing["confirmed"] == []
             and "T-9999" in missing["errors"],
-            "un código inexistente se reporta como error",
+            "un ticket no completado o inexistente se reporta como error",
         ),
         (
-            repo.get_ticket(conn, c4["code"])["status"] == "completado"
-            and repo.get_ticket(conn, c5["code"])["status"] == "completado",
+            c4_status == "completado" and c5_status == "completado",
             "un lote inválido no confirma ninguno de sus tickets válidos",
         ),
-    )
-    dup = repo.confirm_tickets(conn, [c5["code"], c5["code"]])
-    _ok(
-        h,
         (
-            dup["confirmed"] == [c5["code"]],
-            "los códigos repetidos se deduplican",
-        ),
-        (
-            _falla(
+            dup["confirmed"] == [c5["code"]]
+            and _falla(
                 lambda: repo.confirm_tickets(conn, []),
                 domain.ValidationError,
             ),
-            "confirmar sin códigos falla",
+            "los códigos repetidos se deduplican y confirmar sin códigos falla",
         ),
     )
 
@@ -223,19 +206,21 @@ def run(h: Harness) -> None:
     blocked = tui_actions.change_status(
         target["code"], "bloqueado", "esperando", "usuario"
     )
+    commented = tui_actions.comment(
+        target["code"], "desde la TUI", "usuario"
+    )
+    linked = tui_actions.link_commit(target["code"], "abc1234", "usuario")
+    payload = tui_actions.osc52("T-0001")
     _ok(
         h,
         (
             claimed["status"] == "en_progreso"
-            and claimed["assigned_to"] == "tui:test",
-            "la TUI puede reclamar un ticket",
+            and claimed["assigned_to"] == "tui:test"
+            and assigned["assigned_to"] == "otro:agente"
+            and assigned["status"] == "en_progreso"
+            and blocked["status"] == "bloqueado",
+            "la TUI reclama, asigna y cambia de estado",
         ),
-        (
-            assigned["assigned_to"] == "otro:agente"
-            and assigned["status"] == "en_progreso",
-            "asignar no cambia el estado",
-        ),
-        (blocked["status"] == "bloqueado", "la TUI cambia de estado"),
         (
             _falla(
                 lambda: tui_actions.change_status(
@@ -245,19 +230,13 @@ def run(h: Harness) -> None:
             ),
             "una transición inválida falla",
         ),
-    )
-    commented = tui_actions.comment(
-        target["code"], "desde la TUI", "usuario"
-    )
-    linked = tui_actions.link_commit(target["code"], "abc1234", "usuario")
-    _ok(
-        h,
         (
             any(
                 c["body"] == "desde la TUI"
                 for c in commented["comments"]
-            ),
-            "la TUI añade comentarios",
+            )
+            and any(link["ref"] == "abc1234" for link in linked["links"]),
+            "la TUI añade comentarios y enlaza commits",
         ),
         (
             _falla(
@@ -267,29 +246,17 @@ def run(h: Harness) -> None:
             "un comentario vacío falla",
         ),
         (
-            any(link["ref"] == "abc1234" for link in linked["links"]),
-            "la TUI enlaza commits",
-        ),
-    )
-    payload = tui_actions.osc52("T-0001")
-    _ok(
-        h,
-        (
             tui_actions.available_statuses({"status": "completado"})
-            == ["bloqueado", "en_progreso", "verificado"],
-            "las acciones ofrecen verificar pero no confirmar directamente",
-        ),
-        (
-            "confirmado"
-            not in tui_actions.available_statuses({"status": "verificado"}),
-            "confirmar sigue reservado al usuario",
-        ),
-        (
-            tui_actions.needs_note({"status": "completado"}, "en_progreso")
+            == ["bloqueado", "en_progreso", "verificado"]
+            and "confirmado"
+            not in tui_actions.available_statuses({"status": "verificado"})
+            and tui_actions.needs_note(
+                {"status": "completado"}, "en_progreso"
+            )
             and not tui_actions.needs_note(
                 {"status": "nuevo"}, "en_progreso"
             ),
-            "reabrir exige motivo",
+            "verificar no confirma y reabrir exige motivo",
         ),
         (
             payload.startswith("\033]52;c;")
@@ -430,14 +397,16 @@ def run(h: Harness) -> None:
     iso_conn = db.connect(cli_db)
     try:
         created_ticket = repo.get_ticket(iso_conn, "T-0001")
+        out = io.StringIO()
+        with h.env(TAIKI_DB=cli_db), contextlib.redirect_stdout(out):
+            updated_code = cli.main(
+                ["update", "T-0001", "--isolation", "none"]
+            )
         _ok(
             h,
             (
-                created_code == 0,
-                "taiki new acepta aislamiento, recursos y reversión",
-            ),
-            (
-                (
+                created_code == 0
+                and (
                     created_ticket["isolation"],
                     created_ticket["resources"],
                     created_ticket["reversal"]["kind"],
@@ -447,26 +416,25 @@ def run(h: Harness) -> None:
                     ["package:git", "systemd:user/taiki.service"],
                     "manual",
                 ),
-                "new persiste el modelo de aislamiento",
+                "new acepta y persiste aislamiento, recursos y reversión",
             ),
-        )
-        out = io.StringIO()
-        with h.env(TAIKI_DB=cli_db), contextlib.redirect_stdout(out):
-            updated_code = cli.main(
-                ["update", "T-0001", "--isolation", "none"]
-            )
-        _ok(
-            h,
-            (updated_code == 0, "taiki update acepta --isolation"),
             (
-                repo.get_ticket(iso_conn, "T-0001")["isolation"] == "none",
-                "update cambia el aislamiento",
+                updated_code == 0
+                and repo.get_ticket(iso_conn, "T-0001")["isolation"]
+                == "none",
+                "update acepta --isolation y lo cambia",
             ),
         )
         out = io.StringIO()
         with h.env(TAIKI_DB=cli_db), contextlib.redirect_stdout(out):
             cli.main(["show", "T-0001", "--json", "--compact"])
         shown = json.loads(out.getvalue().strip())
+        out = io.StringIO()
+        with h.env(TAIKI_DB=cli_db), contextlib.redirect_stdout(out):
+            cli.main(
+                ["list", "--json-summary", "--compact", "--limit", "5"]
+            )
+        listed = json.loads(out.getvalue().strip())
         _ok(
             h,
             (
@@ -477,15 +445,6 @@ def run(h: Harness) -> None:
                 and shown["scope"],
                 "show incluye isolation, recursos y scope",
             ),
-        )
-        out = io.StringIO()
-        with h.env(TAIKI_DB=cli_db), contextlib.redirect_stdout(out):
-            cli.main(
-                ["list", "--json-summary", "--compact", "--limit", "5"]
-            )
-        listed = json.loads(out.getvalue().strip())
-        _ok(
-            h,
             (
                 listed.get("scope_roots")
                 and all(
@@ -496,3 +455,203 @@ def run(h: Harness) -> None:
         )
     finally:
         iso_conn.close()
+
+    # ── Reorganización por CLI con dry-run por defecto ──────────────
+    reorg_epic = repo.create_ticket(conn, title="Épica CLI destino")
+    reorg_flat = repo.create_ticket(conn, title="Tarea CLI plana")
+    conn.execute(
+        "UPDATE tickets SET code = 'T-9201' WHERE id = ?",
+        (reorg_flat["id"],),
+    )
+    conn.commit()
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        dry_move = cli.main(
+            ["move", "T-9201", "--parent", reorg_epic["code"], "--renumber"]
+        )
+    unchanged = repo.get_ticket(conn, "T-9201")
+    json_out = io.StringIO()
+    with contextlib.redirect_stdout(json_out):
+        cli.main(
+            [
+                "move",
+                "T-9201",
+                "--parent",
+                reorg_epic["code"],
+                "--keep-code",
+                "--json",
+            ]
+        )
+    payload = json.loads(json_out.getvalue())
+    _ok(
+        h,
+        (
+            dry_move == 0 and "T-9201 → " in out.getvalue(),
+            "move simula con renumber y muestra OLD → NEW",
+        ),
+        (
+            unchanged["code"] == "T-9201"
+            and unchanged["parent_id"] is None,
+            "move sin --apply no escribe",
+        ),
+        (
+            payload["action"] == "move"
+            and payload["items"][0]["new_code"] == "T-9201",
+            "move --json devuelve el plan y keep-code conserva el código",
+        ),
+    )
+    with contextlib.redirect_stdout(io.StringIO()):
+        applied_move = cli.main(
+            [
+                "move",
+                "T-9201",
+                "--parent",
+                reorg_epic["code"],
+                "--renumber",
+                "--apply",
+            ]
+        )
+    moved = repo.get_ticket(conn, reorg_epic["code"] + ".01")
+    _ok(
+        h,
+        (
+            applied_move == 0 and moved["id"] == reorg_flat["id"],
+            "move --renumber --apply deja padre.NN",
+        ),
+        (
+            moved["parent_id"] == reorg_epic["id"],
+            "move --apply actualiza el padre",
+        ),
+    )
+
+    descendant = repo.create_ticket(
+        conn, title="Hija de la épica CLI", parent_id=reorg_epic["code"]
+    )
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        bad_move = cli.main(
+            [
+                "move",
+                reorg_epic["code"],
+                "--parent",
+                descendant["code"],
+                "--renumber",
+            ]
+        )
+    _ok(
+        h,
+        (
+            bad_move == 1 and "Error:" in err.getvalue(),
+            "move rechaza ciclos/dos niveles con exit != 0",
+        ),
+    )
+
+    promote_task = repo.create_ticket(
+        conn, title="Tarea promovible CLI", parent_id=reorg_epic["code"]
+    )
+    with contextlib.redirect_stdout(io.StringIO()):
+        dry_promote = cli.main(["promote", promote_task["code"]])
+    still_child = repo.get_ticket(conn, promote_task["code"])
+    with contextlib.redirect_stdout(io.StringIO()):
+        applied_promote = cli.main(
+            ["promote", promote_task["code"], "--apply"]
+        )
+    promoted = repo.get_ticket(conn, promote_task["code"])
+    _ok(
+        h,
+        (
+            dry_promote == 0
+            and still_child["parent_id"] == reorg_epic["id"],
+            "promote simula sin escribir",
+        ),
+        (
+            applied_promote == 0 and promoted["parent_id"] is None,
+            "promote --apply deja la tarea en la raíz",
+        ),
+    )
+
+    demote_epic = repo.create_ticket(conn, title="Épica a degradar CLI")
+    demote_child = repo.create_ticket(
+        conn, title="Tarea reasignada CLI", parent_id=demote_epic["code"]
+    )
+    dest_epic = repo.create_ticket(conn, title="Épica destino CLI")
+    with contextlib.redirect_stdout(io.StringIO()):
+        applied_demote = cli.main(
+            [
+                "demote",
+                demote_epic["code"],
+                "--children-to",
+                dest_epic["code"],
+                "--parent",
+                reorg_epic["code"],
+                "--renumber",
+                "--apply",
+            ]
+        )
+    demoted = repo.get_ticket(conn, demote_epic["code"])
+    renumbered_child = repo.get_ticket(conn, dest_epic["code"] + ".01")
+    _ok(
+        h,
+        (
+            applied_demote == 0
+            and demoted["parent_id"] == reorg_epic["id"],
+            "demote --apply mueve la épica al padre indicado",
+        ),
+        (
+            renumbered_child["id"] == demote_child["id"],
+            "demote --renumber numera los hijos bajo su nuevo padre",
+        ),
+    )
+
+    ren_epic = repo.create_ticket(conn, title="Épica adoptada CLI")
+    adopted = repo.create_ticket(conn, title="Ticket adoptado CLI")
+    watcher = repo.create_ticket(conn, title="Vigilante CLI")
+    repo.attach_tickets(
+        conn, ren_epic["code"], [adopted["code"]], actor="test"
+    )
+    repo.link_ticket(
+        conn, watcher["code"], "depende", adopted["code"], actor="test"
+    )
+    with contextlib.redirect_stdout(io.StringIO()):
+        applied_ren = cli.main(
+            ["renumber", adopted["code"], "--adopted", "--apply"]
+        )
+    new_adopted_code = ren_epic["code"] + ".01"
+    renamed = repo.get_ticket(conn, new_adopted_code)
+    link_refs = [
+        link["ref"]
+        for link in repo.get_ticket(conn, watcher["code"])["links"]
+        if link["kind"] == "depende"
+    ]
+    _ok(
+        h,
+        (
+            applied_ren == 0 and renamed["id"] == adopted["id"],
+            "renumber --adopted renombra el ticket adoptado",
+        ),
+        (
+            new_adopted_code in link_refs,
+            "renumber --adopted reapunta el enlace depende",
+        ),
+    )
+
+    attach_epic = repo.create_ticket(conn, title="Épica attach CLI")
+    attach_flat = repo.create_ticket(conn, title="Tarea attach CLI")
+    conn.execute(
+        "UPDATE tickets SET code = 'T-9202' WHERE id = ?",
+        (attach_flat["id"],),
+    )
+    conn.commit()
+    with contextlib.redirect_stdout(io.StringIO()):
+        attach_exit = cli.main(["attach", attach_epic["code"], "T-9202"])
+    attached = repo.get_ticket(conn, "T-9202")
+    _ok(
+        h,
+        (
+            attach_exit == 0
+            and attached["parent_id"] == attach_epic["id"]
+            and attached["code"] == "T-9202",
+            "attach sin flags vincula conservando el código",
+        ),
+    )
+

@@ -19,6 +19,7 @@ from commands import (
     cmd_comment,
     cmd_commit,
     cmd_complete,
+    cmd_demote,
     cmd_detach,
     cmd_confirm,
     cmd_export,
@@ -34,11 +35,13 @@ from commands import (
     cmd_mcp_install,
     cmd_mcp_uninstall,
     cmd_memory,
+    cmd_move,
     cmd_new,
     cmd_next,
     cmd_open,
     cmd_scratch,
     cmd_overview,
+    cmd_promote,
     cmd_renumber,
     cmd_repair_gaps,
     cmd_reject,
@@ -141,7 +144,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.set_defaults(func=cmd_list)
 
-    p = sub.add_parser("attach", help="Agrupa tickets bajo una épica")
+    p = sub.add_parser(
+        "attach",
+        help="Agrupa tickets bajo una épica (equivale a move --keep-code)",
+        description="Cuelga los tickets de una épica conservando su código; "
+        "equivale a 'move --keep-code'.",
+    )
     p.add_argument("parent")
     p.add_argument("codes", nargs="+")
     p.add_argument("--agent", default="usuario")
@@ -151,6 +159,62 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("codes", nargs="+")
     p.add_argument("--agent", default="usuario")
     p.set_defaults(func=cmd_detach)
+
+    p = sub.add_parser(
+        "move",
+        help="Mueve tickets a otra épica (dry-run por defecto)",
+        description="Reasigna los tickets a la épica --parent. Sin --renumber "
+        "conserva el código (como attach); simula salvo con --apply.",
+    )
+    p.add_argument("codes", nargs="+")
+    p.add_argument("--parent", required=True, help="Épica destino")
+    modo = p.add_mutually_exclusive_group()
+    modo.add_argument(
+        "--renumber",
+        action="store_true",
+        help="Renombra los códigos a <padre>.NN",
+    )
+    modo.add_argument(
+        "--keep-code",
+        action="store_true",
+        help="Conserva el código plano (defecto; como attach)",
+    )
+    p.add_argument("--apply", action="store_true", help="Aplica el plan")
+    p.add_argument("--json", action="store_true", help="Emite JSON")
+    p.set_defaults(func=cmd_move)
+
+    p = sub.add_parser(
+        "promote",
+        help="Convierte una tarea en épica (dry-run por defecto)",
+        description="Desvincula el ticket de su padre para que pueda tener "
+        "tareas; simula salvo con --apply.",
+    )
+    p.add_argument("code")
+    p.add_argument("--apply", action="store_true", help="Aplica el plan")
+    p.add_argument("--json", action="store_true", help="Emite JSON")
+    p.set_defaults(func=cmd_promote)
+
+    p = sub.add_parser(
+        "demote",
+        help="Convierte una épica en tarea (dry-run por defecto)",
+        description="Reparte sus tareas en --children-to (o root) y mueve la "
+        "épica a --parent si se indica; simula salvo con --apply.",
+    )
+    p.add_argument("code")
+    p.add_argument(
+        "--children-to",
+        required=True,
+        help="Épica destino de las tareas, o 'root' para dejarlas en la raíz",
+    )
+    p.add_argument("--parent", help="Épica destino de la épica degradada")
+    p.add_argument(
+        "--renumber",
+        action="store_true",
+        help="Renumera como <padre>.NN los tickets que ganan padre",
+    )
+    p.add_argument("--apply", action="store_true", help="Aplica el plan")
+    p.add_argument("--json", action="store_true", help="Emite JSON")
+    p.set_defaults(func=cmd_demote)
 
     p = sub.add_parser("show", help="Muestra un ticket")
     p.add_argument("code")
@@ -209,7 +273,17 @@ def build_parser() -> argparse.ArgumentParser:
         "renumber",
         help="Renombra tareas con código plano a T-XXXX.NN",
         description="Detecta hijos creados con el padre pero con código normal "
-        "(procesos antiguos) y los renombra; los adoptados con attach no se tocan.",
+        "(procesos antiguos) y los renombra. Solo toca los adoptados con "
+        "attach si se pasa --adopted; sin códigos usa todos los candidatos. "
+        "Simula salvo con --apply.",
+    )
+    p.add_argument(
+        "codes", nargs="*", help="Tareas concretas (defecto: todas)"
+    )
+    p.add_argument(
+        "--adopted",
+        action="store_true",
+        help="Incluye los tickets adoptados con attach",
     )
     p.add_argument("--apply", action="store_true", help="Aplica los cambios")
     p.add_argument("--agent", help="Agente que ejecuta el cambio")

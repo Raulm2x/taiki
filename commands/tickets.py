@@ -280,24 +280,145 @@ def cmd_repair_gaps(args: argparse.Namespace) -> int:
     return 0
 
 
+def _reorg_plan_args(args: argparse.Namespace) -> dict:
+    return {
+        "action": "renumber",
+        "codes": args.codes or None,
+        "include_adopted": args.adopted,
+    }
+
+
+def _print_reorg(plan: dict, as_json: bool, applied: bool) -> None:
+    """Salida común de los planes de reorganización."""
+    if as_json:
+        print(render.to_json(plan))
+        return
+    for item in plan["items"]:
+        parent = f" ({item['parent_code']})" if item.get("parent_code") else ""
+        print(f"{item['code']} → {item['new_code']}{parent}")
+    for warning in plan.get("warnings", []):
+        print(f"Aviso: {warning}")
+    if not plan["items"]:
+        print("No hay cambios.")
+    if not applied:
+        print("(simulación; usa --apply para aplicar)")
+
+
 def cmd_renumber(args: argparse.Namespace) -> int:
     with _conn() as conn:
-        plan = repo.renumber_children(
-            conn,
-            apply=args.apply,
-            actor=args.agent or "usuario",
-            actor_type="agente" if args.agent else "usuario",
-        )
+        kwargs = _reorg_plan_args(args)
+        if args.apply:
+            plan = repo.reorg_apply(
+                conn,
+                actor=args.agent or "usuario",
+                actor_type="agente" if args.agent else "usuario",
+                **kwargs,
+            )
+        else:
+            plan = repo.reorg_plan(conn, **kwargs)
     if args.json:
         print(render.to_json(plan))
         return 0
-    if not plan:
+    if not plan["items"]:
         print("No hay tareas con código fuera de patrón.")
         return 0
-    for item in plan:
+    for item in plan["items"]:
         print(f"{item['code']} → {item['new_code']}  {item['title']}")
+    for warning in plan["warnings"]:
+        print(f"Aviso: {warning}")
     if not args.apply:
         print("(simulación; usa --apply para renumerar)")
+    return 0
+
+
+def cmd_move(args: argparse.Namespace) -> int:
+    """Mueve tickets a otra épica; sin --apply solo simula."""
+    with _conn() as conn:
+        kwargs = {
+            "action": "move",
+            "codes": args.codes,
+            "parent": args.parent,
+            "renumber": args.renumber,
+        }
+        plan = (
+            repo.reorg_apply(conn, **kwargs)
+            if args.apply
+            else repo.reorg_plan(conn, **kwargs)
+        )
+    _print_reorg(plan, args.json, args.apply)
+    return 0
+
+
+def cmd_promote(args: argparse.Namespace) -> int:
+    """Convierte una tarea en épica; sin --apply solo simula."""
+    with _conn() as conn:
+        kwargs = {"action": "promote", "codes": [args.code]}
+        plan = (
+            repo.reorg_apply(conn, **kwargs)
+            if args.apply
+            else repo.reorg_plan(conn, **kwargs)
+        )
+    _print_reorg(plan, args.json, args.apply)
+    return 0
+
+
+def cmd_demote(args: argparse.Namespace) -> int:
+    """Reparte las tareas de una épica y la degrada a tarea."""
+    children_to = (
+        None
+        if str(args.children_to).strip().lower() == "root"
+        else args.children_to
+    )
+    with _conn() as conn:
+        kwargs = {
+            "action": "demote",
+            "codes": [args.code],
+            "children_to": children_to,
+            "parent": args.parent,
+        }
+        if args.apply:
+            plan = repo.reorg_apply(conn, **kwargs)
+            if args.renumber:
+                codes = [
+                    item["code"]
+                    for item in plan["items"]
+                    if item["code"] != args.code and item.get("parent_code")
+                ]
+                if codes:
+                    renumbered = repo.reorg_apply(
+                        conn,
+                        "renumber",
+                        codes,
+                        include_adopted=True,
+                    )
+                    new_codes = {
+                        item["code"]: item["new_code"]
+                        for item in renumbered["items"]
+                    }
+                    plan = {
+                        **plan,
+                        "items": [
+                            {
+                                **item,
+                                "new_code": new_codes.get(
+                                    item["code"], item["new_code"]
+                                ),
+                            }
+                            for item in plan["items"]
+                        ],
+                        "renumber": renumbered,
+                    }
+        else:
+            plan = repo.reorg_plan(conn, **kwargs)
+            if args.renumber:
+                plan = {
+                    **plan,
+                    "warnings": [
+                        *plan["warnings"],
+                        "renumber se calculará al aplicar con --apply",
+                    ],
+                }
+    _print_reorg(plan, args.json, args.apply)
     return 0
 
 
