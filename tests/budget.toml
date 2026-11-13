@@ -87,7 +87,8 @@ baseline_checks = 1584
 # T-0078.04: +14 checks purge; revisión única (techo 1618).
 # T-0078.06: +2 checks E2E reorg; revisión única (techo 1620).
 # T-0079 +1 check de regresion; T-0078.06 tip 1621; revision unica (techo 1622).
-checks_tolerance = 38
+# T-0082: repair-evidence y tests; techo 1624.
+checks_tolerance = 40
 
 [module]
 # El módulo más lento es test_release (1.11s medido); +0.2s de margen.

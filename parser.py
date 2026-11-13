@@ -596,6 +596,19 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--json", action="store_true")
     m.set_defaults(func=cmd_memory)
 
+    m = memory_sub.add_parser(
+        "repair-evidence",
+        help="Normaliza el prefijo embebido en refs de evidencia (dry-run)",
+    )
+    m.add_argument(
+        "--apply",
+        action="store_true",
+        help="Escribe los cambios y deja un backup de la DB",
+    )
+    m.add_argument("--json", action="store_true")
+    m.add_argument("--root", help="Raíz para resolver ficheros y commits")
+    m.set_defaults(func=cmd_memory)
+
     m = memory_sub.add_parser("stats", help="Estadísticas de la memoria")
     m.add_argument("--json", action="store_true")
     m.set_defaults(func=cmd_memory)

@@ -191,6 +191,41 @@ def run(h: Harness) -> None:
         "memory add respeta el máximo por entrada",
     )
 
+    prefixed = add_memory(
+        h.conn,
+        title="Evidencia prefijada",
+        content="La ref lleva el tipo dentro y no es vigente.",
+        key="cli-prefijo",
+        source="user",
+    )
+    real = Path(h.tmp) / "cli-evidencia.md"
+    real.write_text("vigente\n", encoding="utf-8")
+    with h.conn:
+        h.conn.execute(
+            "INSERT INTO memory_evidence(memory_id, kind, ref, created_at) "
+            "VALUES (?, 'file', ?, datetime('now'))",
+            (prefixed["id"], f"file:{real}"),
+        )
+    _, dry = _json(["memory", "repair-evidence", "--json"])
+    dry_backups = (Path(h.tmp) / "backups").exists()
+    _, applied_repair = _json(["memory", "repair-evidence", "--json", "--apply"])
+    backup = Path(applied_repair["backup"] or "")
+    h.ok(
+        dry["valid"] == 1
+        and dry["dry_run"]
+        and dry["backup"] is None
+        and not dry_backups
+        and not applied_repair["dry_run"]
+        and applied_repair["applied"] == 1
+        and backup.is_file()
+        and backup.parent == Path(h.tmp) / "backups"
+        and h.conn.execute(
+            "SELECT 1 FROM memory_evidence WHERE ref LIKE 'file:%'"
+        ).fetchone()
+        is None,
+        "memory repair-evidence simula, aplica con backup y quita el prefijo",
+    )
+
     _, brief = _json(["brief", "--budget", "5000", "--json"])
     _, user_brief = _json(["brief", "--section", "user", "--json"])
     _, tight = _json(["brief", "--budget", "30", "--json"])

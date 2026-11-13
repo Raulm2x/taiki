@@ -328,6 +328,7 @@ taiki memory pending --diff # diff frente a la memoria sustituida
 taiki memory candidates     # candidatos deterministas del histórico
 taiki memory review --write # paquete para el curator
 taiki memory curate         # caducidad, archivo y dedupe (nunca borra)
+taiki memory repair-evidence # normaliza el prefijo embebido en la evidencia
 taiki memory stats          # estado, presupuesto, uso y routing
 taiki memory impact         # tendencias, sin causalidad
 taiki memory export FILE    # snapshot JSON/Markdown con checksum

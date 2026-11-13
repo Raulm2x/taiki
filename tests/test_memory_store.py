@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+
 from ticketlib import db, repo
 from ticketlib.domain import ValidationError
 from ticketlib.memory import (
@@ -21,6 +23,8 @@ from ticketlib.memory import (
 )
 from ticketlib.memory import ledger as memory_ledger
 from ticketlib.memory.budget import select_for_budget
+from ticketlib.memory.repair import apply_repair, plan_repair
+from tests.seeds import git_repo
 from tests.support import Harness
 
 
@@ -980,6 +984,85 @@ def _ledger(h: Harness) -> None:
     )
 
 
+def _repair_evidence(h: Harness) -> None:
+    """Normaliza ``kind:<ref>``: plan, dry-run, aplicación, ledger y frescura."""
+    conn = h.conn
+    memory = add_memory(
+        conn,
+        title="Evidencia con prefijo embebido",
+        content="Las refs guardan el tipo dentro de ref y no son vigentes.",
+        key="prefijo-embebido",
+        source="user",
+    )
+    ticket = repo.create_ticket(conn, title="Evidencia de la reparación")
+    local = h.tmp / "evidencia.md"
+    local.write_text("vigente\n", encoding="utf-8")
+    git = git_repo(h.tmp)
+    subprocess.run(
+        ["git", "-C", str(git), "commit", "-q", "--allow-empty", "-m", "base"],
+        check=True,
+    )
+    sha = subprocess.run(
+        ["git", "-C", str(git), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    rows = [
+        ("file", f"file:{local}"),
+        ("ticket", f"ticket:{ticket['code']}"),
+        ("commit", f"commit:{sha}"),
+        ("file", "file:/no/existe"),
+    ]
+    with db.tx(conn):
+        for kind, ref in rows:
+            conn.execute(
+                "INSERT INTO memory_evidence(memory_id, kind, ref, created_at) "
+                "VALUES (?, ?, ?, datetime('now'))",
+                (memory["id"], kind, ref),
+            )
+    prefix_left = (
+        "SELECT COUNT(*) AS n FROM memory_evidence "
+        "WHERE memory_id = ? AND ref LIKE '%:%' AND ref != 'file:/no/existe'"
+    )
+    plan = plan_repair(conn, h.tmp)
+    untouched = conn.execute(prefix_left, (memory["id"],)).fetchone()["n"]
+    applied = apply_repair(conn, h.tmp, actor="tester")
+    remaining = [
+        str(row["ref"])
+        for row in conn.execute(
+            "SELECT ref FROM memory_evidence WHERE memory_id = ? AND ref LIKE '%:%'",
+            (memory["id"],),
+        ).fetchall()
+    ]
+    with db.tx(conn):
+        conn.execute(
+            "DELETE FROM memory_evidence WHERE memory_id = ? AND ref = ?",
+            (memory["id"], "file:/no/existe"),
+        )
+    after = get_memory(conn, memory["code"], record_usage=False, mark=False)
+    h.ok(
+        len(plan["changes"]) == 4
+        and plan["valid"] == 3
+        and plan["invalid"] == 1
+        and untouched == 3
+        and applied["applied"] == 3
+        and len(applied["ledger"]) == 1
+        and remaining == ["file:/no/existe"]
+        and conn.execute(prefix_left, (memory["id"],)).fetchone()["n"] == 0
+        and after["freshness"]["ok"]
+        and after["code"] == memory["code"]
+        and conn.execute(
+            "SELECT 1 FROM memory_ledger WHERE memory_id = ? "
+            "AND action = 'repair-evidence'",
+            (memory["id"],),
+        ).fetchone()
+        is not None,
+        "repair-evidence planifica 3/1, no escribe en dry-run, normaliza las "
+        "válidas, conserva la inválida, deja ledger y frescura sin tocar el código",
+    )
+
+
 def run(h: Harness) -> None:
     _migration(h)
     _ticket_kinds(h)
@@ -992,3 +1075,4 @@ def run(h: Harness) -> None:
     _rollback_budget(h)
     _supersede_rollback(h)
     _ledger(h)
+    _repair_evidence(h)

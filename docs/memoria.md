@@ -497,6 +497,19 @@ Tipos: `ticket` (`T-0045.05`), `commit` (`3bea4b9` o hash completo), `file`
 ticket también rellena `ticket_id`. Permite revisar de dónde salió la lección y
 es obligatoria para escrituras de agente.
 
+**Reparación de prefijos**. Algunas filas antiguas guardan el tipo dentro de
+`ref` (`file:/ruta`, `ticket:T-0012`, `commit:880faa1`, `session:ses_…`); la
+vigencia las leía como ficheros y las marcaba no vigentes.
+`taiki memory repair-evidence` separa el prefijo en `kind` y `ref`, sin tocar el
+código ni el contenido de la memoria. Por defecto es **dry-run**: muestra los
+cambios y no escribe. Con `--apply` copia la DB a `backups/` junto a
+`taiki.db` antes de escribir; las referencias que no resuelven (fichero, ticket
+o commit inexistente) se conservan para revisarlas, así que tras aplicar solo
+quedan las inválidas. Es idempotente: una segunda pasada no encuentra prefijos
+válidos. Cada memoria reparada deja un asiento `repair-evidence` en el ledger
+con el estado anterior y posterior, y `--root` fija la raíz con la que se
+resuelven rutas y commits.
+
 ## Seguridad
 
 Antes de guardar se escanean títulos, contenidos, evidencias y motivos:
@@ -581,6 +594,8 @@ taiki memory unpin M-0001
 taiki memory rm M-0001 --why "Ya no aplica"   # archiva
 
 taiki memory curate --dry-run
+taiki memory repair-evidence            # simula la normalización de refs
+taiki memory repair-evidence --apply    # escribe y deja backup de la DB
 taiki memory stats --json
 taiki memory impact --days 30 --json
 taiki memory export .taiki/generated/memoria.json

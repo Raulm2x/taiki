@@ -21,6 +21,7 @@ from .memory_query import (
     _impact,
     _list,
     _pending,
+    _repair_evidence,
     _review,
     _show,
     _stats,
@@ -77,6 +78,8 @@ def cmd_memory(args: argparse.Namespace) -> int:
             return _review(conn, args)
         if action == "curate":
             return _curate(conn, args)
+        if action == "repair-evidence":
+            return _repair_evidence(conn, args)
         if action == "stats":
             return _stats(conn, args)
         if action == "impact":

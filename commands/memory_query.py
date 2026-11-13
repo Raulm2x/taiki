@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import shutil
+from datetime import datetime
+from pathlib import Path
 
 from ticketlib import render, workspace
 from ticketlib.domain import ValidationError
@@ -16,6 +19,7 @@ from ticketlib.memory import budget as memory_budget
 from ticketlib.memory import core as memory_core
 from ticketlib.memory.curate import auto_curate
 from ticketlib.memory.render import memory_summary
+from ticketlib.memory.repair import apply_repair, plan_repair
 from ticketlib.memory.review import run_review_command
 from ticketlib.memory.stats import impact, stats
 
@@ -147,6 +151,58 @@ def _curate(conn, args: argparse.Namespace) -> int:
             f"  {scope}: {data['used']}/{data['limit']} chars · "
             f"retiradas {len(data['retired'])}{estado}"
         )
+    return 0
+
+
+def _database_backup(conn) -> Path:
+    """Copia la DB a ``<dir>/backups`` antes de una reparación destructiva."""
+    db = conn.execute("PRAGMA database_list").fetchone()[2]
+    if not db or not Path(db).is_file():
+        raise ValidationError("La DB no es un fichero; no hay backup posible")
+    dest = Path(db).parent / "backups"
+    dest.mkdir(parents=True, exist_ok=True)
+    target = dest / f"taiki-{datetime.now():%Y%m%d-%H%M%S}.db"
+    shutil.copy2(db, target)
+    return target
+
+
+def _repair_evidence(conn, args: argparse.Namespace) -> int:
+    """Normaliza ``kind:<ref>`` embebido; dry-run por defecto y backup al aplicar."""
+    root = getattr(args, "root", None)
+    plan = plan_repair(conn, root)
+    apply = bool(getattr(args, "apply", False))
+    backup: str | None = None
+    if apply and plan["valid"]:
+        backup = str(_database_backup(conn))
+        result = apply_repair(conn, root)
+    else:
+        result = {**plan, "applied": 0, "ledger": []}
+    payload = {**result, "backup": backup, "dry_run": not apply}
+    if _as_json(args):
+        print(render.to_json(payload))
+        return 0
+    if not args.apply:
+        print("Reparación de evidencia (simulación)")
+    else:
+        print("Reparación de evidencia")
+    print(
+        f"Cambios: {result['valid']} válidos · {result['invalid']} inválidos · "
+        f"{result['memories']} memoria(s)"
+    )
+    for item in result["changes"][:5]:
+        estado = "ok" if item["valid"] else f"inválida: {item['reason']}"
+        print(
+            f"  {item['code']}  {item['kind']}:{item['ref']} → "
+            f"{item['new_kind']}:{item['new_ref']}  ({estado})"
+        )
+    if not args.apply:
+        print(f"(simulación; raíz {result['root']}; usa --apply para escribir)")
+        return 0
+    if backup is not None:
+        print(f"Backup: {backup}")
+        print(f"Reparadas: {result['applied']} referencia(s)")
+    else:
+        print("Nada que reparar; no se escribe ni se crea backup.")
     return 0
 
 
