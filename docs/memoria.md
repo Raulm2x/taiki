@@ -503,10 +503,9 @@ vigencia las leía como ficheros y las marcaba no vigentes.
 `taiki memory repair-evidence` separa el prefijo en `kind` y `ref`, sin tocar el
 código ni el contenido de la memoria. Por defecto es **dry-run**: muestra los
 cambios y no escribe. Con `--apply` copia la DB a `backups/` junto a
-`taiki.db` antes de escribir; las referencias que no resuelven (fichero, ticket
-o commit inexistente) se conservan para revisarlas, así que tras aplicar solo
-quedan las inválidas. Es idempotente: una segunda pasada no encuentra prefijos
-válidos. Cada memoria reparada deja un asiento `repair-evidence` en el ledger
+`taiki.db` antes de escribir; las referencias inválidas también se normalizan y
+`freshness` las marcará `stale` con el motivo real (fichero, ticket o commit
+inexistente). Es idempotente: una segunda pasada no encuentra prefijos. Cada memoria reparada deja un asiento `repair-evidence` en el ledger
 con el estado anterior y posterior, y `--root` fija la raíz con la que se
 resuelven rutas y commits.
 

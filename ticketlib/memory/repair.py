@@ -139,17 +139,18 @@ def apply_repair(
     root: str | Path | None = None,
     actor: str = "agente",
 ) -> dict[str, Any]:
-    """Normaliza las referencias válidas y deja un asiento por memoria.
+    """Normaliza todas las referencias con prefijo y deja un asiento por memoria.
 
     Es idempotente: tras aplicarlo, ``plan_repair`` ya no encuentra prefijos.
-    Las referencias inválidas se conservan tal cual para poder revisarlas.
+    Las referencias inválidas también se normalizan; ``freshness`` las marcará
+    ``stale`` con su motivo real (fichero, ticket o commit inexistente).
     """
     plan = plan_repair(conn, root)
-    valid = [item for item in plan["changes"] if item["valid"]]
+    changes: list[dict[str, Any]] = plan["changes"]
     ledger_ids: list[int] = []
-    if valid:
+    if changes:
         by_memory: dict[int, list[dict[str, Any]]] = {}
-        for item in valid:
+        for item in changes:
             by_memory.setdefault(int(item["memory_id"]), []).append(item)
         with db.tx(conn):
             for memory_id, items in sorted(by_memory.items()):
@@ -175,11 +176,14 @@ def apply_repair(
                         after=after,
                         actor=actor,
                         reason=REPAIR_REASON,
+                        meta={
+                            "invalid": sum(1 for item in items if not item["valid"])
+                        },
                     )
                 )
     return {
         **plan,
-        "applied": len(valid),
+        "applied": len(changes),
         "ledger": ledger_ids,
     }
 

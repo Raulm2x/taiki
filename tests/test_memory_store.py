@@ -1023,7 +1023,7 @@ def _repair_evidence(h: Harness) -> None:
             )
     prefix_left = (
         "SELECT COUNT(*) AS n FROM memory_evidence "
-        "WHERE memory_id = ? AND ref LIKE '%:%' AND ref != 'file:/no/existe'"
+        "WHERE memory_id = ? AND ref LIKE '%:%'"
     )
     plan = plan_repair(conn, h.tmp)
     untouched = conn.execute(prefix_left, (memory["id"],)).fetchone()["n"]
@@ -1038,17 +1038,17 @@ def _repair_evidence(h: Harness) -> None:
     with db.tx(conn):
         conn.execute(
             "DELETE FROM memory_evidence WHERE memory_id = ? AND ref = ?",
-            (memory["id"], "file:/no/existe"),
+            (memory["id"], "/no/existe"),
         )
     after = get_memory(conn, memory["code"], record_usage=False, mark=False)
     h.ok(
         len(plan["changes"]) == 4
         and plan["valid"] == 3
         and plan["invalid"] == 1
-        and untouched == 3
-        and applied["applied"] == 3
+        and untouched == 4
+        and applied["applied"] == 4
         and len(applied["ledger"]) == 1
-        and remaining == ["file:/no/existe"]
+        and remaining == []
         and conn.execute(prefix_left, (memory["id"],)).fetchone()["n"] == 0
         and after["freshness"]["ok"]
         and after["code"] == memory["code"]
@@ -1058,8 +1058,8 @@ def _repair_evidence(h: Harness) -> None:
             (memory["id"],),
         ).fetchone()
         is not None,
-        "repair-evidence planifica 3/1, no escribe en dry-run, normaliza las "
-        "válidas, conserva la inválida, deja ledger y frescura sin tocar el código",
+        "repair-evidence planifica 3/1, no escribe en dry-run, normaliza todas "
+        "las refs, deja ledger y frescura sin tocar el código",
     )
 
 
