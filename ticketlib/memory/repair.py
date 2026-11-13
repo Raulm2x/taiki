@@ -70,7 +70,7 @@ def _reason(
         path = Path(ref).expanduser()
         if not path.is_absolute():
             path = root / path
-        return None if path.is_file() else f"fichero {ref} inexistente"
+        return None if path.exists() else f"fichero {ref} inexistente"
     if kind == "ticket":
         row = conn.execute(
             "SELECT 1 FROM tickets WHERE code = ?", (ref,)

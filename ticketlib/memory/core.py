@@ -137,9 +137,9 @@ def evidence_freshness(
         elif kind == "file":
             checked += 1
             path = _evidence_path(ref, root)
-            if not path.is_file():
+            if not path.exists():
                 reason = f"fichero {ref} inexistente"
-            elif blobs.get(ref):
+            elif blobs.get(ref) and path.is_file():
                 digest = hashlib.sha256(path.read_bytes()).hexdigest()
                 if digest != blobs[ref]:
                     reason = f"fichero {ref} cambió"
