@@ -513,8 +513,7 @@ Los commits se buscan en la raíz, en cada `--repo PATH` (repetible) y en el
 repo de dotfiles (`dotfiles.repo`/`dotfiles.live`), así que una memoria de
 `taiki-sys` puede citar un commit que solo existe en `~/.config`. Una ref
 `commit` admite `ruta@sha` (por ejemplo `~/dotfiles@3bea4b9`) para resolver el
-hash en ese repositorio concreto. Con `--retire-missing --apply` las refs
-`file` a rutas inexistentes cuyo directorio padre se puede leer se eliminan de
+hash en ese repositorio concreto. Con `--retire-missing --apply` las refs `file` (prefijadas o bare) a rutas inexistentes cuyo directorio padre se puede leer se eliminan de
 la tabla en vez de normalizarse y el asiento del ledger anota `retired`. Si el
 padre no es legible (por ejemplo `/etc/sudoers.d` para un usuario sin
 permisos) la ref se conserva y se normaliza: nunca se retira a ciegas. Sin

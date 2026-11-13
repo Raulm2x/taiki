@@ -160,7 +160,7 @@ cancelados. Por MCP: `reorg_plan` (read-only) y `reorg_apply` (`apply=true`,
 - **Reparación de evidencia**: `taiki memory repair-evidence` normaliza el
   prefijo embebido en dry-run; los commits se resuelven en la raíz, en cada
   `--repo PATH` (repetible) y en el repo de dotfiles, y una ref `commit` admite
-  `ruta@sha`. `--retire-missing --apply` retira refs `file` a rutas inexistentes
+  `ruta@sha`. `--retire-missing --apply` retira refs `file` (prefijadas o bare) a rutas inexistentes
   solo si el directorio padre es legible (nunca `/etc/sudoers.d` u otras rutas
   sin permiso) y el ledger anota `retired`.
 

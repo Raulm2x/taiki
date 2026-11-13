@@ -206,6 +206,10 @@ def _repair_evidence(conn, args: argparse.Namespace) -> int:
             f"  {item['code']}  {item['kind']}:{item['ref']} → "
             f"{item['new_kind']}:{item['new_ref']}  ({estado})"
         )
+    if result["retire"]:
+        print(f"Retirables: {result['retireable']}")
+        for item in result["retire"][:5]:
+            print(f"  {item['code']}  {item['ref']}  ({item['reason']})")
     if not args.apply:
         print(f"(simulación; raíz {result['root']}; usa --apply para escribir)")
         if retire:

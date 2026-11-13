@@ -82,6 +82,33 @@ def _reason(
     return f"commit {ref} inexistente"
 
 
+def _schedule(
+    retire: list[dict[str, Any]],
+    seen: set[tuple[int, str, str]],
+    memory_id: int,
+    code: str,
+    kind: str,
+    ref: str,
+    reason: str | None,
+    **extra: Any,
+) -> None:
+    """Añade una retirada una sola vez por ``memory_id``/``kind``/``ref``."""
+    key = (memory_id, kind, ref)
+    if key in seen:
+        return
+    seen.add(key)
+    retire.append(
+        {
+            "memory_id": memory_id,
+            "code": code,
+            "kind": kind,
+            "ref": ref,
+            "reason": reason,
+            **extra,
+        }
+    )
+
+
 def plan_repair(
     conn: sqlite3.Connection,
     root: str | Path | None = None,
@@ -92,8 +119,9 @@ def plan_repair(
     Devuelve ``changes`` (una entrada por fila con prefijo conocido, con
     ``valid``/``reason``/``retireable``), los conteos ``valid``/``invalid`` y
     el número de ``memories`` afectadas por cambios válidos. Las filas sin
-    prefijo se omiten. ``retireable`` marca refs ``file`` muertas cuyo padre
-    se puede leer: ``--retire-missing`` puede borrarlas.
+    prefijo no se normalizan, pero pueden retirarse. ``retire`` lista todas las
+    refs ``file`` muertas cuyo padre se puede leer, prefijadas o bare:
+    ``--retire-missing`` puede borrarlas y ``retireable`` es su total.
     """
     base = _base_root(root)
     roots = commit_roots(base, repos)
@@ -103,42 +131,72 @@ def plan_repair(
         "ORDER BY e.memory_id, e.kind, e.ref"
     ).fetchall()
     changes: list[dict[str, Any]] = []
+    retire: list[dict[str, Any]] = []
+    seen: set[tuple[int, str, str]] = set()
     memories: set[int] = set()
     invalid = 0
     for row in rows:
         ref = str(row["ref"] or "")
+        kind = str(row["kind"] or "")
+        memory_id = int(row["memory_id"])
+        code = str(row["code"])
+
         split = _split_ref(ref)
         if split is None:
+            # Las refs bare ya no pasan por normalización; solo se retiran si
+            # son un fichero muerto con el padre legible.
+            if _is_retireable(kind, ref, base):
+                _schedule(
+                    retire,
+                    seen,
+                    memory_id,
+                    code,
+                    kind,
+                    ref,
+                    f"fichero {ref} inexistente",
+                )
             continue
         new_kind, new_ref = split
         reason = _reason(conn, new_kind, new_ref, base, roots)
-        memory_id = int(row["memory_id"])
         if reason is None:
             memories.add(memory_id)
         else:
             invalid += 1
+        retireable = _is_retireable(new_kind, new_ref, base)
         changes.append(
             {
                 "memory_id": memory_id,
-                "code": str(row["code"]),
-                "kind": str(row["kind"] or ""),
+                "code": code,
+                "kind": kind,
                 "ref": ref,
                 "new_kind": new_kind,
                 "new_ref": new_ref,
                 "valid": reason is None,
                 "reason": reason,
-                "retireable": _is_retireable(new_kind, new_ref, base),
+                "retireable": retireable,
             }
         )
+        if retireable:
+            _schedule(
+                retire,
+                seen,
+                memory_id,
+                code,
+                kind,
+                ref,
+                reason,
+                new_kind=new_kind,
+                new_ref=new_ref,
+            )
     return {
         "changes": changes,
+        "retire": retire,
         "valid": len(changes) - invalid,
         "invalid": invalid,
-        "retireable": sum(1 for item in changes if item["retireable"]),
+        "retireable": len(retire),
         "memories": len(memories),
         "root": str(base),
     }
-
 
 def apply_repair(
     conn: sqlite3.Connection,
@@ -147,57 +205,76 @@ def apply_repair(
     retire_missing: bool = False,
     actor: str = "agente",
 ) -> dict[str, Any]:
-    """Normaliza todas las referencias con prefijo y deja un asiento por memoria.
+    """Normaliza las referencias con prefijo y deja un asiento por memoria.
 
     Es idempotente: tras aplicarlo, ``plan_repair`` ya no encuentra prefijos.
     Las referencias inválidas también se normalizan; ``freshness`` las marcará
     ``stale`` con su motivo real (fichero, ticket o commit inexistente). Con
-    ``retire_missing`` las refs ``file`` muertas y retireables se borran en vez
-    de normalizarse y el asiento del ledger anota cuántas se retiraron.
+    ``retire_missing`` las refs ``file`` muertas y retireables —prefijadas o
+    bare— se borran en vez de normalizarse y el asiento del ledger anota
+    cuántas se retiraron.
     """
     plan = plan_repair(conn, root, repos)
     changes: list[dict[str, Any]] = plan["changes"]
+    by_memory: dict[int, list[dict[str, Any]]] = {}
+    for item in changes:
+        by_memory.setdefault(int(item["memory_id"]), []).append(item)
+    retires: dict[int, list[dict[str, Any]]] = {}
+    if retire_missing:
+        for item in plan["retire"]:
+            retires.setdefault(int(item["memory_id"]), []).append(item)
     ledger_ids: list[int] = []
     retired = 0
-    if changes:
-        by_memory: dict[int, list[dict[str, Any]]] = {}
-        for item in changes:
-            by_memory.setdefault(int(item["memory_id"]), []).append(item)
-        with db.tx(conn):
-            for memory_id, items in sorted(by_memory.items()):
-                before = ledger_lib.snapshot(conn, memory_id)
-                dropped = 0
-                for item in items:
-                    conn.execute(
-                        "DELETE FROM memory_evidence "
-                        "WHERE memory_id = ? AND kind = ? AND ref = ?",
-                        (memory_id, item["kind"], item["ref"]),
-                    )
-                    if retire_missing and item["retireable"]:
-                        dropped += 1
-                        continue
-                    conn.execute(
-                        "INSERT OR IGNORE INTO memory_evidence("
-                        "memory_id, kind, ref, created_at) VALUES (?, ?, ?, ?)",
-                        (memory_id, item["new_kind"], item["new_ref"], now()),
-                    )
-                retired += dropped
-                after = ledger_lib.snapshot(conn, memory_id)
-                ledger_ids.append(
-                    ledger_lib.record(
-                        conn,
-                        action="repair-evidence",
-                        memory_id=memory_id,
-                        before=before,
-                        after=after,
-                        actor=actor,
-                        reason=REPAIR_REASON,
-                        meta={
-                            "invalid": sum(1 for item in items if not item["valid"]),
-                            "retired": dropped,
-                        },
-                    )
+    with db.tx(conn):
+        for memory_id in sorted(set(by_memory) | set(retires)):
+            items = by_memory.get(memory_id, [])
+            before = ledger_lib.snapshot(conn, memory_id)
+            dropped = 0
+            deleted: set[tuple[str, str]] = set()
+            for item in items:
+                conn.execute(
+                    "DELETE FROM memory_evidence "
+                    "WHERE memory_id = ? AND kind = ? AND ref = ?",
+                    (memory_id, item["kind"], item["ref"]),
                 )
+                deleted.add((item["kind"], item["ref"]))
+                if retire_missing and item["retireable"]:
+                    dropped += 1
+                    continue
+                conn.execute(
+                    "INSERT OR IGNORE INTO memory_evidence("
+                    "memory_id, kind, ref, created_at) VALUES (?, ?, ?, ?)",
+                    (memory_id, item["new_kind"], item["new_ref"], now()),
+                )
+            for item in retires.get(memory_id, []):
+                key = (item["kind"], item["ref"])
+                if key in deleted:
+                    # Ya la retiró su cambio prefijado; no se cuenta dos veces.
+                    continue
+                conn.execute(
+                    "DELETE FROM memory_evidence "
+                    "WHERE memory_id = ? AND kind = ? AND ref = ?",
+                    (memory_id, item["kind"], item["ref"]),
+                )
+                deleted.add(key)
+                dropped += 1
+            retired += dropped
+            after = ledger_lib.snapshot(conn, memory_id)
+            ledger_ids.append(
+                ledger_lib.record(
+                    conn,
+                    action="repair-evidence",
+                    memory_id=memory_id,
+                    before=before,
+                    after=after,
+                    actor=actor,
+                    reason=REPAIR_REASON,
+                    meta={
+                        "invalid": sum(1 for item in items if not item["valid"]),
+                        "retired": dropped,
+                    },
+                )
+            )
     return {
         **plan,
         "applied": len(changes),

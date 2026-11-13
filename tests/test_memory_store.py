@@ -1025,12 +1025,21 @@ def _repair_evidence(h: Harness) -> None:
     folder = h.tmp / "retirable"
     folder.mkdir()
     missing = folder / "borrado.md"
+    bare = folder / "bare.md"
+    with db.tx(conn):
+        # Otra memoria del módulo cita un fichero desaparecido; se retira aquí
+        # para que el escenario mida solo sus propias filas.
+        conn.execute(
+            "DELETE FROM memory_evidence WHERE kind = 'file' AND ref = ?",
+            (str(h.tmp / "no-existe.py"),),
+        )
     rows = [
         (memory["id"], "file", f"file:{local}"),
         (memory["id"], "ticket", f"ticket:{ticket['code']}"),
         (memory["id"], "commit", f"commit:{sha}"),
         (memory["id"], "file", "file:/no/existe"),
         (memory["id"], "file", f"file:{missing}"),
+        (memory["id"], "file", str(bare)),
         (other["id"], "commit", f"commit:{otro_sha}"),
         (other["id"], "commit", f"commit:{otro}@{otro_sha}"),
     ]
@@ -1070,6 +1079,9 @@ def _repair_evidence(h: Harness) -> None:
     missing_left = conn.execute(
         "SELECT 1 FROM memory_evidence WHERE ref = ?", (str(missing),)
     ).fetchone()
+    bare_left = conn.execute(
+        "SELECT 1 FROM memory_evidence WHERE ref = ?", (str(bare),)
+    ).fetchone()
     with db.tx(conn):
         conn.execute(
             "DELETE FROM memory_evidence WHERE memory_id = ? AND ref = ?",
@@ -1080,16 +1092,18 @@ def _repair_evidence(h: Harness) -> None:
         len(plan["changes"]) == 7
         and plan["valid"] == 4
         and plan["invalid"] == 3
-        and plan["retireable"] == 1
+        and plan["retireable"] == 2
         and plan_repos["valid"] == 5
         and plan_repos["invalid"] == 2
         and fresh["ok"]
         and untouched == 5
         and applied["applied"] == 7
-        and applied["retired"] == 1
+        and applied["retired"] == 2
         and len(applied["ledger"]) == 2
         and remaining == []
         and missing_left is None
+        and bare_left is None
+        and any(item["ref"] == str(bare) for item in plan["retire"])
         and conn.execute(prefix_left, (memory["id"],)).fetchone()["n"] == 0
         and after["freshness"]["ok"]
         and after["code"] == memory["code"]
