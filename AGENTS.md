@@ -157,6 +157,12 @@ cancelados. Por MCP: `reorg_plan` (read-only) y `reorg_apply` (`apply=true`,
   checksum, estrategias y `--dry-run`). `memory rollback` revierte por asiento
   de ledger o por snapshot y deja auditoría. `memory stats` e `impact` dan
   tendencias descriptivas: **no afirmes causalidad**.
+- **Reparación de evidencia**: `taiki memory repair-evidence` normaliza el
+  prefijo embebido en dry-run; los commits se resuelven en la raíz, en cada
+  `--repo PATH` (repetible) y en el repo de dotfiles, y una ref `commit` admite
+  `ruta@sha`. `--retire-missing --apply` retira refs `file` a rutas inexistentes
+  solo si el directorio padre es legible (nunca `/etc/sudoers.d` u otras rutas
+  sin permiso) y el ledger anota `retired`.
 
 ## Aislamiento configurable
 
@@ -329,6 +335,7 @@ taiki memory candidates     # candidatos deterministas del histórico
 taiki memory review --write # paquete para el curator
 taiki memory curate         # caducidad, archivo y dedupe (nunca borra)
 taiki memory repair-evidence # normaliza el prefijo embebido en la evidencia
+taiki memory repair-evidence --repo ~/dotfiles --retire-missing --apply
 taiki memory stats          # estado, presupuesto, uso y routing
 taiki memory impact         # tendencias, sin causalidad
 taiki memory export FILE    # snapshot JSON/Markdown con checksum

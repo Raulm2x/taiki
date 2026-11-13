@@ -607,6 +607,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     m.add_argument("--json", action="store_true")
     m.add_argument("--root", help="Raíz para resolver ficheros y commits")
+    m.add_argument(
+        "--repo",
+        action="append",
+        metavar="PATH",
+        help="Repositorio adicional para resolver commits (repetible)",
+    )
+    m.add_argument(
+        "--retire-missing",
+        action="store_true",
+        help="Con --apply, retira refs file a rutas inexistentes con padre legible",
+    )
     m.set_defaults(func=cmd_memory)
 
     m = memory_sub.add_parser("stats", help="Estadísticas de la memoria")

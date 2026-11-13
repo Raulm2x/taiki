@@ -509,6 +509,17 @@ inexistente). Es idempotente: una segunda pasada no encuentra prefijos. Cada mem
 con el estado anterior y posterior, y `--root` fija la raíz con la que se
 resuelven rutas y commits.
 
+Los commits se buscan en la raíz, en cada `--repo PATH` (repetible) y en el
+repo de dotfiles (`dotfiles.repo`/`dotfiles.live`), así que una memoria de
+`taiki-sys` puede citar un commit que solo existe en `~/.config`. Una ref
+`commit` admite `ruta@sha` (por ejemplo `~/dotfiles@3bea4b9`) para resolver el
+hash en ese repositorio concreto. Con `--retire-missing --apply` las refs
+`file` a rutas inexistentes cuyo directorio padre se puede leer se eliminan de
+la tabla en vez de normalizarse y el asiento del ledger anota `retired`. Si el
+padre no es legible (por ejemplo `/etc/sudoers.d` para un usuario sin
+permisos) la ref se conserva y se normaliza: nunca se retira a ciegas. Sin
+`--apply` la simulación lista las retirables y no escribe.
+
 ## Seguridad
 
 Antes de guardar se escanean títulos, contenidos, evidencias y motivos:
@@ -595,6 +606,7 @@ taiki memory rm M-0001 --why "Ya no aplica"   # archiva
 taiki memory curate --dry-run
 taiki memory repair-evidence            # simula la normalización de refs
 taiki memory repair-evidence --apply    # escribe y deja backup de la DB
+taiki memory repair-evidence --repo ~/dotfiles --retire-missing --apply
 taiki memory stats --json
 taiki memory impact --days 30 --json
 taiki memory export .taiki/generated/memoria.json

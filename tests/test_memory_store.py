@@ -23,6 +23,7 @@ from ticketlib.memory import (
 )
 from ticketlib.memory import ledger as memory_ledger
 from ticketlib.memory.budget import select_for_budget
+from ticketlib.memory.core import evidence_freshness
 from ticketlib.memory.repair import apply_repair, plan_repair
 from tests.seeds import git_repo
 from tests.support import Harness
@@ -994,47 +995,81 @@ def _repair_evidence(h: Harness) -> None:
         key="prefijo-embebido",
         source="user",
     )
+    other = add_memory(
+        conn,
+        title="Evidencia en otro repositorio",
+        content="El commit vive en un repo adicional y no en el workspace.",
+        key="prefijo-embebido-otro",
+        source="user",
+    )
     ticket = repo.create_ticket(conn, title="Evidencia de la reparación")
     local = h.tmp / "evidencia.md"
     local.write_text("vigente\n", encoding="utf-8")
+
+    def empty_commit(path, message="base"):
+        subprocess.run(
+            ["git", "-C", str(path), "commit", "-q", "--allow-empty", "-m", message],
+            check=True,
+        )
+        return subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
     git = git_repo(h.tmp)
-    subprocess.run(
-        ["git", "-C", str(git), "commit", "-q", "--allow-empty", "-m", "base"],
-        check=True,
-    )
-    sha = subprocess.run(
-        ["git", "-C", str(git), "rev-parse", "HEAD"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
+    sha = empty_commit(git)
+    otro = git_repo(h.tmp / "otro")
+    otro_sha = empty_commit(otro, "otro")
+    folder = h.tmp / "retirable"
+    folder.mkdir()
+    missing = folder / "borrado.md"
     rows = [
-        ("file", f"file:{local}"),
-        ("ticket", f"ticket:{ticket['code']}"),
-        ("commit", f"commit:{sha}"),
-        ("file", "file:/no/existe"),
+        (memory["id"], "file", f"file:{local}"),
+        (memory["id"], "ticket", f"ticket:{ticket['code']}"),
+        (memory["id"], "commit", f"commit:{sha}"),
+        (memory["id"], "file", "file:/no/existe"),
+        (memory["id"], "file", f"file:{missing}"),
+        (other["id"], "commit", f"commit:{otro_sha}"),
+        (other["id"], "commit", f"commit:{otro}@{otro_sha}"),
     ]
     with db.tx(conn):
-        for kind, ref in rows:
+        for memory_id, kind, ref in rows:
             conn.execute(
                 "INSERT INTO memory_evidence(memory_id, kind, ref, created_at) "
                 "VALUES (?, ?, ?, datetime('now'))",
-                (memory["id"], kind, ref),
+                (memory_id, kind, ref),
             )
     prefix_left = (
         "SELECT COUNT(*) AS n FROM memory_evidence "
         "WHERE memory_id = ? AND ref LIKE '%:%'"
     )
     plan = plan_repair(conn, h.tmp)
+    plan_repos = plan_repair(conn, h.tmp, repos=[otro])
+    fresh = evidence_freshness(
+        conn,
+        [
+            {"kind": "commit", "ref": otro_sha},
+            {"kind": "commit", "ref": f"{otro}@{otro_sha}"},
+        ],
+        root=h.tmp,
+        repos=[otro],
+    )
     untouched = conn.execute(prefix_left, (memory["id"],)).fetchone()["n"]
-    applied = apply_repair(conn, h.tmp, actor="tester")
+    applied = apply_repair(
+        conn, h.tmp, repos=[otro], retire_missing=True, actor="tester"
+    )
     remaining = [
         str(row["ref"])
         for row in conn.execute(
-            "SELECT ref FROM memory_evidence WHERE memory_id = ? AND ref LIKE '%:%'",
-            (memory["id"],),
+            "SELECT ref FROM memory_evidence WHERE memory_id IN (?, ?) AND ref LIKE '%:%'",
+            (memory["id"], other["id"]),
         ).fetchall()
     ]
+    missing_left = conn.execute(
+        "SELECT 1 FROM memory_evidence WHERE ref = ?", (str(missing),)
+    ).fetchone()
     with db.tx(conn):
         conn.execute(
             "DELETE FROM memory_evidence WHERE memory_id = ? AND ref = ?",
@@ -1042,13 +1077,19 @@ def _repair_evidence(h: Harness) -> None:
         )
     after = get_memory(conn, memory["code"], record_usage=False, mark=False)
     h.ok(
-        len(plan["changes"]) == 4
-        and plan["valid"] == 3
-        and plan["invalid"] == 1
-        and untouched == 4
-        and applied["applied"] == 4
-        and len(applied["ledger"]) == 1
+        len(plan["changes"]) == 7
+        and plan["valid"] == 4
+        and plan["invalid"] == 3
+        and plan["retireable"] == 1
+        and plan_repos["valid"] == 5
+        and plan_repos["invalid"] == 2
+        and fresh["ok"]
+        and untouched == 5
+        and applied["applied"] == 7
+        and applied["retired"] == 1
+        and len(applied["ledger"]) == 2
         and remaining == []
+        and missing_left is None
         and conn.execute(prefix_left, (memory["id"],)).fetchone()["n"] == 0
         and after["freshness"]["ok"]
         and after["code"] == memory["code"]
@@ -1058,8 +1099,8 @@ def _repair_evidence(h: Harness) -> None:
             (memory["id"],),
         ).fetchone()
         is not None,
-        "repair-evidence planifica 3/1, no escribe en dry-run, normaliza todas "
-        "las refs, deja ledger y frescura sin tocar el código",
+        "repair-evidence valida repos/@sha, no escribe en dry-run, retira refs "
+        "muertas con --retire-missing, deja ledger y frescura sin tocar el código",
     )
 
 

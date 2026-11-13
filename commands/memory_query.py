@@ -169,15 +169,24 @@ def _database_backup(conn) -> Path:
 def _repair_evidence(conn, args: argparse.Namespace) -> int:
     """Normaliza ``kind:<ref>`` embebido; dry-run por defecto y backup al aplicar."""
     root = getattr(args, "root", None)
-    plan = plan_repair(conn, root)
+    repos = getattr(args, "repo", None)
+    retire = bool(getattr(args, "retire_missing", False))
+    plan = plan_repair(conn, root, repos=repos)
     apply = bool(getattr(args, "apply", False))
     backup: str | None = None
-    if apply and plan["valid"]:
+    if apply and (plan["valid"] or (retire and plan["retireable"])):
         backup = str(_database_backup(conn))
-        result = apply_repair(conn, root)
+        result = apply_repair(
+            conn, root, repos=repos, retire_missing=retire
+        )
     else:
-        result = {**plan, "applied": 0, "ledger": []}
-    payload = {**result, "backup": backup, "dry_run": not apply}
+        result = {**plan, "applied": 0, "retired": 0, "ledger": []}
+    payload = {
+        **result,
+        "backup": backup,
+        "dry_run": not apply,
+        "retire_missing": retire,
+    }
     if _as_json(args):
         print(render.to_json(payload))
         return 0
@@ -187,16 +196,20 @@ def _repair_evidence(conn, args: argparse.Namespace) -> int:
         print("Reparación de evidencia")
     print(
         f"Cambios: {result['valid']} válidos · {result['invalid']} inválidos · "
-        f"{result['memories']} memoria(s)"
+        f"{result['memories']} memoria(s) · {result['retired']} retirada(s)"
     )
     for item in result["changes"][:5]:
         estado = "ok" if item["valid"] else f"inválida: {item['reason']}"
+        if item.get("retireable"):
+            estado += " (retirable)"
         print(
             f"  {item['code']}  {item['kind']}:{item['ref']} → "
             f"{item['new_kind']}:{item['new_ref']}  ({estado})"
         )
     if not args.apply:
         print(f"(simulación; raíz {result['root']}; usa --apply para escribir)")
+        if retire:
+            print("(--retire-missing solo retira con --apply)")
         return 0
     if backup is not None:
         print(f"Backup: {backup}")

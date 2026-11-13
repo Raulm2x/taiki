@@ -9,15 +9,15 @@ contenido de la memoria. Las referencias sin prefijo conocido no se tocan.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from .. import db, workspace
-from ..domain import ValidationError
-from ..gitutil import resolve_commit
 from ..util import now
 from . import ledger as ledger_lib
+from .core import commit_roots, resolve_evidence_commit
 
 PREFIXES = ("file", "ticket", "commit", "url", "session")
 REPAIR_REASON = "prefijo embebido normalizado"
@@ -39,19 +39,22 @@ def _base_root(root: str | Path | None) -> Path:
     return Path(workspace.checkout_root()).expanduser()
 
 
-def _commit_roots(root: Path) -> list[str]:
-    """Repos donde buscar un commit: la raíz y el repo de dotfiles."""
-    roots = [str(root)]
-    try:
-        settings = workspace.dotfiles_settings()
-    except ValidationError:
-        settings = {}
-    if isinstance(settings, dict):
-        for key in ("detected", "repo"):
-            value = settings.get(key)
-            if value and str(value) not in roots:
-                roots.append(str(value))
-    return roots
+def _evidence_path(ref: str, root: Path) -> Path:
+    """Resuelve una ruta de evidencia relativa al proyecto."""
+    path = Path(ref).expanduser()
+    if not path.is_absolute():
+        path = root / path
+    return path
+
+
+def _is_retireable(kind: str, ref: str, root: Path) -> bool:
+    """Ref ``file`` muerta cuyo padre se puede leer (M-0059 queda protegida)."""
+    if kind != "file" or not ref:
+        return False
+    path = _evidence_path(ref, root)
+    if path.exists():
+        return False
+    return os.access(path.parent, os.R_OK | os.X_OK)
 
 
 def _reason(
@@ -59,7 +62,7 @@ def _reason(
     kind: str,
     ref: str,
     root: Path,
-    commit_roots: list[str],
+    roots: list[Path],
 ) -> str | None:
     """Motivo por el que la referencia no vale, o ``None`` si es válida."""
     if not ref:
@@ -67,16 +70,14 @@ def _reason(
     if kind in _UNCHECKED:
         return None
     if kind == "file":
-        path = Path(ref).expanduser()
-        if not path.is_absolute():
-            path = root / path
+        path = _evidence_path(ref, root)
         return None if path.exists() else f"fichero {ref} inexistente"
     if kind == "ticket":
         row = conn.execute(
             "SELECT 1 FROM tickets WHERE code = ?", (ref,)
         ).fetchone()
         return None if row is not None else f"ticket {ref} inexistente"
-    if any(resolve_commit(ref, repo) is not None for repo in commit_roots):
+    if resolve_evidence_commit(ref, roots, root) is not None:
         return None
     return f"commit {ref} inexistente"
 
@@ -84,15 +85,18 @@ def _reason(
 def plan_repair(
     conn: sqlite3.Connection,
     root: str | Path | None = None,
+    repos: Iterable[Any] | None = None,
 ) -> dict[str, Any]:
     """Plan de normalización: no escribe nada.
 
     Devuelve ``changes`` (una entrada por fila con prefijo conocido, con
-    ``valid``/``reason``), los conteos ``valid``/``invalid`` y el número de
-    ``memories`` afectadas por cambios válidos. Las filas sin prefijo se omiten.
+    ``valid``/``reason``/``retireable``), los conteos ``valid``/``invalid`` y
+    el número de ``memories`` afectadas por cambios válidos. Las filas sin
+    prefijo se omiten. ``retireable`` marca refs ``file`` muertas cuyo padre
+    se puede leer: ``--retire-missing`` puede borrarlas.
     """
     base = _base_root(root)
-    commit_roots = _commit_roots(base)
+    roots = commit_roots(base, repos)
     rows = conn.execute(
         "SELECT e.memory_id, m.code, e.kind, e.ref FROM memory_evidence e "
         "JOIN memories m ON m.id = e.memory_id "
@@ -107,7 +111,7 @@ def plan_repair(
         if split is None:
             continue
         new_kind, new_ref = split
-        reason = _reason(conn, new_kind, new_ref, base, commit_roots)
+        reason = _reason(conn, new_kind, new_ref, base, roots)
         memory_id = int(row["memory_id"])
         if reason is None:
             memories.add(memory_id)
@@ -123,12 +127,14 @@ def plan_repair(
                 "new_ref": new_ref,
                 "valid": reason is None,
                 "reason": reason,
+                "retireable": _is_retireable(new_kind, new_ref, base),
             }
         )
     return {
         "changes": changes,
         "valid": len(changes) - invalid,
         "invalid": invalid,
+        "retireable": sum(1 for item in changes if item["retireable"]),
         "memories": len(memories),
         "root": str(base),
     }
@@ -137,17 +143,22 @@ def plan_repair(
 def apply_repair(
     conn: sqlite3.Connection,
     root: str | Path | None = None,
+    repos: Iterable[Any] | None = None,
+    retire_missing: bool = False,
     actor: str = "agente",
 ) -> dict[str, Any]:
     """Normaliza todas las referencias con prefijo y deja un asiento por memoria.
 
     Es idempotente: tras aplicarlo, ``plan_repair`` ya no encuentra prefijos.
     Las referencias inválidas también se normalizan; ``freshness`` las marcará
-    ``stale`` con su motivo real (fichero, ticket o commit inexistente).
+    ``stale`` con su motivo real (fichero, ticket o commit inexistente). Con
+    ``retire_missing`` las refs ``file`` muertas y retireables se borran en vez
+    de normalizarse y el asiento del ledger anota cuántas se retiraron.
     """
-    plan = plan_repair(conn, root)
+    plan = plan_repair(conn, root, repos)
     changes: list[dict[str, Any]] = plan["changes"]
     ledger_ids: list[int] = []
+    retired = 0
     if changes:
         by_memory: dict[int, list[dict[str, Any]]] = {}
         for item in changes:
@@ -155,17 +166,22 @@ def apply_repair(
         with db.tx(conn):
             for memory_id, items in sorted(by_memory.items()):
                 before = ledger_lib.snapshot(conn, memory_id)
+                dropped = 0
                 for item in items:
                     conn.execute(
                         "DELETE FROM memory_evidence "
                         "WHERE memory_id = ? AND kind = ? AND ref = ?",
                         (memory_id, item["kind"], item["ref"]),
                     )
+                    if retire_missing and item["retireable"]:
+                        dropped += 1
+                        continue
                     conn.execute(
                         "INSERT OR IGNORE INTO memory_evidence("
                         "memory_id, kind, ref, created_at) VALUES (?, ?, ?, ?)",
                         (memory_id, item["new_kind"], item["new_ref"], now()),
                     )
+                retired += dropped
                 after = ledger_lib.snapshot(conn, memory_id)
                 ledger_ids.append(
                     ledger_lib.record(
@@ -177,13 +193,15 @@ def apply_repair(
                         actor=actor,
                         reason=REPAIR_REASON,
                         meta={
-                            "invalid": sum(1 for item in items if not item["valid"])
+                            "invalid": sum(1 for item in items if not item["valid"]),
+                            "retired": dropped,
                         },
                     )
                 )
     return {
         **plan,
         "applied": len(changes),
+        "retired": retired,
         "ledger": ledger_ids,
     }
 

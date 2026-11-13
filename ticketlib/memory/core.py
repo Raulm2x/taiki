@@ -17,6 +17,7 @@ from . import budget as budget_lib
 from . import ledger as ledger_lib
 from . import security
 from .config import resolve_memory_config
+from .evidence import commit_roots, resolve_evidence_commit
 from .models import (
     BUDGET_STATUSES,
     EVIDENCE_KINDS,
@@ -102,6 +103,7 @@ def evidence_freshness(
     evidence: Iterable[Any] | None,
     files: Iterable[Any] | None = None,
     root: str | Path | None = None,
+    repos: Iterable[Any] | None = None,
 ) -> dict[str, Any]:
     """Comprueba que la evidencia de una memoria sigue vigente.
 
@@ -117,6 +119,7 @@ def evidence_freshness(
     checked = 0
     reasons: list[str] = []
     stale: list[dict[str, str]] = []
+    roots: list[Path] | None = None
     for item in evidence or []:
         if not isinstance(item, dict):
             continue
@@ -132,7 +135,9 @@ def evidence_freshness(
                 reason = f"ticket {ref} cancelado/inexistente"
         elif kind == "commit":
             checked += 1
-            if resolve_commit(ref, root) is None:
+            if roots is None:
+                roots = commit_roots(root, repos)
+            if resolve_evidence_commit(ref, roots, root) is None:
                 reason = f"commit {ref} inexistente"
         elif kind == "file":
             checked += 1
