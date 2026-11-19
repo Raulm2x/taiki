@@ -85,6 +85,11 @@ def _guard_reason(command: str, risky: str | None) -> dict[str, Any]:
     }
 
 
+def _shell_rule_count(rules: list[dict[str, Any]]) -> int:
+    """Reglas ``shell`` de un perfil: 0 significa que no permite nada."""
+    return sum(1 for rule in rules if str(rule.get("action")) == "shell")
+
+
 def _print_perms(
     profiles: list[dict[str, Any]], summary: dict[str, Any]
 ) -> None:
@@ -92,13 +97,22 @@ def _print_perms(
         print("Sin perfiles worker*.md en .opencode/agents/")
     for profile in profiles:
         print(f"Perfil {profile['name']} ({profile['origin']})")
+        if not _shell_rule_count(profile["rules"]):
+            print("  sin reglas shell: este perfil no permite ningún comando")
+            continue
         for index, rule in enumerate(profile["rules"]):
-            wins = "gana" if shell.rule_wins(profile["rules"], index) else "ocultada"
+            state = (
+                "tapada"
+                if not shell.rule_wins(profile["rules"], index)
+                else "libre"
+            )
             print(
                 f"  {str(rule.get('action', '?')):8} "
                 f"{str(rule.get('effect', '?')):5} "
-                f"{str(rule.get('resource', '')):36} {wins}"
+                f"{str(rule.get('resource', '')):36} {state}"
             )
+    print("  tapada = una regla posterior del mismo action solapa su patrón;")
+    print("  aproximación por contención; el veredicto real va con --command")
     print("Guard de tickets (ticketlib/guard/commands.py)")
     print(f"  sin ticket (permitido): {', '.join(summary['sin_ticket'])}")
     print(f"  git sin ticket: {', '.join(summary['git_sin_ticket'])}")
@@ -111,7 +125,12 @@ def _print_perms(
 
 
 def cmd_perms(args: argparse.Namespace) -> int:
-    """``taiki perms``: allowlist de shell, solo lectura (perfiles + guard)."""
+    """``taiki perms``: allowlist de shell, solo lectura (perfiles + guard).
+
+    La columna ``tapada``/``libre`` aproxima por contención de patrones:
+    una regla posterior del mismo action solapa el recurso literal de esta.
+    El veredicto real de un comando concreto va con ``--command``.
+    """
     profiles = shell.profile_rules(_agents_dir())
     if args.agent:
         wanted = (args.agent or "").strip().lower()
@@ -145,10 +164,11 @@ def cmd_perms(args: argparse.Namespace) -> int:
                     "profiles": [
                         {
                             **item,
+                            "shell_rules": _shell_rule_count(item["rules"]),
                             "rules": [
                                 {
                                     **rule,
-                                    "wins": shell.rule_wins(
+                                    "covered": not shell.rule_wins(
                                         item["rules"], index
                                     ),
                                 }

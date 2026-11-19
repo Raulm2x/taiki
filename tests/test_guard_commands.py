@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import cli
+from commands.guard import _print_perms as print_perms
 from ticketlib import audit as audit_lib, db, guard, repo, scratch
 from ticketlib.guard import commands as shell_rules
 from tests.support import Harness
@@ -767,6 +768,45 @@ def run(h: Harness) -> None:
         )
         and "git add -A" in payload["guard"]["git_global"],
         "taiki perms --json lista una regla conocida por CLI",
+    )
+    h.ok(
+        shell_rules.parse_permissions("permissions: {}") == [],
+        "parse_permissions no inventa reglas de un permissions: {} inline",
+    )
+    empty_summary = {
+        "sin_ticket": [],
+        "git_sin_ticket": [],
+        "git_global": [],
+        "alto_riesgo": [],
+    }
+    out_perm = io.StringIO()
+    with contextlib.redirect_stdout(out_perm):
+        print_perms(
+            [
+                {
+                    "name": "worker-fantasma",
+                    "origin": "inline",
+                    "rules": [],
+                },
+                {"name": "worker-dup", "origin": "inline", "rules": dup},
+            ],
+            empty_summary,
+        )
+    perm_text = out_perm.getvalue()
+    h.ok(
+        "sin reglas shell" in perm_text
+        and "tapada" in perm_text
+        and "gana" not in perm_text,
+        "perms avisa del perfil sin reglas y marca la solapada como tapada",
+    )
+    h.ok(
+        all(
+            "covered" in rule and "wins" not in rule
+            for profile in payload["profiles"]
+            for rule in profile["rules"]
+        )
+        and all("shell_rules" in profile for profile in payload["profiles"]),
+        "perms --json expone covered y shell_rules por perfil",
     )
     out_cmd = io.StringIO()
     with contextlib.redirect_stdout(out_cmd):
