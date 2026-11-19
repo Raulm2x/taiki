@@ -610,3 +610,96 @@ def run(h: Harness) -> None:
     )
     worktree.remove(root, integration_path, force=True, delete_branch=True)
     _git(root, "branch", "-D", "develop")
+
+    # ── merge: cambios que bloquean y untracked conservado ──────────────
+    clean_tree = worktree.create(root, "T-9101", title="Limpio")
+    clean_path = Path(clean_tree["path"])
+    (clean_path / "src" / "app.py").write_text(
+        "print('limpio')\n", encoding="utf-8"
+    )
+    _commit(clean_path, "cambio limpio")
+    clean_merge = worktree.merge(root, clean_path, delete=True)
+    h.eq(
+        {
+            "removed": clean_merge.get("removed"),
+            "existe": clean_path.exists(),
+            "app": _git(root, "show", "HEAD:src/app.py"),
+        },
+        {"removed": True, "existe": False, "app": "print('limpio')"},
+        "un worktree limpio se integra y se retira sin bloquear",
+    )
+
+    dirty_tree = worktree.create(root, "T-9102", title="Modificado")
+    dirty_path = Path(dirty_tree["path"])
+    (dirty_path / "src" / "app.py").write_text(
+        "print('sucio')\n", encoding="utf-8"
+    )
+    try:
+        worktree.merge(root, dirty_path)
+    except TicketError as exc:
+        dirty_error = str(exc)
+    else:
+        dirty_error = ""
+    h.eq(
+        {
+            "nombra": "src/app.py" in dirty_error,
+            "tipo": "modificadas rastreadas" in dirty_error,
+            "accion": "Commitéalas" in dirty_error,
+        },
+        {"nombra": True, "tipo": True, "accion": True},
+        "el merge nombra el modificado rastreado y propone commitear",
+    )
+
+    _git(dirty_path, "checkout", "--", "src/app.py")
+    (dirty_path / "notas.txt").write_text("borrador\n", encoding="utf-8")
+    try:
+        worktree.merge(root, dirty_path)
+    except TicketError as exc:
+        untracked_error = str(exc)
+    else:
+        untracked_error = ""
+    h.eq(
+        {
+            "nombra": "notas.txt" in untracked_error,
+            "tipo": "sin rastrear" in untracked_error,
+            "flag": "--keep-untracked" in untracked_error,
+        },
+        {"nombra": True, "tipo": True, "flag": True},
+        "el merge nombra el untracked y propone --keep-untracked",
+    )
+
+    (dirty_path / "src" / "nuevo.py").write_text("trabajo\n", encoding="utf-8")
+    try:
+        worktree.merge(
+            root, dirty_path, keep_untracked=True, scope_paths=["src/"]
+        )
+    except TicketError as exc:
+        scoped_error = str(exc)
+    else:
+        scoped_error = ""
+    h.eq(
+        {
+            "nombra": "src/nuevo.py" in scoped_error,
+            "scope": "paths del ticket" in scoped_error,
+            "en_sitio": (dirty_path / "src" / "nuevo.py").is_file(),
+        },
+        {"nombra": True, "scope": True, "en_sitio": True},
+        "el flag aborta si el untracked cae en los paths del ticket",
+    )
+    (dirty_path / "src" / "nuevo.py").unlink()
+
+    merged_untracked = worktree.merge(
+        root, dirty_path, delete=True, keep_untracked=True
+    )
+    preserved = Path(str(merged_untracked.get("untracked_preserved") or ""))
+    kept_file = preserved / "notas.txt"
+    kept_text = kept_file.read_text(encoding="utf-8") if kept_file.is_file() else ""
+    h.eq(
+        {
+            "removed": merged_untracked.get("removed"),
+            "existe": dirty_path.exists(),
+            "conservado": kept_text,
+        },
+        {"removed": True, "existe": False, "conservado": "borrador\n"},
+        "--keep-untracked integra y conserva el fichero sin rastrear",
+    )

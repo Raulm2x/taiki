@@ -203,9 +203,11 @@ def cmd_worktree_remove(args: argparse.Namespace) -> int:
 def cmd_worktree_merge(args: argparse.Namespace) -> int:
     root = _root()
     code = getattr(args, "code", None)
+    scope = None
     try:
         with _conn() as conn:
             code = _merge_code(conn, code, getattr(args, "path", None))
+            scope = repo.get_ticket(conn, code)["paths"] if code else None
             if code:
                 _require_confirmed(
                     conn, code, bool(getattr(args, "force", False))
@@ -246,6 +248,8 @@ def cmd_worktree_merge(args: argparse.Namespace) -> int:
             test_cmd=test_cmd,
             test_env=test_env,
             delete=args.delete,
+            keep_untracked=getattr(args, "keep_untracked", False),
+            scope_paths=scope,
         )
     except TicketError as exc:
         print(f"Error: {exc}", file=sys.stderr)

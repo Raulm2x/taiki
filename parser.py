@@ -978,6 +978,11 @@ def build_parser() -> argparse.ArgumentParser:
     wt_merge.add_argument("--path", help="ruta concreta del worktree")
     wt_merge.add_argument("--no-tests", action="store_true")
     wt_merge.add_argument(
+        "--keep-untracked",
+        action="store_true",
+        help="conservar ficheros sin rastrear al retirar el worktree",
+    )
+    wt_merge.add_argument(
         "--delete", action="store_true", help="retira el worktree tras mergear"
     )
     wt_merge.add_argument(
