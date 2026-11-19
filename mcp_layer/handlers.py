@@ -21,6 +21,7 @@ from ticketlib import (
     repo,
     runtime,
     servers as servers_lib,
+    status as status_lib,
     workspace,
 )
 from ticketlib.memory.config import load_memory_config
@@ -354,6 +355,16 @@ def _handle_links_repair(
         actor_type="agente",
         session_id=session,
     )
+
+
+def _handle_epic_check(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    _session: str | None = None,
+    _actor: str = "agente",
+) -> dict[str, Any]:
+    """Cierre derivado de la épica: read-only, sin caché ni eventos."""
+    return status_lib.epic_check(conn, args["code"])
 
 
 # ---------------------------------------------------------------------------

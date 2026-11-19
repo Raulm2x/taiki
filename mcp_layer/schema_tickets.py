@@ -55,35 +55,27 @@ TICKET_SPECS = [
         "con idempotency_key los reintentos devuelven el mismo ticket.",
         {
             "title": {
-                "type": "string",
-                "maxLength": 200,
+                "type": "string", "maxLength": 200,
                 "description": "Título corto y accionable",
             },
             "body": {
-                "type": "string",
-                "maxLength": 100_000,
+                "type": "string", "maxLength": 100_000,
                 "description": "Contexto, criterios de aceptación, pasos para reproducir, etc.",
             },
             "kind": {
-                "type": "string",
-                "enum": list(KINDS),
-                "description": "Tipo de trabajo",
-                "default": "otro",
+                "type": "string", "enum": list(KINDS),
+                "description": "Tipo de trabajo", "default": "otro",
             },
             "priority": {
-                "type": "string",
-                "enum": list(PRIORITIES),
-                "description": "Prioridad",
-                "default": "media",
+                "type": "string", "enum": list(PRIORITIES),
+                "description": "Prioridad", "default": "media",
             },
             "project": {
-                "type": "string",
-                "maxLength": 200,
+                "type": "string", "maxLength": 200,
                 "description": "Proyecto o repositorio. Por defecto se deduce del directorio actual.",
             },
             "path": {
-                "type": "string",
-                "maxLength": 2_000,
+                "type": "string", "maxLength": 2_000,
                 "description": "Ruta relevante. Por defecto, el directorio actual.",
             },
             "paths": {
@@ -96,25 +88,21 @@ TICKET_SPECS = [
             "resources": RESOURCES,
             "reversal": REVERSAL,
             "tags": {
-                "type": "array",
+                "type": "array", "maxItems": 50,
                 "items": {"type": "string", "maxLength": 80},
-                "maxItems": 50,
                 "description": "Etiquetas libres",
             },
             "parent_id": {
-                "type": "string",
-                "maxLength": 40,
+                "type": "string", "maxLength": 40,
                 "description": "Código del ticket padre, si es una subtarea",
             },
             "subtasks": {
-                "type": "array",
+                "type": "array", "maxItems": 100,
                 "items": {"type": "string", "maxLength": 200},
-                "maxItems": 100,
                 "description": "Títulos de las tareas hijas a crear con el ticket",
             },
             "idempotency_key": {
-                "type": "string",
-                "maxLength": 200,
+                "type": "string", "maxLength": 200,
                 "description": "Clave para que un reintento devuelva el mismo ticket",
             },
             "detail": DETAIL,
@@ -661,6 +649,16 @@ TICKET_SPECS = [
         "worktree_list",
         "Lista los worktrees del proyecto, opcionalmente filtrados por ticket.",
         {"code": CODE},
+        read_only=True,
+    ),
+    ToolSpec(
+        "epic_check",
+        "Estado derivado de una épica a partir de sus hijas (read-only): "
+        "'abierta' o 'completa', recuento por estado, hijas que bloquean o "
+        "canceladas con motivo, criterio de cierre y camino de cierre real "
+        "sobre la máquina de estados actual.",
+        {"code": CODE},
+        ("code",),
         read_only=True,
     ),
     ToolSpec(

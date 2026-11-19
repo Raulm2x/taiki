@@ -8,7 +8,7 @@ from pathlib import Path
 import cli
 import tui
 from mcp_layer import handlers
-from ticketlib import audit as audit_lib, db, deeplink, domain, repo, util
+from ticketlib import audit as audit_lib, db, deeplink, domain, repo, status as status_lib, util
 from tests.seeds import git_repo
 from tests.support import Harness
 
@@ -58,6 +58,71 @@ def run(h: Harness) -> None:
         )
     }
     h.ok(kids == {task_a["code"], task_b["code"]}, "parent_id filtra los hijos")
+
+    # ── epic_check: cierre derivado de las hijas ────────────────────
+    bare = repo.create_ticket(conn, title="Épica sin hijas")
+    empty = status_lib.epic_check(conn, bare["code"])
+    h.ok(
+        empty["estado"] == "abierta"
+        and empty["total"] == 0
+        and empty["camino_cierre"][0] == "nuevo",
+        "épica sin hijas no deriva el cierre",
+    )
+    derived = status_lib.epic_check(conn, epic["code"])
+    h.ok(
+        derived["estado"] == "abierta"
+        and derived["hijas"]["nuevo"] == 2
+        and {item["code"] for item in derived["bloqueadas"]}
+        == {task_a["code"], task_b["code"]},
+        "épica con hijas abiertas queda abierta y lista las bloqueadas",
+    )
+    closed = repo.create_ticket(conn, title="Épica cerrada")
+    closed_kid = repo.create_ticket(
+        conn, title="Hija cerrada", parent_id=closed["code"]
+    )
+    conn.execute(
+        "UPDATE tickets SET status = 'confirmado' WHERE code = ?",
+        (closed_kid["code"],),
+    )
+    done = status_lib.epic_check(conn, closed["code"])
+    h.ok(
+        done["estado"] == "completa"
+        and not done["bloqueadas"]
+        and "criterio" in done
+        and done["camino_cierre"],
+        "épica con todas las hijas confirmadas deriva completa",
+    )
+    mixed = repo.create_ticket(conn, title="Épica mixta")
+    mix_a = repo.create_ticket(conn, title="Mixta A", parent_id=mixed["code"])
+    mix_b = repo.create_ticket(conn, title="Mixta B", parent_id=mixed["code"])
+    conn.execute(
+        "UPDATE tickets SET status = 'cancelado' WHERE code = ?",
+        (mix_a["code"],),
+    )
+    conn.execute(
+        "UPDATE tickets SET status = 'confirmado' WHERE code = ?",
+        (mix_b["code"],),
+    )
+    mixed_check = status_lib.epic_check(conn, mixed["code"])
+    h.ok(
+        mixed_check["estado"] == "completa"
+        and [item["code"] for item in mixed_check["canceladas"]]
+        == [mix_a["code"]],
+        "una hija cancelada no bloquea si el resto está confirmada",
+    )
+    conn.execute(
+        "UPDATE tickets SET status = 'nuevo' WHERE code = ?", (mix_b["code"],)
+    )
+    conn.execute(
+        "UPDATE tickets SET status = 'verificado' WHERE code = ?",
+        (mixed["code"],),
+    )
+    report = repo.confirm_tickets(conn, [mixed["code"]])
+    h.ok(
+        "tareas abiertas" in report["errors"].get(mixed["code"], "")
+        and not report["confirmed"],
+        "confirmar la épica con una hija abierta falla con tareas abiertas",
+    )
     leaves = {
         ticket["code"]
         for ticket in repo.list_tickets(
