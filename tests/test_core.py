@@ -648,3 +648,21 @@ def run(h: Harness) -> None:
         allowed["items"],
         "allow_root permite renumerar una raíz publicada",
     )
+    repo.reorg_apply(conn, "renumber", [free_root["code"]], allow_root=True)
+    second_root = repo.create_ticket(conn, title="Segunda raíz publicada")
+    conn.execute(
+        "INSERT INTO links(ticket_id, kind, ref, created_at) "
+        "VALUES (?, 'commit', 'deadbeef', '2026-11-19T00:00:00')",
+        (second_root["id"],),
+    )
+    conn.commit()
+    second = repo.reorg_apply(
+        conn, "renumber", [second_root["code"]], allow_root=True
+    )
+    second_new = second["items"][0]["new_code"]
+    after = repo.create_ticket(conn, title="Alta tras renumerar raíz")
+    h.ok(
+        after["code"] != second_new,
+        "renumber con allow_root proyecta el contador: el alta siguiente "
+        "no colisiona",
+    )

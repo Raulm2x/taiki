@@ -572,6 +572,7 @@ def _reorg_kwargs(args: dict[str, Any]) -> dict[str, Any]:
         "children_to": children_to,
         "include_adopted": bool(args.get("include_adopted", False)),
         "renumber": bool(args.get("renumber", False)),
+        "allow_root": bool(args.get("allow_root", False)),
     }
 
 

@@ -673,6 +673,56 @@ def run(h: Harness) -> None:
         ),
     )
 
+    # ── renumber MCP: allow_root acepta raíces publicadas ───────────────
+    pub_root = repo.create_ticket(
+        conn, title="Raíz publicada MCP", project="mcp-reorg"
+    )
+    conn.execute(
+        "INSERT INTO links(ticket_id, kind, ref, created_at) "
+        "VALUES (?, 'commit', 'deadbeef', '2026-11-19T00:00:00')",
+        (pub_root["id"],),
+    )
+    conn.commit()
+    pub_plan = handlers.call_tool(
+        "reorg_plan",
+        {"action": "renumber", "codes": [pub_root["code"]], "allow_root": True},
+    )
+    refused_pub = _falla(
+        lambda: handlers.call_tool(
+            "reorg_plan",
+            {"action": "renumber", "codes": [pub_root["code"]]},
+        ),
+        domain.ValidationError,
+    )
+    still_pub = repo.get_ticket(conn, pub_root["code"])["code"]
+    pub_applied = handlers.call_tool(
+        "reorg_apply",
+        {
+            "action": "renumber",
+            "codes": [pub_root["code"]],
+            "allow_root": True,
+            "apply": True,
+        },
+        meta={"sessionId": "session-reorg"},
+    )
+    pub_new = pub_applied["items"][0]["new_code"]
+    _ok(
+        h,
+        (
+            refused_pub,
+            "reorg_plan renumber rechaza una raíz publicada sin allow_root",
+        ),
+        (
+            pub_plan["aliases"][0]["old_code"] == pub_root["code"]
+            and still_pub == pub_root["code"],
+            "reorg_plan con allow_root lista el alias sin escribir",
+        ),
+        (
+            repo.get_ticket(conn, pub_new)["id"] == pub_root["id"],
+            "reorg_apply con allow_root llega al store y renumera",
+        ),
+    )
+
     # ── gate_run: solo ejecuta gates declarados ──────────────────────────
     gate_body = (
         "Gates del ticket:\n```gates\n"

@@ -925,6 +925,19 @@ def reorg_apply(
                 (ts, item["id"]),
             )
 
+        # (f) Renumerar raíces puede ocupar el siguiente código del contador:
+        # se proyecta al mayor sufijo asignado para que el alta siguiente no
+        # colisione (los códigos de tarea ``T-XXXX.NN`` no cuentan).
+        suffixes = [
+            int(match.group(1))
+            for item in items
+            if (match := _PURGE_ROOT.match(item["new_code"]))
+        ]
+        if suffixes:
+            projected = max(suffixes) + 1
+            if projected > int(db.meta_get(conn, TICKET_COUNTER, "1") or "1"):
+                db.meta_set(conn, TICKET_COUNTER, str(projected))
+
     return {
         "action": plan["action"],
         "items": items,

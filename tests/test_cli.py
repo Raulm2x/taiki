@@ -635,6 +635,59 @@ def run(h: Harness) -> None:
         ),
     )
 
+    # ── renumber de raíces publicadas: --allow-root ────────────────────
+    pub_root_cli = repo.create_ticket(conn, title="Raíz publicada CLI")
+    conn.execute(
+        "INSERT INTO links(ticket_id, kind, ref, created_at) "
+        "VALUES (?, 'commit', 'deadbeef', '2026-11-19T00:00:00')",
+        (pub_root_cli["id"],),
+    )
+    conn.commit()
+    with_epic = repo.create_ticket(conn, title="Épica con hijos CLI")
+    repo.create_ticket(conn, title="Hija CLI", parent_id=with_epic["code"])
+    with contextlib.redirect_stdout(io.StringIO()):
+        refused_exit = cli.main(["renumber", pub_root_cli["code"]])
+    with contextlib.redirect_stdout(io.StringIO()) as dry:
+        dry_exit = cli.main(
+            ["renumber", pub_root_cli["code"], "--allow-root", "--json"]
+        )
+    dry_plan = json.loads(dry.getvalue())
+    new_root_code = dry_plan["aliases"][0]["new_code"]
+    still_pub = repo.get_ticket(conn, pub_root_cli["code"])["code"]
+    with contextlib.redirect_stdout(io.StringIO()):
+        applied_root = cli.main(
+            ["renumber", pub_root_cli["code"], "--allow-root", "--apply"]
+        )
+    renamed_root = repo.get_ticket(conn, new_root_code)
+    with contextlib.redirect_stdout(io.StringIO()):
+        epic_exit = cli.main(
+            ["renumber", with_epic["code"], "--allow-root", "--apply"]
+        )
+    _ok(
+        h,
+        (
+            refused_exit == 1 and still_pub == pub_root_cli["code"],
+            "renumber de una raíz publicada se rechaza sin --allow-root",
+        ),
+        (
+            dry_exit == 0
+            and dry_plan["aliases"][0]["old_code"] == pub_root_cli["code"]
+            and still_pub == pub_root_cli["code"],
+            "renumber --allow-root simula y lista el alias de la raíz",
+        ),
+        (
+            applied_root == 0
+            and renamed_root["id"] == pub_root_cli["id"],
+            "renumber --allow-root --apply renumera la raíz publicada",
+        ),
+        (
+            epic_exit == 1
+            and repo.get_ticket(conn, with_epic["code"])["id"]
+            == with_epic["id"],
+            "--allow-root no renumera una épica con tareas",
+        ),
+    )
+
     attach_epic = repo.create_ticket(conn, title="Épica attach CLI")
     attach_flat = repo.create_ticket(conn, title="Tarea attach CLI")
     conn.execute(

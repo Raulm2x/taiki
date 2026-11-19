@@ -39,6 +39,12 @@ INCLUDE_ADOPTED = {
     "type": "boolean",
     "description": "Incluye tickets adoptados al renumerar",
 }
+ALLOW_ROOT = {
+    "type": "boolean",
+    "description": "En renumber, permite renumerar una raíz publicada (con "
+    "commits enlazados); sigue rechazando épicas con tareas y destinos "
+    "ocupados",
+}
 APPLY = {
     "type": "boolean",
     "description": "Debe ser true para escribir; sin apply usa reorg_plan",
@@ -89,6 +95,7 @@ REORG_SPECS = [
             "children_to": CHILDREN_TO,
             "include_adopted": INCLUDE_ADOPTED,
             "renumber": RENUMBER,
+            "allow_root": ALLOW_ROOT,
         },
         ("action",),
         read_only=True,
@@ -106,6 +113,7 @@ REORG_SPECS = [
             "children_to": CHILDREN_TO,
             "include_adopted": INCLUDE_ADOPTED,
             "renumber": RENUMBER,
+            "allow_root": ALLOW_ROOT,
             "apply": APPLY,
             "force": FORCE,
         },
