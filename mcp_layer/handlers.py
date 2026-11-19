@@ -28,6 +28,7 @@ from ticketlib.memory.models import PLAYBOOK_KIND
 from ticketlib.memory.playbooks import SKILL_FILE, SKILLS_RELATIVE, slug_of
 from ticketlib.memory.stats import stats as memory_stats
 from ticketlib.memory.store import list_memories
+from ticketlib.store import links as links_store
 from ticketlib.util import now, parse_datetime
 
 from . import memory as memory_handlers
@@ -303,6 +304,56 @@ def _handle_gate_run(
         "gates": results,
         "ok": all(item["exit"] == 0 for item in results),
     }
+
+
+def _handle_unlink(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    session: str | None = None,
+    actor: str = "agente",
+) -> dict[str, Any]:
+    code = args.get("code")
+    if not code:
+        raise domain.ValidationError("El parámetro 'code' es obligatorio")
+    kind = args.get("kind")
+    if not kind:
+        raise domain.ValidationError("El parámetro 'kind' es obligatorio")
+    ref = args.get("ref")
+    if not ref:
+        raise domain.ValidationError("El parámetro 'ref' es obligatorio")
+    ticket = links_store.unlink_ticket(
+        conn,
+        code,
+        kind=kind,
+        ref=ref,
+        actor=actor,
+        actor_type="agente",
+        session_id=session,
+        reason=args.get("reason"),
+    )
+    return _receipt(
+        ticket,
+        detail=bool(args.get("detail", False)),
+        extra={"unlinked": {"kind": kind, "ref": ref}},
+    )
+
+
+def _handle_links_repair(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    session: str | None = None,
+    actor: str = "agente",
+) -> dict[str, Any]:
+    return links_store.repair_links(
+        conn,
+        root=args.get("root") or _project_root(),
+        repos=args.get("repos") or [],
+        apply=bool(args.get("apply", False)),
+        force=bool(args.get("force", False)),
+        actor=actor,
+        actor_type="agente",
+        session_id=session,
+    )
 
 
 # ---------------------------------------------------------------------------

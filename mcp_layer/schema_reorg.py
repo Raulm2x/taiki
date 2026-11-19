@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from .schema_common import ToolSpec
+from ticketlib.domain import LINK_KINDS
+
+from .schema_common import CODE, ToolSpec
 
 ACTION = {
     "type": "string",
@@ -45,6 +47,33 @@ FORCE = {
     "type": "boolean",
     "description": "Confirmación obligatoria para purgar con reorg_apply",
 }
+LINK_KIND = {
+    "type": "string",
+    "enum": list(LINK_KINDS),
+    "description": "Tipo de enlace, tal como se guardó en el ticket",
+}
+LINK_REF = {
+    "type": "string",
+    "maxLength": 2_000,
+    "description": "Referencia exacta del enlace (commit, código, ruta o URL)",
+}
+LINK_REASON = {
+    "type": "string",
+    "maxLength": 2_000,
+    "description": "Motivo opcional que se anota en el evento desvincular",
+}
+REPOS = {
+    "type": "array",
+    "items": {"type": "string", "maxLength": 2_000},
+    "maxItems": 50,
+    "description": "Repos extra donde resolver commits de enlaces",
+}
+ROOT = {
+    "type": ["string", "null"],
+    "maxLength": 2_000,
+    "description": "Raíz del checkout para resolver rutas y commits; por "
+    "defecto la raíz actual",
+}
 
 REORG_SPECS = [
     ToolSpec(
@@ -81,6 +110,35 @@ REORG_SPECS = [
             "force": FORCE,
         },
         ("action", "apply"),
+    ),
+    ToolSpec(
+        "unlink",
+        "Quita un enlace concreto de un ticket (code + kind + ref). Verifica "
+        "que el enlace pertenece al ticket y registra el evento desvincular "
+        "con el motivo; no borra en cascadas ni histórico.",
+        {
+            "code": CODE,
+            "kind": LINK_KIND,
+            "ref": LINK_REF,
+            "reason": LINK_REASON,
+        },
+        ("code", "kind", "ref"),
+    ),
+    ToolSpec(
+        "links_repair",
+        "Detecta enlaces rotos: commits que ya no resuelven (raíz, repos y "
+        "dotfiles), dependencias de tickets inexistentes y archivos "
+        "ausentes cuyo padre se puede leer. Sin apply es un dry-run que "
+        "lista broken; con apply=true retira los rotos con un evento "
+        "desvincular por retirada. Un enlace depende de un ticket bloqueado "
+        "exige force=true. Nunca borra tickets, solo enlaces.",
+        {
+            "root": ROOT,
+            "repos": REPOS,
+            "apply": APPLY,
+            "force": FORCE,
+        },
+        (),
     ),
 ]
 

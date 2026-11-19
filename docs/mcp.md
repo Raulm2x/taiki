@@ -18,6 +18,8 @@ El servidor expone 35 herramientas. El nombre real no lleva prefijo (`list`,
 | `status`, `whoami` | Sesiones, claims, worktrees y tu ticket activo |
 | `worktree_create`, `worktree_list` | Aislan la escritura por tarea (`worktree`) |
 | `reorg_plan`, `reorg_apply` | Reorganizan tickets (`move`, `renumber`, `promote`, `demote`, `purge`); `reorg_plan` es read-only, `reorg_apply` exige `apply=true` y `force=true` para purgar |
+| `unlink` | Quita un enlace concreto (`code` + `kind` + `ref`) tras verificar que pertenece al ticket; registra el evento `desvincular` |
+| `links_repair` | Detecta enlaces rotos (commits que no resuelven, `depende` de tickets inexistentes, `archivo` ausente con padre legible); dry-run por defecto, `apply=true` retira con evento `desvincular` y `force=true` permite los `depende` de tickets bloqueados |
 | `promote` | Convierte un scratch `S-####` en `T-####` |
 | `scratch_drop` | Archiva y cancela un scratch sin consumir `T-####` |
 | `health` | MCP, hooks, claims caducados, solapamientos, worktrees e integridad de memoria (`memory`) |

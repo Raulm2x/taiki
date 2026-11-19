@@ -19,6 +19,7 @@ def run(h: Harness) -> None:
         "heartbeat", "checkpoint", "retry", "reassign", "schedule",
         "worktree_create", "worktree_list", "promote", "scratch_drop",
         "reorg_plan", "reorg_apply",
+        "unlink", "links_repair",
         "health", "brief", "memory_search", "memory_write",
         "memory_playbook", "memory_checklist", "memory_candidates",
         "memory_stats", "skills_suggest", "gate_run",
