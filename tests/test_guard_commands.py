@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import cli
 from ticketlib import audit as audit_lib, db, guard, repo, scratch
+from ticketlib.guard import commands as shell_rules
 from tests.support import Harness
 
 
@@ -659,3 +661,132 @@ def run(h: Harness) -> None:
         == "la ruta '/etc/x'",
         "dd valida solo el destino of=",
     )
+
+    # ── Allowlist documentada: perms, deny explicativo ───────────
+    agents_dir = Path(__file__).resolve().parent.parent / ".opencode" / "agents"
+    profiles = shell_rules.profile_rules(agents_dir)
+    h.ok(
+        bool(profiles)
+        and all(item["name"].startswith("worker") for item in profiles),
+        "profile_rules lee los perfiles worker de .opencode/agents",
+    )
+    worker = next(
+        (item for item in profiles if item["name"] == "worker"), None
+    )
+    rules = worker["rules"] if worker else []
+    h.ok(
+        any(
+            rule.get("action") == "shell"
+            and rule.get("resource") == "git add -A*"
+            and rule.get("effect") == "deny"
+            for rule in rules
+        ),
+        "perms encuentra el deny conocido de git add -A en worker",
+    )
+    dup = shell_rules.parse_permissions(
+        "permissions:\n"
+        "  - action: shell\n"
+        '    resource: "git add *"\n'
+        "    effect: allow\n"
+        "  - action: shell\n"
+        '    resource: "git add *"\n'
+        "    effect: deny\n"
+        "---\n"
+    )
+    h.ok(
+        len(dup) == 2
+        and not shell_rules.rule_wins(dup, 0)
+        and shell_rules.rule_wins(dup, 1),
+        "la última regla que casa es la que gana",
+    )
+    verdict = shell_rules.command_verdict("git add src/a.py && cat nota", rules)
+    h.ok(
+        verdict["allowed"]
+        and all(seg["effect"] == "allow" for seg in verdict["segments"]),
+        "el veredicto permite el staging por rutas del perfil worker",
+    )
+    denied_verdict = shell_rules.command_verdict("git add .", rules)
+    h.ok(
+        not denied_verdict["allowed"]
+        and denied_verdict["segments"][0]["effect"] == "deny",
+        "el perfil worker deniega git add .",
+    )
+    h.ok(
+        "git add --" in (shell_rules.deny_alternative("git add -A") or "")
+        and "commitea el WIP"
+        in (shell_rules.deny_alternative("git stash") or "")
+        and shell_rules.deny_alternative("desconocido") is None,
+        "deny_alternative sugiere la alternativa conocida y calla lo demás",
+    )
+    h.ok(
+        shell_rules.high_risk_command("sudo id") == "sudo"
+        and shell_rules.high_risk_command("rm -f /etc/x") == "sistema"
+        and shell_rules.command_is_mutating("rm -rf /x")
+        and shell_rules.risky_git("git add .") == "git add -A",
+        "los denies destructivos (sudo, /etc, rm -rf, staging masivo) siguen",
+    )
+    h.ok(
+        shell_rules.command_is_mutating("find . -name x -delete")
+        and shell_rules.command_is_mutating("find -delete .")
+        and shell_rules.command_is_mutating("echo hi 2> log")
+        and shell_rules.command_is_mutating("echo hi >log"),
+        "flags y redirecciones se deniegan en ambas posiciones",
+    )
+
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = cli.main(["perms", "--json"])
+    payload = json.loads(out.getvalue())
+    h.ok(
+        code == 0
+        and any(
+            rule.get("resource") == "git add -A*"
+            and rule.get("effect") == "deny"
+            for profile in payload["profiles"]
+            for rule in profile["rules"]
+        )
+        and "git add -A" in payload["guard"]["git_global"],
+        "taiki perms --json lista una regla conocida por CLI",
+    )
+    out_cmd = io.StringIO()
+    with contextlib.redirect_stdout(out_cmd):
+        code_cmd = cli.main(["perms", "--command", "git add .", "--json"])
+    payload_cmd = json.loads(out_cmd.getvalue())
+    h.ok(
+        code_cmd == 3
+        and not payload_cmd["allowed"]
+        and "git add --" in json.dumps(payload_cmd["guard"]),
+        "taiki perms --command deniega git add . con su alternativa",
+    )
+    out_cfg = io.StringIO()
+    with contextlib.redirect_stdout(out_cfg):
+        code_cfg = cli.main(["config", "show"])
+    h.ok(
+        code_cfg == 0 and isinstance(json.loads(out_cfg.getvalue()), dict),
+        "taiki config show imprime el config.json resuelto",
+    )
+
+    with h.env(TAIKI_DB=str(Path(tmp) / "perms-deny.db")):
+        dconn = db.connect()
+        try:
+            other = repo.create_ticket(
+                dconn, title="Otra sesión viva", project=".config"
+            )
+            repo.claim_ticket(
+                dconn, other["code"], agent="opencode", session_id="ses_otra"
+            )
+            denied = guard.evaluate(
+                tool="bash",
+                session="ses_mia",
+                agent="opencode",
+                command="git add .",
+                cwd=str(Path.home() / "proyecto-deny"),
+            )
+            h.ok(
+                not denied["allow"]
+                and denied["action"] == "parallel"
+                and "git add --" in denied["message"],
+                "el deny de git add . sugiere git add -- <ruta>",
+            )
+        finally:
+            dconn.close()
