@@ -594,6 +594,55 @@ def run(h: Harness) -> None:
         "mcp install no pisa perfiles propios, retira merger prístino en live "
         "y --force-agents sobrescribe",
     )
+    node_root = Path(h.tmp) / "nodeproj"
+    node_sync = sync_agent_profiles(
+        node_root,
+        {
+            "isolation": {"default": "worktree"},
+            "verify": {"command": ["pnpm", "test"]},
+            "commands": {"allow": ["node *", "npx *"]},
+        },
+    )
+    node_worker = (
+        node_root / ".opencode" / "agents" / "worker.md"
+    ).read_text(encoding="utf-8")
+    bad_root = Path(h.tmp) / "badproj"
+    sync_agent_profiles(
+        bad_root,
+        {
+            "isolation": {"default": "worktree"},
+            "verify": {"command": "rm -rf / && pnpm test"},
+            "commands": {"allow": ["git push *"]},
+        },
+    )
+    node_medium = (
+        node_root / ".opencode" / "agents" / "worker-medium.md"
+    ).read_text(encoding="utf-8")
+    bad_worker = (
+        bad_root / ".opencode" / "agents" / "worker.md"
+    ).read_text(encoding="utf-8")
+    h.ok(
+        "worker.md" in node_sync["copied"]
+        and 'resource: "pnpm *"' in node_worker
+        and 'resource: "node *"' in node_worker
+        and 'resource: "npx *"' in node_worker
+        and node_worker.index('resource: "pnpm *"')
+        < node_worker.index('resource: "find * -exec*"')
+        and 'resource: "rm -rf*"\n    effect: deny' in node_worker
+        and 'resource: "git push*"\n    effect: deny' in node_worker
+        and 'resource: "which *"' in node_worker
+        and 'resource: "command -v *"' in node_worker
+        and 'resource: "readlink *"' in node_worker
+        and 'resource: "find *"' in node_worker
+        and 'resource: "pnpm *"' in node_medium
+        and "## Presupuesto de pasos" in node_medium
+        and 'resource: "pnpm *"' in bad_worker
+        and 'resource: "rm *"' not in bad_worker
+        and 'resource: "git push*"\n    effect: allow' not in bad_worker,
+        "verify.command y commands.allow hacen worker project-aware: pnpm/node "
+        "permitidos antes del bloque final de denies, allows universales y "
+        "Presupuesto de pasos intactos, rm -rf/git push siguen denegados",
+    )
     mcp_agents = handlers.call_tool("agents", {"kind": "documentacion"})
     h.ok(
         mcp_agents["routing"]["agent"] == "worker-medium"

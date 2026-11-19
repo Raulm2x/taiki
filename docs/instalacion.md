@@ -61,6 +61,40 @@ Atajo equivalente:
 taiki init --workspace --mcp
 ```
 
+### Proyectos no-Python: allowlist de workers
+
+Los perfiles `worker*` traen una allowlist de shell pensada para Python y
+Taiki. En un proyecto de otro stack, `pnpm` o `node` devolverían `Permission
+denied: shell`. Declara las herramientas del proyecto en
+`.taiki/config.json`:
+
+```json
+{
+  "verify": {
+    "command": ["pnpm", "test"]
+  },
+  "commands": {
+    "allow": ["pnpm *", "node *", "npx *"]
+  }
+}
+```
+
+- `verify.command` (cadena o array) ya es el gate de verificación del
+  workspace; su binario también se convierte en allow de los workers. Con una
+  cadena se permite el primer token de cada segmento separado por `&&`,
+  `||`, `;` o `|` (`"pnpm test && pnpm lint"` → `pnpm *`).
+- `commands.allow` es opcional y acepta prefijos literales para lo que el
+  verify no cubra (formateadores, runners, CLIs propios).
+
+`taiki mcp install` inyecta esos prefijos en el frontmatter de los perfiles
+`worker*` justo antes del bloque final de denies: los workers ganan
+`pnpm *`, `node *` o `npx *`, pero `rm -rf`, `sudo`, `git push`, `git reset`
+y el staging masivo siguen denegados. Un prefijo cuyo primer token sea
+destructivo (`rm`, `sudo`, `git`, `taiki`, `bash`...) nunca se inyecta: el
+deny correspondiente gana. Los perfiles personalizados se conservan igual; la
+comparación prístino/personalizado usa el perfil ya renderizado con los
+allows del workspace.
+
 ## Antigravity
 
 El CLI de Antigravity no ofrece alcance por proyecto: `agy mcp add` escribe en
