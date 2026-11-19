@@ -61,6 +61,10 @@ LINK_KINDS = (
 DEPENDENCY_KIND = "depende"
 ACTOR_TYPES = ("agente", "usuario")
 
+# Aristas de estado. La liberación del claim (``abandon``/``release``) y el
+# evento ``steps_exhausted`` son ortogonales a esta máquina: no añaden aristas
+# ni cambian ``status``/``iterations``. Cualquier cambio de fase sigue pasando
+# por ``transition``.
 TRANSITIONS: dict[str, set[str]] = {
     "nuevo": {"pendiente", "en_progreso", "cancelado"},
     "pendiente": {"en_progreso", "bloqueado", "cancelado"},

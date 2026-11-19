@@ -8,6 +8,7 @@ preservando 100% de retrocompatibilidad.
 
 from .store import (
     TicketFilter,
+    abandon_ticket,
     activity_by_day,
     allocate_code,
     attach_tickets,
@@ -36,6 +37,7 @@ from .store import (
     search_codes,
     stale_claims,
     stats,
+    steps_exhausted,
     subtask_progress,
     transition,
     update_ticket,
@@ -43,6 +45,7 @@ from .store import (
 
 __all__ = [
     "TicketFilter",
+    "abandon_ticket",
     "activity_by_day",
     "allocate_code",
     "attach_tickets",
@@ -71,6 +74,7 @@ __all__ = [
     "search_codes",
     "stale_claims",
     "stats",
+    "steps_exhausted",
     "subtask_progress",
     "transition",
     "update_ticket",

@@ -28,16 +28,19 @@ from .queries import (
 )
 from .relations import auto_link_commit, comment_ticket, link_ticket
 from .workflow import (
+    abandon_ticket,
     claim_ticket,
     complete_ticket,
     confirm_tickets,
     heartbeat_ticket,
     stale_claims,
+    steps_exhausted,
     transition,
 )
 
 __all__ = [
     "TicketFilter",
+    "abandon_ticket",
     "activity_by_day",
     "allocate_code",
     "attach_tickets",
@@ -66,6 +69,7 @@ __all__ = [
     "search_codes",
     "stale_claims",
     "stats",
+    "steps_exhausted",
     "subtask_progress",
     "transition",
     "update_ticket",

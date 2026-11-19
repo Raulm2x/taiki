@@ -58,6 +58,31 @@ def _expired(value: str | None, at: str | None = None) -> bool:
     return lease_expired(value, at)
 
 
+def _force_reason(
+    force: bool,
+    reason: str | None,
+    fallback: str | None = None,
+    actor_type: str = "agente",
+    session_id: str | None = None,
+) -> str | None:
+    """Valida que un bypass ``force`` quede justificado en el histórico.
+
+    Los agentes que fuerzan desde una sesión (el camino MCP) deben aportar un
+    motivo en ``reason`` o en la nota/resolución equivalente. El CLI del
+    usuario y el API interno sin sesión conservan el bypass histórico; el MCP
+    siempre envía sesión, así que el caso real queda cubierto.
+    """
+    if not force:
+        return None
+    text = (reason or fallback or "").strip() or None
+    if text is None and actor_type != "usuario" and session_id is not None:
+        raise ValidationError(
+            "force=true requiere un motivo en 'reason' (o 'note'/'resolution'); "
+            "el bypass queda en el histórico con actor, sesión y motivo."
+        )
+    return text
+
+
 def transition(
     conn: sqlite3.Connection,
     code: Any,
@@ -69,11 +94,16 @@ def transition(
     assigned_to: Any = UNSET,
     resolution: str | None = None,
     force: bool = False,
+    reason: str | None = None,
 ) -> dict[str, Any]:
     row = row_by_code(conn, code)
     current = row["status"]
     actor = normalize_agent(actor)
     resolution = (resolution or "").strip() or None
+    note = (note or "").strip() or None
+    force_reason = _force_reason(
+        force, reason, note or resolution, actor_type, session_id
+    )
 
     check_enum(status, STATUSES, "estado")
     check_enum(actor_type, ACTOR_TYPES, "actor_type")
@@ -138,7 +168,6 @@ def transition(
             f"Desde '{current}' se permite: {', '.join(sorted(allowed)) or 'ninguna'}"
         )
 
-    note = (note or "").strip() or None
     if status in ("en_progreso", "pendiente") and current in REOPEN_FROM and not note:
         raise ValidationError("Reabrir un ticket requiere un motivo en 'note'")
 
@@ -216,9 +245,109 @@ def transition(
             session_id,
             current,
             status,
-            note,
+            note or force_reason,
         )
 
+    return get_ticket(conn, code)
+
+
+def abandon_ticket(
+    conn: sqlite3.Connection,
+    code: Any,
+    actor: str = "agente",
+    actor_type: str = "agente",
+    session_id: str | None = None,
+    force: bool = False,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    """Libera el claim sin cambiar de fase.
+
+    ``abandon`` (alias conceptual ``release``) es ortogonal a ``TRANSITIONS``:
+    limpia ``owner_session``, ``lease_until`` y ``heartbeat_at`` y deja un
+    evento ``abandon``; no toca ``status`` ni ``iterations``. El dueño de la
+    sesión puede liberar su claim. Otra sesión necesita ``force=true`` con
+    ``reason`` obligatorio, que queda registrado con actor y sesión.
+    """
+    actor = normalize_agent(actor)
+    check_enum(actor_type, ACTOR_TYPES, "actor_type")
+    row = row_by_code(conn, code)
+    reason = (reason or "").strip() or None
+    if force and not reason:
+        raise ValidationError(
+            "abandon con force=true exige un motivo en 'reason'; "
+            "queda en el histórico con actor y sesión."
+        )
+    owner = row["owner_session"]
+    if not owner and not row["lease_until"]:
+        raise TransitionError(
+            f"{row['code']} no tiene un claim que liberar"
+        )
+    if owner and not force and actor_type != "usuario":
+        same = session_id == owner or (
+            session_id is None and owner == f"agent:{actor}"
+        )
+        if not same:
+            raise PermissionDenied(
+                f"{row['code']} está reclamado por otra sesión ({owner}); "
+                "libera con la sesión dueña o usa force=true con reason."
+            )
+    ts = now()
+    with db.tx(conn):
+        conn.execute(
+            "UPDATE tickets SET owner_session = NULL, lease_until = NULL, "
+            "heartbeat_at = NULL, updated_at = ? WHERE id = ?",
+            (ts, row["id"]),
+        )
+        event(
+            conn,
+            row["id"],
+            "abandon",
+            actor,
+            actor_type,
+            session_id,
+            row["status"],
+            row["status"],
+            reason or "claim liberado",
+        )
+    return get_ticket(conn, code)
+
+
+def steps_exhausted(
+    conn: sqlite3.Connection,
+    code: Any,
+    phase: str | None = None,
+    note: str | None = None,
+    actor: str = "agente",
+    actor_type: str = "agente",
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """Registra que el cliente cortó la sesión por agotar pasos.
+
+    No cambia el estado ni el claim: solo deja un evento ``steps_exhausted``
+    con la fase en la que ocurrió y el actor. La liberación del lease, si
+    procede, es una acción ``abandon`` aparte.
+    """
+    actor = normalize_agent(actor)
+    check_enum(actor_type, ACTOR_TYPES, "actor_type")
+    row = row_by_code(conn, code)
+    current = row["status"]
+    phase = (phase or current).strip() or current
+    text = f"pasos agotados en fase {phase}"
+    extra = (note or "").strip()
+    if extra:
+        text = f"{text}: {extra}"
+    with db.tx(conn):
+        event(
+            conn,
+            row["id"],
+            "steps_exhausted",
+            actor,
+            actor_type,
+            session_id,
+            current,
+            current,
+            text,
+        )
     return get_ticket(conn, code)
 
 
@@ -376,8 +505,10 @@ def claim_ticket(
     steal: bool = False,
     anonymous_owner: bool = False,
     lease_minutes: int | None = None,
+    reason: str | None = None,
 ) -> dict[str, Any]:
     agent = normalize_agent(agent)
+    force_reason = _force_reason(force, reason, None, actor_type, session_id)
     with db.tx(conn):
         row = row_by_code(conn, code)
         if row["status"] in ("completado", "verificado", "confirmado", "cancelado"):
@@ -476,7 +607,8 @@ def claim_ticket(
                 session_id,
                 "en_progreso",
                 "en_progreso",
-                f"Asignado a {agent}",
+                f"Asignado a {agent}"
+                + (f" · force: {force_reason}" if force_reason else ""),
             )
             ticket = get_ticket(conn, code)
         else:
@@ -674,10 +806,12 @@ def complete_ticket(
     actor_type: str = "agente",
     session_id: str | None = None,
     force: bool = False,
+    reason: str | None = None,
 ) -> dict[str, Any]:
     resolution = (resolution or "").strip()
     if not resolution:
         raise ValidationError("La resolución es obligatoria al completar un ticket")
+    force_reason = _force_reason(force, reason, resolution, actor_type, session_id)
 
     # En los modos live (none/scope) el trabajo no vive en un worktree con
     # rama por ticket: la evidencia es un commit enlazado o un enlace
@@ -718,6 +852,7 @@ def complete_ticket(
             session_id=session_id,
             resolution=resolution,
             force=force,
+            reason=force_reason,
         )
         if commit:
             link_ticket(
