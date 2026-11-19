@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from commands.git import cmd_hook_check_push
 from commands.mcp import install_repo_hooks
-from ticketlib import audit as audit_lib, githook, repo
+from ticketlib import audit as audit_lib, db, githook, repo
 from tests.seeds import git_repo, repo_with_hooks
 from tests.support import Harness
 
@@ -349,6 +349,50 @@ def run(h: Harness) -> None:
         legacy_hook.read_text(encoding="utf-8").count("taiki auto-link"),
         migrated.count("taiki auto-link"),
         "reinstalar el hook migrado no duplica el bloque",
+    )
+
+    # ── Alias de renumber en el asunto y en la rama ────────────────────
+    renamed = repo.create_ticket(conn, title="Ticket renumerado")
+    repo.claim_ticket(conn, renamed["code"], agent="test")
+    old_code = renamed["code"]
+    first = repo.reorg_apply(
+        conn, "renumber", [old_code], allow_root=True
+    )["items"][0]["new_code"]
+    h.ok(
+        githook.check_commit_message(
+            conn, f"arreglo {old_code}", branch="develop"
+        )["ok"],
+        "el asunto con el código viejo valida contra el ticket actual",
+    )
+    h.ok(
+        githook.check_commit_message(
+            conn, f"arreglo {old_code}", branch=f"agent/{old_code}-legacy"
+        )["ok"],
+        "la rama creada antes del renumber no se bloquea por el alias",
+    )
+    final = repo.reorg_apply(
+        conn, "renumber", [first], allow_root=True
+    )["items"][0]["new_code"]
+    chained = githook.check_commit_message(
+        conn, f"arreglo {old_code}", branch="develop"
+    )
+    h.ok(
+        chained["ok"]
+        and any(final in warning for warning in chained["warnings"]),
+        "dos renumerados encadenados resuelven al código final",
+    )
+
+    db.record_renamed(conn, "T-9971", "T-9972", "2026-11-19T00:00:00")
+    conn.commit()
+    broken = githook.check_commit_message(
+        conn, "arreglo T-9971", branch="develop"
+    )
+    h.ok(
+        not broken["ok"]
+        and broken["reason"] == "unknown-code"
+        and "renumerado" in broken["message"]
+        and "no existe" in broken["message"],
+        "un alias cuyo destino no existe sigue bloqueando con explicación",
     )
 
     # ── mcp install instala los cuatro hooks ───────────────────────────
