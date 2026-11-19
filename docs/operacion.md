@@ -651,6 +651,37 @@ borra registros muertos: espera la muerte tras `SIGTERM`, escala a `SIGKILL` y
 solo borra la fila cuando consta muerto. Los duplicados no se tocan salvo con
 `--duplicates`, que conserva el proceso más reciente.
 
+### Recargar el MCP tras un merge
+
+Un merge que toca `ticketlib/` o `mcp_layer/` deja obsoleto al proceso MCP
+vivo: sigue sirviendo con el código con el que arrancó y `runtime.is_stale()`
+(compara la huella cargada con la del disco) bloquea las herramientas mutantes
+para no corromper datos. La recarga no pasa por reiniciar OpenCode:
+
+- `taiki servers --reload` envía `SIGHUP` a los MCP **vivos de este
+  workspace** (registrados, con padre vivo; los de otros proyectos no se
+  tocan y los huérfanos siguen siendo cosa de `--prune`). `--dry-run` lista a
+  quién se señalaría sin enviar la señal.
+- `taiki mcp install` termina invocando esa misma recarga salvo
+  `--no-reload`: es el momento en que el flujo de trabajo sabe que acaba de
+  aterrizar código.
+
+En el servidor, el manejador de `SIGHUP` solo marca una bandera. El re-exec
+ocurre en el punto seguro —entre peticiones, con la respuesta ya escrita,
+nunca a mitad de una— mediante `os.execv` del propio intérprete: los fds de
+stdio se heredan y el cliente no ve la sustitución. El proceso nuevo
+re-registra su huella (`runtime.register`) sin esperar un nuevo handshake.
+Hay guarda contra bucles: una señal para un código que no cambió no re-ejecuta,
+y el testigo `TAIKI_MCP_REEXEC` cuenta las re-execuciones encadenadas (máximo
+3 sin converger); si se agota, el aviso pide reiniciar OpenCode.
+
+La recarga no se hace «solo en el cliente» porque el plugin de OpenCode solo
+puede pedir una recarga cuando la sesión queda idle —depende del cliente y de
+su timing—, mientras que la señal la decide quien mergea o instala, que es
+quien sabe que hay código nuevo. Limitación conocida: la bandera se atiende en
+el límite entre peticiones, así que una sesión idle recarga en cuanto llegue su
+siguiente petición o latido, no antes.
+
 El inventario no se limita a tickets: descubre cualquier MCP hijo del proceso
 `opencode serve` (heurística por "mcp"/`server.py`), le deduce el nombre y lo
 marca igual. Así un segundo servidor entra solo en `taiki servers`. **Nunca** se toca un proceso con padre vivo: una
@@ -703,7 +734,8 @@ echo '{"tool_name":"write_file","tool_input":{"path":"/ruta"},"session_id":"ses_
 - El registro de procesos (`~/.local/share/taiki/registry.db`) es global y solo
   guarda PID, padre, huella, versión y workspace. No contiene tickets.
 - `taiki servers` muestra la columna `ESPACIO` para saber qué instancia sirve a
-  qué proyecto; `--prune` limpia huérfanos sin tocar procesos con padre vivo.
+  qué proyecto; `--prune` limpia huérfanos sin tocar procesos con padre vivo y
+  `--reload` pide por señal a los de este workspace que recarguen su código.
 - No hay MCP global ni base de datos global. Un directorio sin `.taiki/` no
   arranca una instancia útil: el servidor responde con el error de
   `taiki init --workspace`.

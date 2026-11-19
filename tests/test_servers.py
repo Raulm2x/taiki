@@ -344,6 +344,138 @@ def run(h: Harness) -> None:
             "instancias de proyectos distintos no se marcan duplicadas",
         )
 
+        # ── Recarga por señal: solo registrados, vivos y del workspace ──
+        reload_db = db.connect(":memory:")
+        try:
+            reload_procs = {
+                50: {
+                    "pid": 50,
+                    "ppid": 1,
+                    "cmdline": "opencode serve --service",
+                },
+                100: {
+                    "pid": 100,
+                    "ppid": 50,
+                    "cmdline": "python3 /x/taiki/server.py",
+                },
+                200: {
+                    "pid": 200,
+                    "ppid": 1,
+                    "cmdline": "python3 /x/taiki/server.py",
+                },
+                300: {
+                    "pid": 300,
+                    "ppid": 50,
+                    "cmdline": "python3 /x/taiki/server.py",
+                },
+                600: {
+                    "pid": 600,
+                    "ppid": 50,
+                    "cmdline": "python3 /x/taiki/server.py",
+                },
+            }
+
+            def reload_process(pid):
+                return reload_procs.get(pid)
+
+            for pid, ppid, space in (
+                (100, 50, "taiki"),
+                (200, 1, "taiki"),
+                (300, 50, ".config"),
+                (400, 50, "taiki"),
+                (500, 50, "taiki"),
+            ):
+                reload_db.execute(
+                    "INSERT INTO mcp_servers(pid, ppid, name, fingerprint, "
+                    "started_at, heartbeat_at, workspace) VALUES "
+                    "(?, ?, 'taiki', 'abc', '2026-10-31T10:00:00-05:00', "
+                    "'2026-10-31T10:00:00-05:00', ?)",
+                    (pid, ppid, space),
+                )
+            # El padre del servicio entra solo como ``process``: en ``live``
+            # metería una entrada extra (no es servidor) al inventario.
+            live_map = {
+                pid: info
+                for pid, info in reload_procs.items()
+                if pid != 50
+            }
+            sent: list[tuple[int, int]] = []
+
+            def fake_signaller(pid, sig):
+                sent.append((pid, sig))
+
+            selection = servers.reload_processes(
+                reload_db,
+                workspace="taiki",
+                apply=False,
+                process=reload_process,
+                signaller=fake_signaller,
+                current="abc",
+                live=live_map,
+            )
+            h.ok(
+                selection["signalled"] == [100] and sent == [],
+                "dry-run selecciona solo los vivos del workspace sin señalar",
+            )
+
+            plan = servers.reload_processes(
+                reload_db,
+                workspace="taiki",
+                apply=True,
+                process=reload_process,
+                signaller=fake_signaller,
+                current="abc",
+                live=live_map,
+            )
+            reasons = {item["pid"]: item["reason"] for item in plan["skipped"]}
+            h.ok(
+                plan["signalled"] == [100]
+                and sent == [(100, signal.SIGHUP)]
+                and reasons == {
+                    200: "huérfano",
+                    300: "otro workspace",
+                    400: "muerto",
+                    500: "muerto",
+                    600: "sin registro",
+                },
+                "reload señala solo registrados vivos del workspace actual",
+            )
+
+            def broken_signaller(pid, sig):
+                raise OSError("sin permiso")
+
+            undelivered = servers.reload_processes(
+                reload_db,
+                workspace="taiki",
+                apply=True,
+                process=reload_process,
+                signaller=broken_signaller,
+                current="abc",
+                live=live_map,
+            )
+            undelivered_reasons = {
+                item["pid"]: item["reason"]
+                for item in undelivered["skipped"]
+            }
+            h.ok(
+                undelivered["signalled"] == []
+                and undelivered_reasons[100] == "señal no entregada",
+                "un SIGHUP que no se pudo entregar queda anotado y sin fallo",
+            )
+
+            h.ok(
+                servers.reload_processes(
+                    reload_db,
+                    apply=False,
+                    process=lambda pid: None,
+                    live={},
+                )["reason"]
+                == "sin servidores vivos de este workspace",
+                "sin workspace explícito se usa el actual y avisa si no hay nadie",
+            )
+        finally:
+            reload_db.close()
+
         servers.register(fleet, "taiki", "test")
         row = fleet.execute(
             "SELECT * FROM mcp_servers WHERE pid = ?", (os.getpid(),)
