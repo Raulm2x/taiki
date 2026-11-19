@@ -413,11 +413,7 @@ def run(h: Harness) -> None:
                 current="abc",
                 live=live_map,
             )
-            h.ok(
-                selection["signalled"] == [100] and sent == [],
-                "dry-run selecciona solo los vivos del workspace sin señalar",
-            )
-
+            sent_dry = list(sent)
             plan = servers.reload_processes(
                 reload_db,
                 workspace="taiki",
@@ -428,18 +424,6 @@ def run(h: Harness) -> None:
                 live=live_map,
             )
             reasons = {item["pid"]: item["reason"] for item in plan["skipped"]}
-            h.ok(
-                plan["signalled"] == [100]
-                and sent == [(100, signal.SIGHUP)]
-                and reasons == {
-                    200: "huérfano",
-                    300: "otro workspace",
-                    400: "muerto",
-                    500: "muerto",
-                    600: "sin registro",
-                },
-                "reload señala solo registrados vivos del workspace actual",
-            )
 
             def broken_signaller(pid, sig):
                 raise OSError("sin permiso")
@@ -453,25 +437,44 @@ def run(h: Harness) -> None:
                 current="abc",
                 live=live_map,
             )
-            undelivered_reasons = {
-                item["pid"]: item["reason"]
-                for item in undelivered["skipped"]
-            }
-            h.ok(
-                undelivered["signalled"] == []
-                and undelivered_reasons[100] == "señal no entregada",
-                "un SIGHUP que no se pudo entregar queda anotado y sin fallo",
+            lazy = servers.reload_processes(
+                reload_db,
+                apply=False,
+                process=lambda pid: None,
+                live={},
             )
-
-            h.ok(
-                servers.reload_processes(
-                    reload_db,
-                    apply=False,
-                    process=lambda pid: None,
-                    live={},
-                )["reason"]
-                == "sin servidores vivos de este workspace",
-                "sin workspace explícito se usa el actual y avisa si no hay nadie",
+            h.eq(
+                (
+                    selection["signalled"],
+                    sent_dry,
+                    plan["signalled"],
+                    list(sent),
+                    reasons,
+                    (
+                        undelivered["signalled"],
+                        {
+                            item["pid"]: item["reason"]
+                            for item in undelivered["skipped"]
+                        }[100],
+                    ),
+                    lazy["reason"],
+                ),
+                (
+                    [100],
+                    [],
+                    [100],
+                    [(100, signal.SIGHUP)],
+                    {
+                        200: "huérfano",
+                        300: "otro workspace",
+                        400: "muerto",
+                        500: "muerto",
+                        600: "sin registro",
+                    },
+                    ([], "señal no entregada"),
+                    "sin servidores vivos de este workspace",
+                ),
+                "la recarga señala solo registrados vivos del workspace actual",
             )
         finally:
             reload_db.close()
