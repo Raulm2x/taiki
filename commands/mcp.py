@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from ticketlib import db, workspace
+from ticketlib import agents, db, workspace
 from ticketlib.domain import TicketError
 from ticketlib.githook import (
     install_commit_msg_hook,
@@ -157,11 +157,19 @@ def sync_agent_profiles(
     (``none``/``scope``) no hay worktrees que integrar: se copia todo menos
     ``merger.md`` y se retira el de destino solo si es idéntico al de origen
     (prístino) o si se fuerza. Uno personalizado se conserva.
+
+    Los perfiles ``worker*`` son project-aware: la sincronización inyecta en
+    su frontmatter los allows del workspace (``verify.command`` y
+    ``commands.allow``, ver :func:`ticketlib.agents.worker_shell_allows`)
+    antes del bloque final de denies, así un proyecto no-Python puede dar a
+    sus workers `pnpm` o `node` sin abrir comandos destructivos. La
+    comparación prístino/personalizado usa el texto ya renderizado.
     """
     source = Path(__file__).resolve().parent.parent / ".opencode" / "agents"
     dest = Path(root) / ".opencode" / "agents"
     dest.mkdir(parents=True, exist_ok=True)
     live = (config.get("isolation") or {}).get("default") in ("none", "scope")
+    allows = agents.worker_shell_allows(config)
     copied: list[str] = []
     skipped: list[str] = []
     removed: list[str] = []
@@ -172,6 +180,8 @@ def sync_agent_profiles(
             continue
         target = dest / profile.name
         text = profile.read_text(encoding="utf-8")
+        if allows and profile.name.startswith("worker"):
+            text = agents.render_worker_profile(text, allows)
         if not target.exists():
             target.write_text(text, encoding="utf-8")
             copied.append(profile.name)
