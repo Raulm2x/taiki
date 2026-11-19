@@ -87,8 +87,10 @@
 # test_release 1.11-1.72s en worktrees sin cambios de test_release); techo de
 # checks 1640 = 1600+40 para la tanda (~1635); apretar con poda dedicada si
 # sigue creciendo.
+# T-0085.17 sube el techo a 1660 por los 14 checks de T-0085.04 (1647
+# medidos); al cerrar la épica toca poda y medición, no seguir subiendo.
 max_seconds = 12.5
-baseline_checks = 1600
+baseline_checks = 1620
 # Margen estrecho para que cualquier adición vuelva a avisar.
 # T-0071/T-0072: grouped, stats índice/almacenamiento, tags y capa 0; techo 1604.
 # T-0078.04: +14 checks purge; revisión única (techo 1618).
