@@ -513,13 +513,16 @@ def run(h: Harness) -> None:
         docs["agent"] == "worker-medium"
         and docs["level"] == "medium"
         and docs["steps"] == agents_lib.STEPS_BY_LEVEL["medium"]
+        and docs["steps"] >= 32
         and "documentacion" in short["strengths"]
         and short["steps"] >= 16
+        and short["steps"] < docs["steps"]
+        and agents_lib.STEPS_BY_LEVEL["high"] >= agents_lib.STEPS_BY_LEVEL["medium"]
         and bug["level"] == "high"
         and bug["variant"] == "high"
         and "merger" not in agents_lib.registry({"isolation": {"default": "scope"}})
         and "merger" in agents_lib.registry({"isolation": {"default": "worktree"}}),
-        "docs grandes va a worker-medium; worker-low (16 pasos) es para cortas",
+        "docs grandes va a worker-medium (32; high >= medium); worker-low sigue corto",
     )
     limited = agents_lib.capability("worker-medium")
     unsupported = agents_lib.route("bug", limited, level="xhigh")
@@ -1375,8 +1378,18 @@ def run(h: Harness) -> None:
                     "worker-high.md",
                 )
             )
+        )
+        and all(
+            "## Presupuesto de pasos" in body
+            and "~20% de pasos" in body
+            and "Pasos finales reservados" in body
+            and "grep -n" in body
+            for body in (
+                _frontmatter(name)[1]
+                for name in ("worker-low.md", "worker-medium.md", "worker-high.md")
+            )
         ),
-        "los workers escalan al conductor en vez de pedir permiso al usuario",
+        "los workers escalan al conductor y cierran por bloques antes de agotar pasos",
     )
     problems = orchestrator.isolation_problems(
         "T-0001",

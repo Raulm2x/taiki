@@ -87,6 +87,9 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    documentación grande va a `worker-medium`; `worker-low` (16 pasos) queda
    para ediciones cortas. Si un worker agota pasos o falla, un reintento con
    el perfil superior y, si vuelve a fallar, bloquear: no se escala en bucle.
+   El perfil no puede introspeccionar su presupuesto ni ampliarlo en vuelo: si
+   el ticket declara más de dos paths (o más de dos módulos), el conductor sube
+   de perfil o de modelo **antes** de lanzar; no se espera al agotamiento.
    Los agentes escriben estado por MCP (claim/complete/transition/checkpoint)
    para conservar actor, actor_type y owner_session; el CLI es del usuario.
    Tras claim con worktree, usa `session_move` a la ruta devuelta. El shell

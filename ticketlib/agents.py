@@ -105,7 +105,9 @@ ROUTING: dict[str, str] = {
     "bug": "high",
     "seguridad": "high",
 }
-STEPS_BY_LEVEL = {"low": 16, "medium": 24, "high": 40, "xhigh": 48, "max": 48}
+# El presupuesto es un techo: medium necesita 32 pasos porque los tickets de
+# 3+ módulos no caben en 24 (agotan pasos antes de commitear). high >= medium.
+STEPS_BY_LEVEL = {"low": 16, "medium": 32, "high": 40, "xhigh": 48, "max": 48}
 DEFAULT_CONCURRENCY = 3
 
 # Catálogo de modelos por defecto del proyecto. ``.taiki/config.json`` puede
@@ -159,7 +161,7 @@ DEFAULT_AGENTS: dict[str, dict[str, Any]] = {
         "max_parallel": 2,
         "paths": [],
         "cost": 1.0,
-        "steps": 24,
+        "steps": 32,
     },
     "worker-high": {
         "model": "opencode-go/deepseek-v4.1-flash",
