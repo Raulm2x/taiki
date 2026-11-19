@@ -125,11 +125,17 @@ def _metrics(conn: Any, days: int = 30) -> dict[str, Any]:
     cutoff = (
         datetime.now().astimezone() - timedelta(days=max(1, days))
     ).isoformat(timespec="seconds")
+    # ``closed`` cuenta por fecha de entrega (``completed_at``); los tickets
+    # confirmados antes de que la transición la conservara solo tienen
+    # ``confirmed_at``, que actúa de fallback para no perder el histórico.
     row = conn.execute(
         "SELECT COUNT(*) AS total, AVG(iterations) AS attempts, "
-        "AVG((julianday(completed_at) - julianday(started_at)) * 24.0) AS lead "
-        "FROM tickets WHERE archived = 0 AND completed_at IS NOT NULL "
-        "AND started_at IS NOT NULL AND completed_at >= ?",
+        "AVG((julianday(COALESCE(completed_at, confirmed_at)) "
+        "- julianday(started_at)) * 24.0) AS lead "
+        "FROM tickets WHERE archived = 0 "
+        "AND COALESCE(completed_at, confirmed_at) IS NOT NULL "
+        "AND started_at IS NOT NULL "
+        "AND COALESCE(completed_at, confirmed_at) >= ?",
         (cutoff,),
     ).fetchone()
     failures = conn.execute(

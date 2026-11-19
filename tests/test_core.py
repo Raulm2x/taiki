@@ -535,10 +535,16 @@ def run(h: Harness) -> None:
         actor="conductor",
     )
     report = repo.confirm_tickets(conn, [review["code"]])
+    confirmed = repo.get_ticket(conn, review["code"])
     h.ok(
         report["confirmed"] == [review["code"]]
-        and repo.get_ticket(conn, review["code"])["status"] == "confirmado",
+        and confirmed["status"] == "confirmado",
         "el usuario confirma desde verificado",
+    )
+    h.ok(
+        confirmed["completed_at"] is not None
+        and confirmed["iterations"] == 2,
+        "confirmar conserva completed_at y no abre un intento nuevo",
     )
 
     # Confirmar una épica expande y confirma sus tareas verificadas.

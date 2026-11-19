@@ -240,6 +240,22 @@ def _impact(h: Harness) -> None:
     recent = impact(conn, days=1)
     h.eq(recent["closed"], 0, "la ventana de impact acota los cierres")
 
+    # Un confirmado histórico sin completed_at cuenta vía confirmed_at.
+    legacy = repo.create_ticket(conn, title="Impacto confirmado", kind="bug")
+    conn.execute(
+        "UPDATE tickets SET status = 'confirmado', iterations = 1, "
+        "started_at = ?, completed_at = NULL, confirmed_at = ?, "
+        "updated_at = ? WHERE id = ?",
+        (_stamp(3, hours=4), _stamp(3), _stamp(3), legacy["id"]),
+    )
+    conn.commit()
+    legacy_data = impact(conn, days=30)
+    h.ok(
+        legacy_data["closed"] == 3
+        and legacy_data["attempts"]["total"] == 4,
+        "impact cuenta un confirmado sin completed_at vía confirmed_at",
+    )
+
     payload = _json(["memory", "impact", "--days", "30", "--json"])
     h.ok(
         set(payload) == set(data) and payload["days"] == 30,

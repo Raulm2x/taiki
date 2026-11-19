@@ -251,6 +251,35 @@ def run(h: Harness) -> None:
         1,
         "un rechazo desde verificado cuenta como fallo de verificación",
     )
+
+    # ── Confirmado histórico: closed cuenta vía confirmed_at ────────────
+    baseline = status.snapshot(with_servers=False)["metrics"]["closed"]
+    legacy = repo.create_ticket(conn, title="Confirmado histórico", project="taiki")
+    repo.claim_ticket(
+        conn, legacy["code"], agent="worker", session_id="ses_legacy"
+    )
+    repo.complete_ticket(
+        conn,
+        legacy["code"],
+        resolution="entrega",
+        actor="worker",
+        session_id="ses_legacy",
+    )
+    repo.transition(
+        conn, legacy["code"], "verificado", note="gates verdes", actor="conductor"
+    )
+    repo.confirm_tickets(conn, [legacy["code"]])
+    # Filas confirmadas antes del fix conservan solo confirmed_at.
+    conn.execute(
+        "UPDATE tickets SET completed_at = NULL WHERE code = ?",
+        (legacy["code"],),
+    )
+    conn.commit()
+    h.eq(
+        status.snapshot(with_servers=False)["metrics"]["closed"],
+        baseline + 1,
+        "un confirmado sin completed_at cuenta como cerrado",
+    )
     text = "\n".join(status.lines(status.snapshot(with_servers=False)))
     h.ok(
         "Cola del orquestador" in text

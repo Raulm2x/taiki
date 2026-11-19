@@ -213,9 +213,14 @@ def impact(
         raise RuntimeError("No se pudo resolver la hora actual")
     cutoff = (base - timedelta(days=window)).isoformat(timespec="seconds")
 
+    # ``closed`` cuenta por fecha de entrega (``completed_at``); el histórico
+    # confirmado antes de conservarla usa ``confirmed_at`` como fallback.
     rows = conn.execute(
-        "SELECT status, iterations, started_at, completed_at FROM tickets "
-        "WHERE archived = 0 AND completed_at IS NOT NULL AND completed_at >= ? "
+        "SELECT status, iterations, started_at, "
+        "COALESCE(completed_at, confirmed_at) AS completed_at FROM tickets "
+        "WHERE archived = 0 "
+        "AND COALESCE(completed_at, confirmed_at) IS NOT NULL "
+        "AND COALESCE(completed_at, confirmed_at) >= ? "
         "ORDER BY completed_at",
         (cutoff,),
     ).fetchall()

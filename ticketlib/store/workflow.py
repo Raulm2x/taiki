@@ -213,9 +213,9 @@ def transition(
         changes.append(("iterations", int(row["iterations"] or 0) + 1))
     if status == "completado":
         changes.append(("completed_at", ts))
-    elif status != "verificado":
-        # Confirmar o reabrir cierra la entrega: ``confirmed_at`` o el nuevo
-        # intento mandan. ``verificado`` conserva la fecha de completado.
+    elif status not in ("verificado", "confirmado"):
+        # Reabrir cierra la entrega: el nuevo intento manda. ``verificado`` y
+        # ``confirmado`` conservan la fecha de completado (métricas de cierre).
         changes.append(("completed_at", None))
     if status == "confirmado":
         changes.append(("confirmed_at", ts))
