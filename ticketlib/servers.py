@@ -32,6 +32,8 @@ STATES = (
     "huérfano",
     "muerto",
 )
+# Estados a los que se puede pedir una recarga de código: registrados y vivos.
+RELOADABLE_STATES = ("al día", "desactualizado", "duplicado")
 SELF = os.getpid()
 
 # El servicio de OpenCode lanza los MCP como hijos directos.
@@ -441,4 +443,69 @@ def prune(
         else:
             plan["stubborn"].append(pid)
 
+    return plan
+
+
+def reload_processes(
+    conn: Any,
+    workspace: str | None = None,
+    apply: bool = True,
+    *,
+    process: Callable[[int], dict[str, Any] | None] = process_info,
+    signaller: Callable[[int, int], None] = os.kill,
+    current: str | None = None,
+    live: dict[int, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Envía SIGHUP a los MCP vivos del workspace para que recarguen código.
+
+    Selecciona solo procesos registrados (fila en ``mcp_servers``), vivos y del
+    workspace indicado: los de otros proyectos no se tocan y los huérfanos
+    quedan para :func:`prune`. Con ``apply=False`` devuelve la selección sin
+    enviar la señal. Cada servidor re-ejecuta su código en su siguiente punto
+    seguro entre peticiones; el stdio se hereda y el cliente no ve el relevo.
+    """
+    if workspace is None:
+        from . import workspace as workspace_lib
+
+        info = workspace_lib.resolve()
+        workspace = str(info["workspace"] or info["db"])
+    if not hasattr(signal, "SIGHUP"):
+        return {
+            "signalled": [],
+            "skipped": [],
+            "reason": "SIGHUP no disponible en esta plataforma",
+        }
+    entries = inventory(conn, process=process, current=current, live=live)
+    plan: dict[str, Any] = {"signalled": [], "skipped": [], "reason": ""}
+    for entry in entries:
+        pid = entry["pid"]
+        if pid == SELF:
+            plan["skipped"].append({"pid": pid, "reason": "proceso actual"})
+        elif entry["state"] not in RELOADABLE_STATES:
+            plan["skipped"].append({"pid": pid, "reason": entry["state"]})
+        elif not entry.get("workspace"):
+            plan["skipped"].append({"pid": pid, "reason": "workspace desconocido"})
+        elif str(entry["workspace"]) != str(workspace):
+            plan["skipped"].append({"pid": pid, "reason": "otro workspace"})
+        else:
+            plan["signalled"].append(pid)
+            if apply:
+                try:
+                    signaller(pid, signal.SIGHUP)
+                except OSError:
+                    plan["signalled"].remove(pid)
+                    plan["skipped"].append(
+                        {"pid": pid, "reason": "señal no entregada"}
+                    )
+    if not plan["signalled"]:
+        plan["reason"] = "sin servidores vivos de este workspace"
+    elif apply:
+        plan["reason"] = (
+            f"SIGHUP a {len(plan['signalled'])} servidor(es); "
+            "recargan su código en el siguiente límite de petición"
+        )
+    else:
+        plan["reason"] = (
+            f"dry-run: {len(plan['signalled'])} servidor(es) recibirían SIGHUP"
+        )
     return plan
