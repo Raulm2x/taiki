@@ -2,7 +2,7 @@
 description: Implementa tareas normales de mantenimiento o funcionalidad
 mode: subagent
 model: opencode-go/deepseek-v4.1-flash
-steps: 24
+steps: 32
 permissions:
   - action: subagent
     resource: "*"
@@ -409,6 +409,23 @@ ejecutes `confirm`, `authorize` ni `review`.
 8. Informa al conductor: commit, comandos ejecutados, resultado y cualquier
    riesgo o trabajo independiente que hayas detectado. No crees tickets por tu
    cuenta salvo que el conductor lo pida.
+
+## Presupuesto de pasos
+
+Tu límite de pasos es un techo, no un objetivo, y nadie lo amplía en vuelo:
+
+- **Aviso al 80%**: si te queda ~20% de pasos, deja de explorar. Commitea lo
+  que compile, publica `checkpoint` y `complete`.
+- **Pasos finales reservados**: los últimos 3-4 son solo para `git add` +
+  `taiki commit` + `checkpoint` + `complete`; no edites en ellos.
+- **Exploración acotada**: usa `grep -n` para localizar y `read` con
+  `offset`/`limit`; máximo 2 lecturas por fichero. No leas módulos enteros
+  "para entender": el ticket dice qué tocar.
+- **Verificación acotada**: durante el trabajo corre
+  `python3 tests/run.py --only <modulo>`; `--verify` y la suite completa son
+  del conductor.
+- **Commit por bloques**: si el ticket toca más de 2 módulos, commitea cada
+  bloque que compile antes de seguir con el siguiente.
 
 ## Memoria
 
