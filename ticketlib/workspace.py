@@ -138,8 +138,15 @@ def scope_roots(
 DOTFILES_LIVE_DEFAULT = "~/.config"
 
 
-def verify_command(config: dict[str, Any] | None = None) -> str | None:
-    """Comando de verificación del workspace (``verify.command``) o ``None``."""
+def verify_command(
+    config: dict[str, Any] | None = None,
+) -> str | list[str] | None:
+    """Comando de verificación del workspace (``verify.command``) o ``None``.
+
+    Acepta una cadena o un array de cadenas. El array se devuelve tal cual: el
+    consumidor no debe pasarlo por ``shlex.split`` (así ``["pnpm", "test"]``
+    no depende de comillas ni de metacaracteres).
+    """
     data = config if config is not None else load_config()
     block = data.get("verify") if isinstance(data, dict) else None
     if block is None:
@@ -149,8 +156,21 @@ def verify_command(config: dict[str, Any] | None = None) -> str | None:
     command = block.get("command")
     if command is None:
         return None
-    text = str(command).strip()
-    return text or None
+    if isinstance(command, (list, tuple)):
+        values: list[str] = []
+        for item in command:
+            if not isinstance(item, str) or not item.strip():
+                raise ValidationError(
+                    "verify.command debe ser una cadena o un array de cadenas "
+                    "no vacías"
+                )
+            values.append(item.strip())
+        return values or None
+    if not isinstance(command, str):
+        raise ValidationError(
+            "verify.command debe ser una cadena o un array de cadenas"
+        )
+    return command.strip() or None
 
 
 def _dotfiles_path(value: Any, source: str, key: str) -> str | None:

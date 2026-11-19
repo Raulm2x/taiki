@@ -12,9 +12,11 @@ Flujo:
    pull/rebase antes. ``--allow-ahead`` permite liberar con la rama por delante
    (y nunca por detrás): el release queda solo en local y hay que subirla
    después.
-2. Ejecuta los gates (``tests/run.py --verify``). Se puede inyectar otro
-   comando con ``TAIKI_RELEASE_VERIFY`` o ``--verify-cmd``; el defecto es el
-   gate real.
+2. Ejecuta los gates. El orden de resolución es ``--verify-cmd`` >
+   ``TAIKI_RELEASE_VERIFY`` > ``verify.command`` del workspace
+   (``.taiki/config.json``, cadena o array de cadenas) > el gate por defecto
+   ``tests/run.py --verify``. Una cadena con metacaracteres de shell se ejecuta
+   con ``shell=True`` de forma explícita; un array se ejecuta tal cual.
 3. Hace ``merge --squash`` de la integración sobre el ``main`` actual y crea
    **un único commit** con los tickets desde el tag anterior y bullets por tipo
    de commit. No se reescribe ``main``.
@@ -551,13 +553,50 @@ def _write_version(root: Path, version: str) -> list[str]:
     return [path.relative_to(root).as_posix() for path, _ in planned]
 
 
-def _verify_command(explicit: str | list[str] | None) -> list[str]:
-    if isinstance(explicit, list):
-        return explicit
-    raw = explicit or env.get(VERIFY_ENV)
-    if raw:
-        return shlex.split(raw)
-    return list(DEFAULT_VERIFY)
+# Metacaracteres que obligan a interpretar la cadena con un shell. ``shlex``
+# no los entiende y el fallo original fue real: ``pnpm test && pnpm lint`` se
+# partía en ``["pnpm", "test", "&&", "pnpm", "lint"]`` y pnpm intentaba instalar
+# el paquete ``&&``.
+_SHELL_META = re.compile(r"[|;&<>`]|\$\(")
+
+
+def _verify_command(
+    explicit: str | list[str] | None, root: Path | None = None
+) -> tuple[str | list[str], bool]:
+    """Resuelve los gates y si hay que ejecutarlos con shell.
+
+    Orden: ``--verify-cmd`` > ``TAIKI_RELEASE_VERIFY`` > ``verify.command`` del
+    workspace (``.taiki/config.json``) > ``DEFAULT_VERIFY``. Un array se ejecuta
+    tal cual, sin ``shlex.split``. Una cadena con metacaracteres de shell
+    (``&&``, ``||``, ``|``, ``;``, ``$(``, backticks o redirecciones) se
+    ejecuta con ``shell=True`` de forma deliberada y documentada: la fuente es
+    el usuario que lanza la release y partirla con ``shlex`` convertía el
+    operador en un argumento. El default solo vale si el gate del proyecto
+    existe; si no, el error pide declararlo en ``verify.command``.
+    """
+    raw: str | list[str] | None = explicit
+    if not raw:
+        raw = env.get(VERIFY_ENV)
+    if not raw:
+        project = workspace.find_workspace(root) if root is not None else None
+        config = workspace.load_config(project) if project is not None else {}
+        raw = workspace.verify_command(config)
+    if isinstance(raw, (list, tuple)):
+        return [str(item) for item in raw], False
+    if raw and str(raw).strip():
+        text = str(raw).strip()
+        if _SHELL_META.search(text):
+            return text, True
+        return shlex.split(text), False
+    argv = list(DEFAULT_VERIFY)
+    if root is not None and not (Path(root) / "tests" / "run.py").is_file():
+        raise TicketError(
+            "No hay comando de verificación: declara 'verify.command' en "
+            ".taiki/config.json (cadena o array de cadenas), pasa --verify-cmd "
+            "o define TAIKI_RELEASE_VERIFY. El gate por defecto "
+            f"'tests/run.py --verify' no existe en {root}"
+        )
+    return argv, False
 
 
 def _reconcile(
@@ -838,9 +877,10 @@ def run(
             summary["pushed"].append(branch)
 
     if not no_verify:
-        command = _verify_command(verify_cmd)
+        command, use_shell = _verify_command(verify_cmd, base)
         result = subprocess.run(
             command,
+            shell=use_shell,
             cwd=str(base),
             capture_output=True,
             text=True,

@@ -144,8 +144,15 @@ El orden es fijo y cada paso aparece en texto y en `--json` (`pushed`):
    (`git push origin develop`). Si va por detrás o ha divergido, aborta antes
    de escribir y da el comando exacto (`git pull --ff-only` o
    `git pull --rebase`); nunca hace `pull` automático.
-2. **Gates**: los mismos de siempre (`tests/run.py --verify`, inyectables con
-   `--verify-cmd`/`TAIKI_RELEASE_VERIFY`).
+2. **Gates**: el orden es `--verify-cmd` > `TAIKI_RELEASE_VERIFY` >
+   `verify.command` de `.taiki/config.json` > `tests/run.py --verify`.
+   `verify.command` acepta una cadena o un array de cadenas; un array se
+   ejecuta tal cual, sin `shlex`. Una cadena con metacaracteres de shell
+   (`&&`, `|`, `;`, `$(`, backticks o redirecciones) se ejecuta con
+   `shell=True` de forma explícita, para que `pnpm test && pnpm lint` no
+   interprete `&&` como un paquete. En un proyecto ajeno al repo de Taiki,
+   declara el comando en `verify.command`: si no hay ninguna fuente y el gate
+   por defecto no existe, la release indica dónde configurarlo.
 3. **Squash y tag**: aplana `develop` en un único commit sobre `main` y crea el
    tag anotado `vX.Y.Z`.
 4. **Publicación**: `git push --atomic origin main vX.Y.Z` publica el commit de

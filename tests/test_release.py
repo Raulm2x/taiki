@@ -33,12 +33,14 @@ from commands.release import (
     _explicit_bumps,
     _groups,
     _tickets,
+    _verify_command,
     cmd_release,
 )
 from commands.tickets import cmd_claim
 from commands.worktree import cmd_worktree_merge
 from tests.seeds import git_repo
 from ticketlib import __version__, db, repo, workspace
+from ticketlib.domain import TicketError
 
 # CHANGELOG de partida con el bloque de trabajo en curso que dejaban las
 # integraciones antiguas y una release anterior que debe conservarse.
@@ -638,6 +640,45 @@ def _changelog_cases() -> tuple[dict, dict]:
     return actual, expected
 
 
+def _verify_cases(tmp: Path) -> tuple[dict, dict]:
+    """Resolución de gates: cadena con ``&&``, array, config y default ausente.
+
+    No ejecuta binarios externos ni depende del gate real: solo comprueba la
+    forma del comando y si necesita shell. El entorno se limpia en ``run``.
+    """
+    configured = tmp / "proyecto-config"
+    configured.mkdir(parents=True, exist_ok=True)
+    workspace.init_workspace(configured)
+    folder = configured / ".taiki"
+    config = workspace.load_config(folder)
+    config["verify"] = {"command": ["pnpm", "test", "--run"]}
+    workspace.save_config(config, folder)
+    bare = tmp / "proyecto-sin-gate"
+    bare.mkdir()
+
+    try:
+        _verify_command(None, bare)
+    except TicketError as exc:
+        missing = str(exc)
+    else:
+        missing = ""
+
+    actual = {
+        "string_shell": _verify_command("pnpm test && pnpm lint"),
+        "array": _verify_command([sys.executable, "-m", "pytest"]),
+        "config_array": _verify_command(None, configured),
+        "missing_mentions_config": "verify.command" in missing
+        and ".taiki/config.json" in missing,
+    }
+    expected = {
+        "string_shell": ("pnpm test && pnpm lint", True),
+        "array": ([sys.executable, "-m", "pytest"], False),
+        "config_array": (["pnpm", "test", "--run"], False),
+        "missing_mentions_config": True,
+    }
+    return actual, expected
+
+
 def _claim_worktree(
     h, root: Path, database: Path, title: str
 ) -> tuple[str, Path, int]:
@@ -893,6 +934,8 @@ def run(h) -> None:
     bumps_actual = _bump_cases(root)
     changelog_units, changelog_unit_expected = _changelog_cases()
     reconcile_actual, reconcile_expected = _reconcile_cases(tmp)
+    with h.env(TAIKI_RELEASE_VERIFY=None, TICKETS_RELEASE_VERIFY=None):
+        verify_actual, verify_expected = _verify_cases(tmp)
 
     rc, release = _release(root, no_verify=False, verify_cmd="true")
     message = _git(root, "log", "-1", "--format=%B", "main")
@@ -1002,6 +1045,7 @@ def run(h) -> None:
             "bumps": bumps_actual,
             "changelog": changelog_units,
             "reconcile": reconcile_actual,
+            "verify": verify_actual,
             "version": version_actual,
             "marker": marker_actual,
             "release": {
@@ -1058,6 +1102,7 @@ def run(h) -> None:
             },
             "changelog": changelog_unit_expected,
             "reconcile": reconcile_expected,
+            "verify": verify_expected,
             "marker": marker_expected,
             "version": version_expected,
             "release": {
