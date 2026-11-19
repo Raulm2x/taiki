@@ -80,7 +80,10 @@
 # reconstruía en cada invocación del CLI en los tests (~2s de la suite). El
 # techo baja con la suite: 8 de tolerancia y margen de +0.5s local y CI. No se
 # tocan los umbrales de cobertura.
-max_seconds = 9.5
+# T-0085.14: revisión única del techo de tiempo; 1623 checks y 10.03-10.24s
+# medidos en frío (load 1.5) sobre develop en 0b92d12; CI 11.5 por runners
+# compartidos.
+max_seconds = 11.0
 baseline_checks = 1584
 # Margen estrecho para que cualquier adición vuelva a avisar.
 # T-0071/T-0072: grouped, stats índice/almacenamiento, tags y capa 0; techo 1604.
@@ -99,7 +102,8 @@ max_seconds = 1.3
 # sobrescribir con TAIKI_SUITE_BUDGET / TAIKI_MODULE_BUDGET.
 [ci.suite]
 # T-0062.05: margen de +0.5s sobre el presupuesto local.
-max_seconds = 10.0
+# T-0085.14: 11.5s para runners compartidos (local 11.0s).
+max_seconds = 11.5
 
 [ci.module]
 max_seconds = 1.4
