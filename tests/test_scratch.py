@@ -12,22 +12,34 @@ def _actions(ticket: dict) -> list[str]:
     return [item["action"] for item in ticket["events"]]
 
 
+def _rejected(call) -> bool:
+    """True si ``call`` lanza ``ValidationError`` (tabla de aserciones)."""
+    try:
+        call()
+    except domain.ValidationError:
+        return True
+    return False
+
+
 def run(h: Harness) -> None:
     conn = h.conn
 
     # ── normalize_code acepta ambos espacios ─────────────────────────────
-    h.eq(normalize_code("s-7"), "S-7", "normaliza el espacio S-")
-    h.eq(normalize_code("s-0007"), "S-0007", "respeta el relleno de S-")
-    h.eq(normalize_code("12"), 12, "un número suelto sigue siendo un id")
-    h.raises(
-        domain.ValidationError,
-        lambda: normalize_code("X-1"),
-        "un prefijo desconocido no es un código válido",
-    )
-    h.raises(
-        domain.ValidationError,
-        lambda: repo.create_ticket(conn, title="Espacio raro", code_prefix="X"),
-        "solo existen los espacios T y S",
+    h.eq(
+        (
+            normalize_code("s-7"),
+            normalize_code("s-0007"),
+            normalize_code("12"),
+            _rejected(lambda: normalize_code("X-1")),
+            _rejected(
+                lambda: repo.create_ticket(
+                    conn, title="Espacio raro", code_prefix="X"
+                )
+            ),
+        ),
+        ("S-7", "S-0007", 12, True, True),
+        "normaliza el espacio S-, respeta su relleno, un número suelto es "
+        "un id y solo existen los espacios T y S",
     )
 
     # ── Contexto: tres tickets visibles, secuencia intacta ───────────────
@@ -35,53 +47,62 @@ def run(h: Harness) -> None:
         repo.create_ticket(conn, title=f"Visible {index}")["code"]
         for index in range(3)
     ]
-    h.eq(codes, ["T-0001", "T-0002", "T-0003"], "los tickets visibles son consecutivos")
-    h.eq(queries.missing_codes(conn), [], "una secuencia recién creada no tiene huecos")
+    h.eq(
+        (codes, queries.missing_codes(conn)),
+        (["T-0001", "T-0002", "T-0003"], []),
+        "los tickets visibles son consecutivos y la secuencia no tiene huecos",
+    )
 
     # ── Un scratch usa S- y no toca el contador T- ───────────────────────
     before = db.meta_get(conn, domain.TICKET_COUNTER)
     temporal = scratch.create_or_reuse(
         conn, agent="opencode", session_id="ses_scratch_1", title="Temporal"
     )
-    h.eq(temporal["code"], "S-0001", "el primer scratch usa S-0001")
-    h.eq(
-        db.meta_get(conn, domain.TICKET_COUNTER),
-        before,
-        "crear un scratch no consume números T-XXXX",
-    )
-    h.eq(
-        db.meta_get(conn, domain.SCRATCH_COUNTER),
-        "2",
-        "el contador de scratch avanza por su cuenta",
-    )
-    h.ok(
-        "S-0001" not in {item["code"] for item in repo.list_tickets(conn)},
-        "el scratch sigue oculto de la tabla",
-    )
     reused = scratch.create_or_reuse(
         conn, agent="opencode", session_id="ses_scratch_1"
     )
-    h.eq(reused["code"], "S-0001", "la misma sesión reutiliza su scratch")
+    h.eq(
+        (
+            temporal["code"],
+            db.meta_get(conn, domain.TICKET_COUNTER),
+            db.meta_get(conn, domain.SCRATCH_COUNTER),
+            "S-0001" in {item["code"] for item in repo.list_tickets(conn)},
+            reused["code"],
+        ),
+        ("S-0001", before, "2", False, "S-0001"),
+        "el primer scratch usa S-0001, no consume números T-, avanza su "
+        "propio contador, queda oculto y la misma sesión lo reutiliza",
+    )
 
     # ── Promover: recibe T-, se desarchiva y deja evento ─────────────────
     promoted = scratch.promote(conn, "S-0001")
-    h.eq(promoted["code"], "T-0004", "al promover recibe el siguiente T- real")
-    h.ok(promoted["archived"] is False, "promover desarchiva el ticket")
-    h.ok(domain.SCRATCH_TAG not in promoted["tags"], "promover quita la marca temporal")
-    h.ok("promover" in _actions(promoted), "promover deja evento en el historial")
+    h.eq(
+        (
+            promoted["code"],
+            promoted["archived"],
+            domain.SCRATCH_TAG not in promoted["tags"],
+            "promover" in _actions(promoted),
+        ),
+        ("T-0004", False, True, True),
+        "al promover recibe el siguiente T- real, se desarchiva, pierde la "
+        "marca temporal y deja evento en el historial",
+    )
 
     # ── Scratch antiguo con T-: conserva su número al promover ───────────
     legacy = repo.create_ticket(
         conn, title="Legacy scratch", tags=[domain.SCRATCH_TAG]
     )
-    h.eq(legacy["code"], "T-0005", "el ticket antiguo ocupa un hueco ya consumido")
     with db.tx(conn):
         conn.execute(
             "UPDATE tickets SET archived = 1 WHERE id = ?", (legacy["id"],)
         )
     kept = scratch.promote(conn, "T-0005")
-    h.eq(kept["code"], "T-0005", "promover conserva un T- antiguo y libre")
-    h.ok(kept["archived"] is False, "el T- antiguo vuelve a la tabla")
+    h.eq(
+        (legacy["code"], kept["code"], kept["archived"]),
+        ("T-0005", "T-0005", False),
+        "el ticket antiguo ocupa un hueco ya consumido y promover conserva "
+        "un T- antiguo y libre, devolviéndolo a la tabla",
+    )
 
     # ── Archivado automático con evento ──────────────────────────────────
     expired = scratch.create_or_reuse(
@@ -92,20 +113,24 @@ def run(h: Harness) -> None:
             conn, f"_scratch:{expired['code']}", "2000-01-01T00:00:00-05:00"
         )
     cleaned = scratch.clean(conn)
-    h.ok(expired["code"] in cleaned, "clean archiva el scratch caducado")
     archived = repo.get_ticket(conn, expired["code"])
-    h.ok(archived["archived"], "el scratch caducado queda archivado")
-    h.ok(
-        archived["status"] == "cancelado"
-        and archived["owner_session"] is None
-        and archived["lease_until"] is None,
-        "el scratch archivado no deja un en_progreso fantasma",
-    )
-    h.ok("archivar" in _actions(archived), "archivar deja rastro en el historial")
     h.eq(
-        [item["actor"] for item in archived["events"] if item["action"] == "archivar"],
-        ["sistema"],
-        "la caducidad la registra el sistema",
+        (
+            expired["code"] in cleaned,
+            archived["archived"],
+            archived["status"],
+            archived["owner_session"],
+            archived["lease_until"],
+            "archivar" in _actions(archived),
+            [
+                item["actor"]
+                for item in archived["events"]
+                if item["action"] == "archivar"
+            ],
+        ),
+        (True, True, "cancelado", None, None, True, ["sistema"]),
+        "clean archiva el scratch caducado sin dejar un en_progreso "
+        "fantasma, deja rastro en el historial y la registra el sistema",
     )
 
     # ── Descartar a mano también deja evento ─────────────────────────────
@@ -114,79 +139,94 @@ def run(h: Harness) -> None:
     )
     scratch.drop(conn, discarded["code"], actor="usuario")
     dropped = repo.get_ticket(conn, discarded["code"])
-    h.ok(dropped["archived"], "drop archiva el scratch")
-    h.ok(
-        dropped["status"] == "cancelado" and dropped["owner_session"] is None,
-        "drop cancela el scratch y libera su claim",
+    h.eq(
+        (
+            dropped["archived"],
+            dropped["status"],
+            dropped["owner_session"],
+            "archivar" in _actions(dropped),
+        ),
+        (True, "cancelado", None, True),
+        "drop archiva y cancela el scratch, libera su claim y deja rastro "
+        "en el historial",
     )
-    h.ok("archivar" in _actions(dropped), "drop deja rastro en el historial")
 
     # ── Hueco real vs código oculto ──────────────────────────────────────
     with db.tx(conn):
         conn.execute("UPDATE tickets SET archived = 1 WHERE id = ?", (kept["id"],))
     hidden = queries.hidden_codes(conn)
-    h.ok(
-        any(item["code"] == "T-0005" for item in hidden),
-        "un T- archivado aparece como oculto",
-    )
-    h.ok(
-        not any(item["code"].startswith("S-") for item in hidden),
-        "los S- no cuentan como huecos",
-    )
     h.eq(
-        queries.missing_codes(conn),
-        [],
-        "un ticket archivado no es un hueco real: su fila existe",
+        (
+            any(item["code"] == "T-0005" for item in hidden),
+            not any(item["code"].startswith("S-") for item in hidden),
+            queries.missing_codes(conn),
+        ),
+        (True, True, []),
+        "un T- archivado aparece como oculto, los S- no cuentan como "
+        "huecos y un ticket archivado no es un hueco real: su fila existe",
     )
 
     # ── repair-gaps cubre los números que nunca existieron ───────────────
     with db.tx(conn):
         db.meta_set(conn, domain.TICKET_COUNTER, "9")
     gaps = queries.missing_codes(conn)
-    h.eq(
-        [item["code"] for item in gaps],
-        ["T-0006", "T-0007", "T-0008"],
-        "detecta los números sin fila",
-    )
     plan = repo.fill_gaps(conn)
-    h.eq(len(plan), 3, "la simulación no escribe nada")
-    h.ok(
-        queries.missing_codes(conn) == gaps,
-        "sin --apply los huecos siguen ahí",
-    )
+    still_pending = [item["code"] for item in queries.missing_codes(conn)]
     repo.fill_gaps(conn, apply=True, actor="usuario")
-    h.eq(queries.missing_codes(conn), [], "tras aplicar no quedan huecos")
+    after_apply = queries.missing_codes(conn)
     tombstone = repo.get_ticket(conn, "T-0006")
-    h.eq(tombstone["status"], "cancelado", "el hueco se cubre con un cancelado")
-    h.ok(domain.TOMBSTONE_TAG in tombstone["tags"], "el ticket lleva la etiqueta hueco")
-    h.ok(bool(tombstone["resolution"]), "el ticket explica por qué existe")
-    h.ok(
-        all(
-            repo.get_ticket(conn, code)["archived"] is False
-            for code in ("T-0006", "T-0007", "T-0008")
+    h.eq(
+        (
+            [item["code"] for item in gaps],
+            len(plan),
+            still_pending,
+            [item["code"] for item in after_apply],
+            tombstone["status"],
+            domain.TOMBSTONE_TAG in tombstone["tags"],
+            bool(tombstone["resolution"]),
+            [
+                repo.get_ticket(conn, code)["archived"]
+                for code in ("T-0006", "T-0007", "T-0008")
+            ],
         ),
-        "los tickets de hueco son visibles",
+        (
+            ["T-0006", "T-0007", "T-0008"],
+            3,
+            ["T-0006", "T-0007", "T-0008"],
+            [],
+            "cancelado",
+            True,
+            True,
+            [False, False, False],
+        ),
+        "detecta los números sin fila, la simulación no escribe nada, tras "
+        "aplicar no quedan huecos y el cubrimiento es visible, cancelado y "
+        "explicado",
     )
 
     # ── El contador no retrocede y el código forzado se valida ───────────
     following = repo.create_ticket(conn, title="Siguiente visible")
-    h.eq(following["code"], "T-0009", "el contador sigue donde estaba")
-    h.raises(
-        domain.ValidationError,
-        lambda: repo.create_ticket(conn, title="Futuro", code="T-0010"),
-        "no se puede forzar un código que aún no es un hueco",
-    )
-    h.raises(
-        domain.ValidationError,
-        lambda: repo.create_ticket(conn, title="Duplicado", code="T-0001"),
-        "no se puede forzar un código existente",
+    h.eq(
+        (
+            following["code"],
+            _rejected(
+                lambda: repo.create_ticket(conn, title="Futuro", code="T-0010")
+            ),
+            _rejected(
+                lambda: repo.create_ticket(
+                    conn, title="Duplicado", code="T-0001"
+                )
+            ),
+        ),
+        ("T-0009", True, True),
+        "el contador sigue donde estaba y no se puede forzar un código que "
+        "aún no es un hueco ni uno existente",
     )
 
     # ── fill_gaps es atómico: un fallo a mitad no deja huecos sueltos ───
     with db.tx(conn):
         db.meta_set(conn, domain.TICKET_COUNTER, "13")
     pending = [item["code"] for item in queries.missing_codes(conn)]
-    h.ok(pending, "hay huecos nuevos para probar la atomicidad")
     original_create = mutations.create_ticket
     calls = {"count": 0}
 
@@ -206,8 +246,8 @@ def run(h: Harness) -> None:
     finally:
         mutations.create_ticket = original_create
     h.eq(
-        [item["code"] for item in queries.missing_codes(conn)],
-        pending,
+        (bool(pending), [item["code"] for item in queries.missing_codes(conn)]),
+        (True, pending),
         "el fallo no deja huecos a medio cubrir",
     )
     with db.tx(conn):
@@ -215,9 +255,13 @@ def run(h: Harness) -> None:
 
     # ── Auditoría expone ambas categorías ────────────────────────────────
     data = audit.audit(conn, repo=str(h.tmp))
-    h.ok("hidden" in data, "audit incluye la lista de ocultos")
-    h.eq(data["gaps"], [], "audit no confunde ocultos con huecos")
-    h.ok(
-        any(item["code"] == "T-0005" for item in data["hidden"]),
-        "audit explica el código archivado",
+    h.eq(
+        (
+            "hidden" in data,
+            data["gaps"],
+            any(item["code"] == "T-0005" for item in data["hidden"]),
+        ),
+        (True, [], True),
+        "audit incluye la lista de ocultos, no confunde ocultos con huecos "
+        "y explica el código archivado",
     )

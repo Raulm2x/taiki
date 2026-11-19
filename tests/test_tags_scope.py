@@ -29,7 +29,7 @@ def run(h: Harness) -> None:
         priority="media",
         tags=["hyprland", "wm"],
     )
-    t_plain = repo.create_ticket(
+    repo.create_ticket(
         conn,
         title="Mantenimiento general del sistema",
         kind="mantenimiento",
@@ -44,71 +44,65 @@ def run(h: Harness) -> None:
         tags=["shell", "ui"],
     )
 
-    # Filtro por etiqueta única (exacta)
-    res_noct = repo.list_tickets(conn, tag="noctalia")
-    h.ok(len(res_noct) == 2, "filtro tag='noctalia' debe encontrar T-0001 y T-0003")
-    h.ok(all("noctalia" in t["tags"] for t in res_noct), "todos los devueltos deben contener la etiqueta 'noctalia'")
-
-    res_wm = repo.list_tickets(conn, tag="wm")
-    h.ok(len(res_wm) == 1 and res_wm[0]["code"] == t_hypr["code"], "filtro tag='wm' debe encontrar exactamente T-0004")
-
-    # Insensibilidad a mayúsculas/minúsculas y recorte de espacios
-    res_case = repo.list_tickets(conn, tag="  NOCTALIA  ")
-    h.ok(len(res_case) == 2, "filtro de etiqueta debe ser insensible a mayúsculas y espacios")
-    res_case_hypr = repo.list_tickets(conn, tag="HyPrLaNd")
-    h.ok(len(res_case_hypr) == 1 and res_case_hypr[0]["code"] == t_hypr["code"], "filtro 'HyPrLaNd' coincide con 'hyprland'")
-
-    # Filtro por múltiples etiquetas (coincidencia con cualquiera)
-    res_multi = repo.list_tickets(conn, tags=["noctalia", "wm"])
-    h.ok(len(res_multi) == 3, "filtro tags=['noctalia', 'wm'] debe devolver 3 tickets")
-    h.ok(set(t["code"] for t in res_multi) == {"T-0001", t_noct["code"], t_hypr["code"]}, "códigos esperados en tags múltiples")
-
-    # Filtro combinando tag y tags simultáneamente
-    res_both = repo.list_tickets(conn, tag="shell", tags=["backup"])
-    h.ok(len(res_both) == 3, "combinación de tag='shell' y tags=['backup'] debe encontrar 3 tickets")
-    h.ok(set(t["code"] for t in res_both) == {"T-0001", "T-0002", t_shell["code"]}, "códigos esperados en tag + tags")
-
-    # Cero filas duplicadas cuando un ticket coincide con múltiples etiquetas filtradas
-    res_overlap = repo.list_tickets(conn, tags=["noctalia", "ui", "panel"])
-    codes_overlap = [t["code"] for t in res_overlap]
-    h.ok(len(codes_overlap) == len(set(codes_overlap)), "cero filas duplicadas cuando un ticket coincide con varios tags")
-
-    # Etiquetas inexistentes (simple y múltiple) no devuelven nada
-    h.ok(
-        repo.list_tickets(conn, tag="inexistente") == []
-        and repo.list_tickets(conn, tags=["fantasma1", "fantasma2"]) == [],
-        "las etiquetas inexistentes devuelven lista vacía",
-    )
-
-    # Etiquetas vacías o espacios no deben fallar ni filtrar indebidamente
+    # Tabla de filtros: una fila por combinación, comparada en bloque.
     all_active = repo.list_tickets(conn)
-    h.ok(
-        len(repo.list_tickets(conn, tag="")) == len(all_active)
-        and len(repo.list_tickets(conn, tags=["   ", ""])) == len(all_active),
-        "las etiquetas vacías o con espacios no alteran el listado",
-    )
-
-    # Combinación de filtro por etiqueta con otros filtros (estado, tipo)
+    res_noct = repo.list_tickets(conn, tag="noctalia")
+    res_wm = repo.list_tickets(conn, tag="wm")
+    res_case = repo.list_tickets(conn, tag="  NOCTALIA  ")
+    res_case_hypr = repo.list_tickets(conn, tag="HyPrLaNd")
+    res_multi = repo.list_tickets(conn, tags=["noctalia", "wm"])
+    res_both = repo.list_tickets(conn, tag="shell", tags=["backup"])
+    res_overlap = repo.list_tickets(conn, tags=["noctalia", "ui", "panel"])
     res_tag_status = repo.list_tickets(conn, tag="noctalia", statuses=["en_progreso"])
-    h.ok(len(res_tag_status) == 1 and res_tag_status[0]["code"] == "T-0001", "filtro tag + status encuentra solo T-0001")
     res_tag_kind = repo.list_tickets(conn, tag="ui", kind="bug")
-    h.ok(len(res_tag_kind) == 2, "filtro tag='ui' + kind='bug' devuelve 2 tickets")
+    codes_overlap = [ticket["code"] for ticket in res_overlap]
+    h.eq(
+        (
+            len(res_noct),
+            all("noctalia" in ticket["tags"] for ticket in res_noct),
+            (len(res_wm), res_wm[0]["code"]),
+            len(res_case),
+            (len(res_case_hypr), res_case_hypr[0]["code"]),
+            len(res_multi),
+            {ticket["code"] for ticket in res_multi},
+            len(res_both),
+            {ticket["code"] for ticket in res_both},
+            len(codes_overlap) == len(set(codes_overlap)),
+            repo.list_tickets(conn, tag="inexistente"),
+            repo.list_tickets(conn, tags=["fantasma1", "fantasma2"]),
+            len(repo.list_tickets(conn, tag="")),
+            len(repo.list_tickets(conn, tags=["   ", ""])),
+            (len(res_tag_status), res_tag_status[0]["code"]),
+            len(res_tag_kind),
+        ),
+        (
+            2,
+            True,
+            (1, t_hypr["code"]),
+            2,
+            (1, t_hypr["code"]),
+            3,
+            {"T-0001", t_noct["code"], t_hypr["code"]},
+            3,
+            {"T-0001", "T-0002", t_shell["code"]},
+            True,
+            [],
+            [],
+            len(all_active),
+            len(all_active),
+            (1, "T-0001"),
+            2,
+        ),
+        "los filtros por etiqueta cubren exacta, insensible a mayúsculas "
+        "y espacios, múltiple, combinada con tag/tags, sin duplicados, "
+        "vacía sin alterar el listado y combinada con estado y tipo",
+    )
 
     # ── 2. Scope Resolution & Git Root Detection Suite ───────────────────
     # Detección de raíz Git real del propio repositorio de Taiki
     project_root = Path(__file__).resolve().parents[1]
     repo_subpath = project_root / "tests"
-    git_root_found = util.find_git_root(repo_subpath)
-    h.ok(git_root_found == project_root, "la raíz Git de tests/ es la del proyecto")
-
-    # Archivo dentro del repositorio
     file_in_repo = project_root / "cli.py"
-    h.ok(util.find_git_root(file_in_repo) == project_root, "find_git_root sobre archivo resuelve al repo padre")
-
-    # resolve_scope en subdirectorio de repositorio Git asigna el proyecto al repo raíz
-    scope_proj, scope_path = util.resolve_scope(None, str(repo_subpath))
-    h.ok(scope_proj == project_root.name, "resolve_scope en subdirectorio de repo debe asignar proyecto a la raíz Git")
-    h.ok(scope_path == str(repo_subpath), "resolve_scope preserva la ruta especificada")
 
     # Simulación de repositorio Git en directorio temporal aislado
     synthetic_repo = Path(tmp) / "mock_project_git"
@@ -116,40 +110,48 @@ def run(h: Harness) -> None:
     synthetic_deep = synthetic_repo / "src" / "modules" / "sub"
     synthetic_deep.mkdir(parents=True)
 
-    synth_root = util.find_git_root(synthetic_deep)
-    h.ok(synth_root == synthetic_repo.resolve(), "find_git_root resuelve repositorio sintético")
-    synth_proj, synth_path = util.resolve_scope(None, str(synthetic_deep))
-    h.ok(synth_proj == "mock_project_git", "resolve_scope sobre repositorio sintético extrae nombre del repo")
-    h.ok(synth_path == str(synthetic_deep), "resolve_scope preserva ruta del subdirectorio sintético")
-
     # Soporte para .git como archivo (worktree o submódulo Git)
     wt_repo = Path(tmp) / "mock_worktree"
     wt_repo.mkdir(parents=True)
     (wt_repo / ".git").write_text("gitdir: /tmp/fake_git_dir\n")
     wt_sub = wt_repo / "pkg" / "lib"
     wt_sub.mkdir(parents=True)
-    h.ok(util.find_git_root(wt_sub) == wt_repo.resolve(), "find_git_root reconoce archivo .git de worktrees")
 
     # Directorio sin Git: resuelve al nombre de la carpeta hoja
     plain_isolated = Path(tmp) / "plain_dir" / "leaf_folder"
     plain_isolated.mkdir(parents=True)
-    h.ok(util.find_git_root(Path("/")) is None, "find_git_root en raíz del sistema devuelve None")
-    plain_proj, plain_path = util.resolve_scope(None, str(plain_isolated))
-    h.ok(plain_proj == "leaf_folder", "directorio sin Git debe resolver al nombre del directorio hoja")
-
-    # Sobrescritura explícita de proyecto: tiene prioridad sobre la detección Git
-    exp_proj, exp_path = util.resolve_scope("proyecto_personalizado", str(repo_subpath))
-    h.ok(exp_proj == "proyecto_personalizado", "proyecto explícito prevalece sobre la detección automática")
-    h.ok(exp_path == str(repo_subpath), "ruta se mantiene con proyecto explícito")
 
     # ``project`` del workspace (.taiki/config.json) manda si no hay --project,
     # y una etiqueta vacía o ausente vuelve a derivar de la raíz Git.
     cfg_proj, _ = util.resolve_scope(None, str(synthetic_deep), {"project": " taiki-sys "})
     cfg_default, _ = util.resolve_scope(None, str(synthetic_deep), {"guard": True})
     cfg_explicit, _ = util.resolve_scope("explicito", str(synthetic_deep), {"project": "x"})
-    h.ok(
-        cfg_proj == "taiki-sys"
-        and cfg_default == "mock_project_git"
-        and cfg_explicit == "explicito",
-        "resolve_scope usa el project del workspace si no hay uno explícito",
+    h.eq(
+        (
+            util.find_git_root(repo_subpath),
+            util.find_git_root(file_in_repo),
+            util.resolve_scope(None, str(repo_subpath)),
+            util.find_git_root(synthetic_deep),
+            util.resolve_scope(None, str(synthetic_deep)),
+            util.find_git_root(wt_sub),
+            util.find_git_root(Path("/")),
+            util.resolve_scope(None, str(plain_isolated)),
+            util.resolve_scope("proyecto_personalizado", str(repo_subpath)),
+            (cfg_proj, cfg_default, cfg_explicit),
+        ),
+        (
+            project_root,
+            project_root,
+            (project_root.name, str(repo_subpath)),
+            synthetic_repo.resolve(),
+            ("mock_project_git", str(synthetic_deep)),
+            wt_repo.resolve(),
+            None,
+            ("leaf_folder", str(plain_isolated)),
+            ("proyecto_personalizado", str(repo_subpath)),
+            ("taiki-sys", "mock_project_git", "explicito"),
+        ),
+        "find_git_root resuelve el repo real, archivos y worktrees sintéticos "
+        "y devuelve None en la raíz; resolve_scope preserva la ruta, prefiere "
+        "el proyecto explícito y usa el del workspace como respaldo",
     )
