@@ -249,6 +249,7 @@ def impact(
                 "lead_samples": 0,
                 "verified": 0,
                 "verification_failures": 0,
+                "steps_exhausted": 0,
             },
         )
         bucket["closed"] += 1
