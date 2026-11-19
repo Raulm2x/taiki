@@ -6,7 +6,7 @@ import fnmatch
 import re
 import shlex
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
 HOME = Path.home()
 EXEMPT_ROOTS = tuple(
@@ -823,3 +823,122 @@ def command_scope_problem(
             if not path_in_scope(target, scopes, base_path, cwd_path):
                 return f"la ruta {target!r}"
     return None
+
+
+# ── Allowlist de perfiles: lectura, veredicto y alternativa ────────────────
+
+# Alternativa permitida para una denegación conocida: el mensaje de rechazo
+# la sugiere en vez de dejar al agente adivinando la puerta correcta.
+_DENY_ALTERNATIVES = {
+    "git add -A": (
+        "stagea rutas concretas: `git add -- <ruta>` o `git add <ruta>` "
+        "(o deja que `taiki commit` valide el índice del ticket)"
+    ),
+    "git commit -a": (
+        "stagea con `git add -- <ruta>` y commitea con "
+        "`taiki commit --ticket T-XXXX`"
+    ),
+    "git stash": (
+        "commitea el WIP en tu rama: el stash es único para todos los worktrees"
+    ),
+    "git reset": (
+        "commitea el WIP en tu rama antes de reordenar: el índice es compartido"
+    ),
+    "git clean": (
+        "pide al conductor que autorice el borrado por ticket; nunca a ciegas"
+    ),
+    "git checkout -- .": (
+        "revierte solo ficheros concretos: `git checkout -- <ruta>`"
+    ),
+    "git restore .": "restaura solo ficheros concretos: `git restore <ruta>`",
+}
+
+
+def deny_alternative(label: str | None) -> str | None:
+    """Alternativa permitida para una etiqueta de denegación, o ``None``."""
+    return _DENY_ALTERNATIVES.get((label or "").strip()) or None
+
+
+def parse_permissions(text: str) -> list[dict[str, str]]:
+    """Reglas del bloque ``permissions:`` del frontmatter de un perfil."""
+    rules: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    inside = False
+    for line in text.splitlines():
+        if not inside:
+            inside = line.strip() == "permissions:"
+            continue
+        if not line.strip():
+            continue
+        if not line[0].isspace():
+            break  # otra clave del frontmatter o el cierre ``---``
+        item = line.strip()
+        if item.startswith("- "):
+            if current:
+                rules.append(current)
+            current = {}
+            item = item[2:].strip()
+        key, sep, value = item.partition(":")
+        if not sep:
+            continue
+        current[key.strip()] = value.strip().strip("'\"")
+    if current:
+        rules.append(current)
+    return rules
+
+
+def profile_rules(
+    agents_dir: str | Path, pattern: str = "worker*.md"
+) -> list[dict[str, Any]]:
+    """Reglas de los perfiles de agente, con su fichero como origen."""
+    folder = Path(agents_dir)
+    profiles: list[dict[str, Any]] = []
+    if not folder.is_dir():
+        return profiles
+    for path in sorted(folder.glob(pattern)):
+        try:
+            rules = parse_permissions(path.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        profiles.append({"name": path.stem, "origin": str(path), "rules": rules})
+    return profiles
+
+
+def rule_wins(rules: list[dict[str, str]], index: int) -> bool:
+    """¿Es esta la última regla que gana para su patrón?
+
+    Una regla posterior del mismo ``action`` cuyo patrón casa con el recurso
+    de esta la oculta: en la allowlist gana la última coincidencia.
+    """
+    rule = rules[index]
+    resource = str(rule.get("resource", ""))
+    return not any(
+        item.get("action") == rule.get("action")
+        and fnmatch.fnmatchcase(resource, str(item.get("resource", "")))
+        for item in rules[index + 1 :]
+    )
+
+
+def command_verdict(
+    command: str, rules: list[dict[str, str]]
+) -> dict[str, Any]:
+    """Veredicto de la allowlist de un perfil, evaluado por segmento.
+
+    Reutiliza el troceo del guard (``split_commands`` + heredocs) y evalúa
+    cada segmento contra las reglas ``shell``: gana la última que casa y un
+    segmento sin regla se deniega (los perfiles worker caen a deny).
+    """
+    segments: list[dict[str, Any]] = []
+    allowed = True
+    for segment in split_commands(_strip_heredocs(command or "")):
+        effect, resource = "deny", ""
+        for rule in rules:
+            if str(rule.get("action")) != "shell":
+                continue
+            pattern = str(rule.get("resource", ""))
+            if fnmatch.fnmatchcase(segment, pattern):
+                effect, resource = str(rule.get("effect")), pattern
+        if effect != "allow":
+            allowed = False
+        segments.append({"segment": segment, "effect": effect, "rule": resource})
+    return {"allowed": allowed, "segments": segments}

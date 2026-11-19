@@ -16,6 +16,7 @@ from .commands import (
     command_runs_code,
     command_scope_problem,
     command_touches_home,
+    deny_alternative,
     high_risk_command,
     path_guarded,
     path_in_scope,
@@ -248,10 +249,14 @@ def _message(
 def _parallel_message(action: str, others: list[dict[str, Any]]) -> str:
     codes = ", ".join(item["code"] for item in others[:5])
     extra = "" if len(others) <= 5 else f" y {len(others) - 5} más"
-    return (
+    message = (
         f"Bloqueado: `{action}` afecta a todo el árbol y hay otras sesiones "
         f"activas ({codes}{extra}). Usa un worktree o stagea rutas concretas."
     )
+    alternative = deny_alternative(action)
+    if alternative:
+        message = f"{message} Alternativa: {alternative}."
+    return message
 
 
 def other_active_sessions(

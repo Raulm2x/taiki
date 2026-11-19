@@ -69,6 +69,7 @@ from commands import (
     cmd_worktree_remove,
 )
 from commands.tickets import cmd_purge
+from commands.guard import cmd_config_show, cmd_perms
 from commands.workflow import cmd_authorize, cmd_review
 from ticketlib import domain
 from ticketlib.domain import (
@@ -1082,6 +1083,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_guard)
+
+    p = sub.add_parser(
+        "perms",
+        help="Lista la allowlist de shell: perfiles y guard (solo lectura)",
+        description="Muestra qué puede ejecutar cada perfil worker y qué "
+        "deniega el guard, con el origen de cada regla y la última que gana. "
+        "Con --command da un veredicto por segmento.",
+    )
+    p.add_argument("--agent", help="Solo un perfil (p. ej. worker o worker-low)")
+    p.add_argument("--command", help="Veredicto para un comando concreto")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_perms)
+
+    p = sub.add_parser(
+        "config",
+        help="Configuración del workspace (solo lectura)",
+    )
+    config_sub = p.add_subparsers(dest="config_command", required=True)
+    cs = config_sub.add_parser(
+        "show",
+        help="Muestra config.json resuelto (sin local.json ni secretos)",
+    )
+    cs.add_argument("--json", action="store_true", help="Sin indentar")
+    cs.set_defaults(func=cmd_config_show)
 
     p = sub.add_parser(
         "auto-link", help="Enlaza el commit a los tickets mencionados en su mensaje"
