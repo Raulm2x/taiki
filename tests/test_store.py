@@ -576,8 +576,19 @@ def run(h: Harness) -> None:
                 (migrated["isolation"], migrated["resources"], migrated["reversal"]),
                 db.schema_version(legacy),
             ),
-            (8, ("worktree", [], None), 8),
-            "la migración sube a v8, deja worktree sin recursos y es idempotente",
+            (domain.SCHEMA_VERSION, ("worktree", [], None), domain.SCHEMA_VERSION),
+            "la migración sube a la versión actual, deja worktree sin recursos "
+            "y es idempotente",
+        )
+        h.ok(
+            legacy.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'renamed_from'"
+            ).fetchone()
+            is not None
+            and db.renamed_chain(legacy, previous["code"])
+            == (previous["code"], True),
+            "la migración crea renamed_from y el alias resuelve códigos vivos",
         )
     finally:
         legacy.close()

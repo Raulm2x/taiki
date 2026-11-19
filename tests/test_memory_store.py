@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import subprocess
 
-from ticketlib import db, repo
+from ticketlib import db, domain, repo
 from ticketlib.domain import ValidationError
 from ticketlib.memory import (
     BudgetError,
@@ -61,14 +61,15 @@ def _migration(h: Harness) -> None:
         assert db.schema_version(old) == 4
         db.migrate(old)
         h.ok(
-            db.schema_version(old) == 8
+            db.schema_version(old) == domain.SCHEMA_VERSION
             and repo.get_ticket(old, ticket["code"])["title"]
             == "Sobrevive a la migración"
             and old.execute(
                 "SELECT 1 FROM comments WHERE ticket_id = ?", (ticket["id"],)
             ).fetchone()
             is not None,
-            "v4→v8 migra memorias y conserva tickets y comentarios",
+            f"v4→v{domain.SCHEMA_VERSION} migra memorias y conserva tickets "
+            "y comentarios",
         )
         migrated = add_memory(
             old,
@@ -105,11 +106,12 @@ def _ticket_kinds(h: Harness) -> None:
         old.execute("PRAGMA user_version = 5")
         db.migrate(old)
         h.ok(
-            db.schema_version(old) == 8
+            db.schema_version(old) == domain.SCHEMA_VERSION
             and "ticket_kinds"
             in {row["name"] for row in old.execute("PRAGMA table_info(memories)")}
             and get_memory(old, seeded["code"])["ticket_kinds"] == [],
-            "v5→v8 añade ticket_kinds y las memorias antiguas quedan generales",
+            f"v5→v{domain.SCHEMA_VERSION} añade ticket_kinds y las memorias "
+            "antiguas quedan generales",
         )
     finally:
         old.close()
