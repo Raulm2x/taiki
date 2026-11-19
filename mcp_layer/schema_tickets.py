@@ -534,10 +534,31 @@ TICKET_SPECS = [
     ),
     ToolSpec(
         "heartbeat",
-        "Renueva el lease del ticket activo o del código indicado. Llámalo "
-        "durante comandos largos para que otra sesión no lo tome por muerto.",
+        "Gestiona el lease del ticket activo o del código indicado. "
+        "heartbeat renueva el lease (llámalo durante comandos largos); "
+        "abandon lo libera sin cambiar de estado; steps_exhausted registra "
+        "que la sesión se cortó por pasos agotados, sin cambiar de estado.",
         {
             "code": CODE,
+            "action": {
+                "type": "string",
+                "enum": ["heartbeat", "abandon", "steps_exhausted"],
+                "default": "heartbeat",
+                "description": "heartbeat renueva; abandon libera el claim; "
+                "steps_exhausted registra pasos agotados",
+            },
+            "reason": {
+                "type": "string",
+                "maxLength": 10_000,
+                "description": "Motivo: obligatorio en abandon con force; "
+                "texto libre en steps_exhausted",
+            },
+            "phase": {
+                "type": "string",
+                "maxLength": 40,
+                "description": "Fase donde se agotaron los pasos (default: estado actual)",
+            },
+            "force": FORCE,
             "minutes": {
                 "type": "integer",
                 "minimum": 1,
