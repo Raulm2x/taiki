@@ -487,12 +487,14 @@ exige además `--force`. `move` requiere `--parent` y decide el código con
 `--renumber` o `--keep-code` (defecto, equivalente a `attach`); `demote` exige
 `--children-to` (código de épica o `root`) y admite `--parent` y `--renumber`;
 `renumber` acepta códigos concretos y `--adopted` para incluir los tickets
-adoptados con `attach`.
+adoptados con `attach`; `--allow-root` permite renumerar raíces publicadas
+(con commits enlazados), nunca épicas con tareas ni códigos ocupados.
 
 Por MCP el mismo contrato se expone como `reorg_plan` (solo lectura, nunca
 escribe) y `reorg_apply` (mutante, requiere `apply=true`; para `purge`,
 `force=true`). `action` es `move`, `renumber`, `promote`, `demote` o `purge`.
-Ambas reciben `codes`, `parent`, `children_to`, `include_adopted` y `renumber`.
+Ambas reciben `codes`, `parent`, `children_to`, `include_adopted`, `renumber`
+y `allow_root` (renumber de raíces publicadas).
 `reorg_apply` aplica el plan en una transacción atómica: si algo falla, no deja
 cambios.
 

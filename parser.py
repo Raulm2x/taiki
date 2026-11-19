@@ -305,6 +305,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Incluye los tickets adoptados con attach",
     )
+    p.add_argument(
+        "--allow-root",
+        action="store_true",
+        help="Permite renumerar una raíz publicada (con commits enlazados); "
+        "sigue rechazando épicas con tareas y códigos ocupados",
+    )
     p.add_argument("--apply", action="store_true", help="Aplica los cambios")
     p.add_argument("--agent", help="Agente que ejecuta el cambio")
     p.add_argument("--json", action="store_true")

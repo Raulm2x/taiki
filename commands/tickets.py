@@ -318,6 +318,7 @@ def _reorg_plan_args(args: argparse.Namespace) -> dict:
         "action": "renumber",
         "codes": args.codes or None,
         "include_adopted": args.adopted,
+        "allow_root": args.allow_root,
     }
 
 

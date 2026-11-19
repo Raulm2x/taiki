@@ -354,7 +354,8 @@ T-0014       Jerarquía de tickets          [2/3]
 `--apply` solo muestran el plan. `move` exige `--parent` y elige el código con
 `--renumber` o `--keep-code` (defecto, equivalente a `attach`); `demote` exige
 `--children-to <epic|root>` y admite `--parent` y `--renumber`; `renumber`
-acepta códigos concretos y `--adopted`. Solo hay un nivel épica→tarea, sin
+acepta códigos concretos y `--adopted`, y con `--allow-root` también renumera
+raíces publicadas (con commits enlazados). Solo hay un nivel épica→tarea, sin
 ciclos ni padres archivados. La aplicación es atómica y `purge --apply --force`
 copia antes la base a `.taiki/backups/`. El contador solo baja al liberar el
 final de la secuencia de raíces; `repair-gaps` cubre los huecos con tickets
