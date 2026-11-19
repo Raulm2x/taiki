@@ -12,6 +12,7 @@ import sqlite3
 from datetime import datetime, timedelta
 from typing import Any
 
+from ..store.workflow import rejection_count, steps_exhausted_signal
 from ..util import now, parse_datetime
 from . import core
 from . import budget as budget_lib
@@ -257,7 +258,7 @@ def impact(
             bucket["lead_samples"] += 1
 
     verified = 0
-    failures = 0
+    failures = rejection_count(conn, cutoff)
     for row in conn.execute(
         "SELECT ts, from_status, to_status FROM events WHERE ts >= ? "
         "AND (to_status = 'verificado' OR "
@@ -268,9 +269,7 @@ def impact(
         is_failure = (
             row["from_status"] == "verificado" and row["to_status"] == "en_progreso"
         )
-        if is_failure:
-            failures += 1
-        else:
+        if not is_failure:
             verified += 1
         if period is None:
             continue
@@ -284,10 +283,37 @@ def impact(
                 "lead_samples": 0,
                 "verified": 0,
                 "verification_failures": 0,
+                "steps_exhausted": 0,
             },
         )
         bucket["verified"] += 0 if is_failure else 1
         bucket["verification_failures"] += 1 if is_failure else 0
+
+    # Señal steps_exhausted por periodo y perfil, deduplicada contra los
+    # rechazos: un ticket agotado y luego rechazado cuenta una vez.
+    exhausted_profiles: dict[str, int] = {}
+    exhausted_total = 0
+    for item in steps_exhausted_signal(conn, cutoff):
+        profile = item["actor"]
+        exhausted_profiles[profile] = exhausted_profiles.get(profile, 0) + 1
+        exhausted_total += 1
+        period = _period(item["ts"])
+        if period is None:
+            continue
+        bucket = buckets.setdefault(
+            period,
+            {
+                "period": period,
+                "closed": 0,
+                "attempts_total": 0,
+                "lead_total": 0.0,
+                "lead_samples": 0,
+                "verified": 0,
+                "verification_failures": 0,
+                "steps_exhausted": 0,
+            },
+        )
+        bucket["steps_exhausted"] += 1
 
     trend = []
     for period in sorted(buckets):
@@ -321,7 +347,12 @@ def impact(
             "samples": lead_samples,
             "avg": round(lead_total / lead_samples, 2) if lead_samples else None,
         },
-        "verification": {"verified": verified, "failures": failures},
+        "verification": {
+            "verified": verified,
+            "failures": failures,
+            "steps_exhausted": exhausted_total,
+            "steps_exhausted_by_profile": exhausted_profiles,
+        },
         "trend": trend,
         "notes": ["Datos descriptivos; no implican causalidad."],
     }

@@ -14,7 +14,7 @@ from .domain import (
     TRANSITIONS,
 )
 from .store.common import row_by_code
-from .store.workflow import stale_claims
+from .store.workflow import rejection_count, stale_claims, steps_exhausted_signal
 
 DEFAULT_WINDOW = 600
 
@@ -144,11 +144,12 @@ def _metrics(conn: Any, days: int = 30) -> dict[str, Any]:
         "AND COALESCE(completed_at, confirmed_at) >= ?",
         (cutoff,),
     ).fetchone()
-    failures = conn.execute(
-        "SELECT COUNT(*) FROM events WHERE from_status = 'verificado' "
-        "AND to_status = 'en_progreso' AND ts >= ?",
-        (cutoff,),
-    ).fetchone()[0]
+    failures = rejection_count(conn, cutoff)
+    exhausted = steps_exhausted_signal(conn, cutoff)
+    by_profile: dict[str, int] = {}
+    for item in exhausted:
+        profile = item["actor"]
+        by_profile[profile] = by_profile.get(profile, 0) + 1
     max_parallel = _max_overlap(_intervals(conn, days))
     return {
         "closed": row["total"] or 0,
@@ -159,6 +160,8 @@ def _metrics(conn: Any, days: int = 30) -> dict[str, Any]:
             round(row["attempts"], 2) if row["attempts"] is not None else None
         ),
         "verification_failures": failures,
+        "steps_exhausted": len(exhausted),
+        "steps_exhausted_by_profile": by_profile,
         "max_parallel_observed": max_parallel,
         "cost": None,
         "tokens": None,
