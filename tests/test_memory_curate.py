@@ -5,7 +5,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from ticketlib import db
+from ticketlib.domain import ValidationError
 from ticketlib.memory import add_memory, curate
+from ticketlib.memory.lifecycle import merge_memories, patch_memory
 from ticketlib.memory.models import BUDGET_STATUSES
 from tests.support import Harness
 
@@ -318,8 +320,197 @@ def _budget(h: Harness) -> None:
         conn.close()
 
 
+def _evidence_format(h: Harness) -> None:
+    """El tipo mal escrito se rechaza al escribir, no tras marcar stale."""
+    conn = db.connect(h.tmp / "memory-evidence-format.db")
+    try:
+        invalid = [
+            {"kind": "file", "ref": "1857a79"},
+            {"kind": "file", "ref": "commit:1857a79"},
+            {"kind": "file", "ref": "ticket:T-0045"},
+        ]
+        rejected = 0
+        for index, item in enumerate(invalid):
+            try:
+                add_memory(
+                    conn,
+                    title=f"Evidencia mal tipada {index}",
+                    content="No debería guardarse.",
+                    key=f"evidencia-mal-{index}",
+                    source="user",
+                    evidence=[item],
+                )
+            except ValidationError:
+                rejected += 1
+        h.eq(
+            rejected,
+            len(invalid),
+            "clean_evidence rechaza sha y tipos embebidos en kind file",
+        )
+        message = ""
+        try:
+            add_memory(
+                conn,
+                title="Evidencia mal tipada mensaje",
+                content="No debería guardarse.",
+                key="evidencia-mal-mensaje",
+                source="user",
+                evidence=[{"kind": "file", "ref": "commit:1857a79"}],
+            )
+        except ValidationError as exc:
+            message = str(exc)
+        h.ok(
+            "commit" in message and "1857a79" in message,
+            "el mensaje explica el kind correcto y la ref limpia",
+        )
+    finally:
+        conn.close()
+
+
+def _patch_evidence(h: Harness) -> None:
+    """Patch aditivo, reemplazo explícito y revalidación de vigencia."""
+    conn = db.connect(h.tmp / "memory-patch-evidence.db")
+    try:
+        memory = add_memory(
+            conn,
+            title="Parche de evidencia",
+            content="Base.",
+            key="parche-evidencia",
+            source="user",
+        )
+        http = {"kind": "url", "ref": "https://ejemplo.test/a"}
+        patch_memory(conn, memory["code"], evidence=[http])
+        patch_memory(conn, memory["code"], evidence=[http])
+        rows = conn.execute(
+            "SELECT kind, ref FROM memory_evidence WHERE memory_id = ?",
+            (memory["id"],),
+        ).fetchall()
+        h.ok(
+            [(row["kind"], row["ref"]) for row in rows]
+            == [("url", "https://ejemplo.test/a")],
+            "patch aditivo conserva la evidencia y no duplica",
+        )
+
+        patch_memory(
+            conn,
+            memory["code"],
+            evidence=[{"kind": "session", "ref": "ses_parche"}],
+            replace_evidence=True,
+        )
+        rows = conn.execute(
+            "SELECT kind, ref FROM memory_evidence WHERE memory_id = ?",
+            (memory["id"],),
+        ).fetchall()
+        h.ok(
+            [(row["kind"], row["ref"]) for row in rows]
+            == [("session", "ses_parche")],
+            "replace_evidence sustituye de forma explícita",
+        )
+
+        patch_memory(
+            conn,
+            memory["code"],
+            evidence=[{"kind": "ticket", "ref": "T-9999"}],
+        )
+        status = conn.execute(
+            "SELECT status FROM memories WHERE id = ?", (memory["id"],)
+        ).fetchone()[0]
+        h.eq(status, "stale", "patch revalida la evidencia y marca stale")
+    finally:
+        conn.close()
+
+
+def _merge(h: Harness) -> None:
+    """N memorias a 1: evidencia conservada, perdedoras archivadas."""
+    conn = db.connect(h.tmp / "memory-merge.db")
+    try:
+        first = add_memory(
+            conn,
+            title="Fusión A",
+            content="Contenido A.",
+            key="fusion-a",
+            source="user",
+            evidence=[{"kind": "url", "ref": "https://a.test"}],
+        )
+        second = add_memory(
+            conn,
+            title="Fusión B",
+            content="Contenido B.",
+            key="fusion-b",
+            source="user",
+            evidence=[{"kind": "url", "ref": "https://b.test"}],
+        )
+        before = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+        result = merge_memories(conn, first["code"], [second["code"]])
+        refs = {
+            row["ref"]
+            for row in conn.execute(
+                "SELECT ref FROM memory_evidence WHERE memory_id = ?",
+                (first["id"],),
+            )
+        }
+        status = conn.execute(
+            "SELECT status FROM memories WHERE code = ?", (second["code"],)
+        ).fetchone()[0]
+        h.ok(
+            refs == {"https://a.test", "https://b.test"}
+            and status == "archived",
+            "merge conserva la evidencia de las dos y archiva la perdedora",
+        )
+        after = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+        h.ok(
+            after == before
+            and result["merged"][0]["code"] == second["code"]
+            and conn.execute(
+                "SELECT 1 FROM memory_ledger WHERE action = 'merge' LIMIT 1"
+            ).fetchone()
+            is not None,
+            "merge no borra filas y deja asiento en el ledger",
+        )
+
+        user_memory = add_memory(
+            conn,
+            title="Fusión usuario",
+            content="Otro scope.",
+            key="fusion-usuario",
+            scope="user",
+            source="user",
+        )
+        h.raises(
+            ValidationError,
+            lambda: merge_memories(conn, first["code"], [user_memory["code"]]),
+            "merge rechaza scopes distintos",
+        )
+        pinned = add_memory(
+            conn,
+            title="Fusión fijada",
+            content="Pin humano.",
+            key="fusion-fijada",
+            source="user",
+            pinned=True,
+        )
+        h.raises(
+            ValidationError,
+            lambda: merge_memories(conn, first["code"], [pinned["code"]]),
+            "merge rechaza pinned sin allow_protected",
+        )
+        allowed = merge_memories(
+            conn, first["code"], [pinned["code"]], allow_protected=True
+        )
+        h.eq(
+            allowed["merged"][0]["code"],
+            pinned["code"],
+            "allow_protected permite fusionar una memoria fijada",
+        )
+    finally:
+        conn.close()
+
+
 def run(h: Harness) -> None:
     _aging(h)
     _dedupe(h)
     _dry_run(h)
     _budget(h)
+    _evidence_format(h)
+    _patch_evidence(h)
+    _merge(h)

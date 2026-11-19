@@ -336,6 +336,48 @@ def clean_ticket_kinds(kinds: Iterable[object] | None) -> list[str]:
     return out
 
 
+def evidence_root(conn: sqlite3.Connection) -> str | None:
+    """Raíz del proyecto a partir del fichero de la DB abierta."""
+    try:
+        row = conn.execute("PRAGMA database_list").fetchone()
+        path = str(row["file"] or "") if row is not None else ""
+    except sqlite3.Error:
+        return None
+    if not path:
+        return None
+    parent = Path(path).expanduser().parent
+    return str(parent.parent if parent.name == ".taiki" else parent)
+
+
+def _embedded_kind(ref: str) -> tuple[str, str] | None:
+    """Separa ``kind:resto`` cuando el prefijo es un tipo de evidencia."""
+    prefix, sep, rest = ref.partition(":")
+    if sep and prefix.lower() in EVIDENCE_KINDS and rest.strip():
+        return prefix.lower(), rest.strip()
+    return None
+
+
+def _validate_evidence_ref(kind: str, ref: str) -> None:
+    """Rechaza tipos embebidos y shas guardados como ``file``.
+
+    ``kind: file`` con un sha o con ``commit:`` es el error que dejó memorias
+    stale en producción: el tipo correcto es ``commit`` y el ref va sin prefijo.
+    La reparación de filas antiguas sigue en ``repair``.
+    """
+    embedded = _embedded_kind(ref)
+    if embedded is not None:
+        real, clean_ref = embedded
+        raise ValidationError(
+            f"Evidencia {kind}:{ref} lleva el tipo embebido en la referencia; "
+            f"usa kind={real!r} y ref={clean_ref!r}."
+        )
+    if kind == "file" and re.fullmatch(r"[0-9a-f]{7,40}", ref):
+        raise ValidationError(
+            f"Evidencia file con ref {ref!r}: parece un sha de commit; "
+            f"usa kind='commit' con ref={ref!r} o la ruta del fichero."
+        )
+
+
 def clean_evidence(evidence: Iterable[Any] | None) -> list[dict[str, str]]:
     """Normaliza y valida evidencias; infiere el tipo si falta."""
     if evidence is None:
@@ -365,6 +407,7 @@ def clean_evidence(evidence: Iterable[Any] | None) -> list[dict[str, str]]:
                 f"Tipo de evidencia inválido: {evidence_kind!r}. "
                 f"Valores permitidos: {', '.join(EVIDENCE_KINDS)}"
             )
+        _validate_evidence_ref(evidence_kind, reference)
         if evidence_kind == "ticket":
             reference = reference.upper()
             if not TICKET_CODE_RE.fullmatch(reference):
@@ -628,6 +671,7 @@ __all__ = [
     "config",
     "confidence",
     "decide_status",
+    "evidence_root",
     "insert_evidence",
     "insert_files",
     "limit_for",

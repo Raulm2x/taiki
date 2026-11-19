@@ -66,6 +66,8 @@ def _set_status(
     action: str,
     reason: str,
     meta: dict[str, Any] | None = None,
+    actor: str = ACTOR,
+    session_id: str | None = None,
 ) -> None:
     """Cambia el estado y registra la transición en el ledger."""
     memory_id = int(memory["id"])
@@ -90,7 +92,8 @@ def _set_status(
         memory_id=memory_id,
         before=before,
         after=after,
-        actor=ACTOR,
+        actor=actor,
+        session_id=session_id,
         reason=reason,
         meta=meta,
     )

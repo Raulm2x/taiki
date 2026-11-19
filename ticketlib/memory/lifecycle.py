@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from typing import Any
+from typing import Any, Iterable
 
 from .. import db
 from ..domain import ValidationError
@@ -12,7 +12,9 @@ from ..store.common import UNSET
 from ..util import check_enum, now
 from . import core
 from . import ledger as ledger_lib
+from .curate import _set_status
 from .models import (
+    LIVE_STATUSES,
     MEMORY_KINDS,
     PLAYBOOK_DESCRIPTION_CHARS,
     PLAYBOOK_KIND,
@@ -36,12 +38,20 @@ def patch_memory(
     ticket_kinds: Any = UNSET,
     tags: Any = UNSET,
     files: Any = UNSET,
+    evidence: Any = UNSET,
+    replace_evidence: bool = False,
     actor: str | None = None,
     session_id: str | None = None,
     reason: str | None = None,
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Actualiza campos editables con validación, dedupe y ledger."""
+    """Actualiza campos editables con validación, dedupe y ledger.
+
+    ``evidence`` es aditiva por defecto: la evidencia histórica se acumula con
+    ``INSERT OR IGNORE`` para no perder señales al corregir el contenido. El
+    reemplazo es explícito con ``replace_evidence=True`` y queda en el snapshot
+    del ledger, así que un borrado accidental se puede revertir con rollback.
+    """
     cfg = core.config(config)
     row = core.memory_row(conn, code)
     current = dict(row)
@@ -112,8 +122,9 @@ def patch_memory(
             json.dumps(tag_list, ensure_ascii=False) if tag_list else None
         )
     file_rows = None if files is UNSET else core.clean_files(files, cfg)
+    evidence_rows = None if evidence is UNSET else core.clean_evidence(evidence)
 
-    if not updates and file_rows is None:
+    if not updates and file_rows is None and evidence_rows is None:
         return core.receipt(conn, row, cfg)
 
     final_title = updates.get("title", current["title"])
@@ -156,6 +167,13 @@ def patch_memory(
                 (int(current["id"]),),
             )
             core.insert_files(conn, int(current["id"]), file_rows)
+        if evidence_rows is not None:
+            if replace_evidence:
+                conn.execute(
+                    "DELETE FROM memory_evidence WHERE memory_id = ?",
+                    (int(current["id"]),),
+                )
+            core.insert_evidence(conn, int(current["id"]), evidence_rows)
         after = ledger_lib.snapshot(conn, int(current["id"]))
         ledger_lib.record(
             conn,
@@ -167,9 +185,27 @@ def patch_memory(
             session_id=session_id,
             reason=reason,
         )
+        freshness = core.evidence_freshness(
+            conn,
+            after["evidence"] if after is not None else [],
+            after["files"] if after is not None else [],
+            root=core.evidence_root(conn),
+        )
+        if not freshness["ok"] and str(current["status"]) == "active":
+            _set_status(
+                conn,
+                dict(current),
+                "stale",
+                action="stale",
+                reason="evidencia no vigente: " + "; ".join(freshness["reasons"]),
+                actor=actor or "agente",
+                session_id=session_id,
+            )
         core.check_budget(conn, scope, cfg)
         updated = core.memory_row(conn, code)
-        return core.receipt(conn, updated, cfg)
+        receipt = core.receipt(conn, updated, cfg)
+        receipt["freshness"] = freshness
+        return receipt
 
 
 def _transition(
@@ -463,10 +499,138 @@ def supersede_memory(
         return core.receipt(conn, updated, cfg)
 
 
+def merge_memories(
+    conn: sqlite3.Connection,
+    winner: Any,
+    losers: Iterable[Any],
+    *,
+    actor: str | None = None,
+    session_id: str | None = None,
+    reason: str | None = None,
+    allow_protected: bool = False,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Consolida N memorias en ``winner`` sin borrar ninguna fila.
+
+    Mismo scope obligatorio, evidencia y ficheros absorbidos con
+    ``INSERT OR IGNORE``, perdedoras archivadas con motivo y asiento de ledger
+    con snapshot antes/después por memoria, igual que ``curate._merge``.
+    Pin y lock son decisiones humanas: sin ``allow_protected`` la fusión se
+    rechaza si alguna memoria está protegida.
+    """
+    cfg = core.config(config)
+    winner_row = core.memory_row(conn, winner)
+    winner_id = int(winner_row["id"])
+    winner_code = str(winner_row["code"])
+    if isinstance(losers, (str, int)):
+        losers = [losers]
+    loser_rows: list[sqlite3.Row] = []
+    seen = {winner_id}
+    for item in losers:
+        row = core.memory_row(conn, item)
+        memory_id = int(row["id"])
+        if memory_id == winner_id:
+            raise ValidationError(
+                f"La memoria ganadora {winner_code} no puede ser también perdedora"
+            )
+        if memory_id in seen:
+            continue
+        seen.add(memory_id)
+        loser_rows.append(row)
+    if not loser_rows:
+        raise ValidationError("La fusión requiere al menos una memoria perdedora")
+    scope = str(winner_row["scope"])
+    for row in [winner_row, *loser_rows]:
+        if str(row["scope"]) != scope:
+            raise ValidationError(
+                f"No se pueden fusionar scopes distintos: {winner_code} es "
+                f"{scope!r} y {row['code']} es {row['scope']!r}."
+            )
+        if str(row["status"]) not in LIVE_STATUSES:
+            raise ValidationError(
+                f"La memoria {row['code']} está en estado {row['status']!r}; "
+                "la fusión solo admite memorias vigentes."
+            )
+    protected = [
+        str(row["code"])
+        for row in [winner_row, *loser_rows]
+        if row["pinned"] or row["locked"]
+    ]
+    if protected and not allow_protected:
+        raise ValidationError(
+            f"Memorias protegidas ({', '.join(protected)}): pin/lock son "
+            "decisiones humanas; usa allow_protected solo con autorización."
+        )
+    loser_codes = [str(row["code"]) for row in loser_rows]
+    merged: list[dict[str, str]] = []
+    with db.tx(conn):
+        before_winner = ledger_lib.snapshot(conn, winner_id)
+        for row in loser_rows:
+            loser_id = int(row["id"])
+            conn.execute(
+                "INSERT OR IGNORE INTO memory_evidence("
+                "memory_id, kind, ref, created_at) "
+                "SELECT ?, kind, ref, created_at FROM memory_evidence "
+                "WHERE memory_id = ?",
+                (winner_id, loser_id),
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO memory_files("
+                "memory_id, path, content, sha256) "
+                "SELECT ?, path, content, sha256 FROM memory_files "
+                "WHERE memory_id = ?",
+                (winner_id, loser_id),
+            )
+        conn.execute(
+            "UPDATE memories SET updated_at = ? WHERE id = ?",
+            (now(), winner_id),
+        )
+        after_winner = ledger_lib.snapshot(conn, winner_id)
+        ledger_lib.record(
+            conn,
+            action="update",
+            memory_id=winner_id,
+            before=before_winner,
+            after=after_winner,
+            actor=actor,
+            session_id=session_id,
+            reason=reason
+            or f"absorbidas evidencias de {', '.join(loser_codes)}",
+            meta={
+                "merged": loser_codes,
+                "counterpart_ids": [int(row["id"]) for row in loser_rows],
+            },
+        )
+        for row in loser_rows:
+            merge_reason = reason or f"fusionada en {winner_code}"
+            _set_status(
+                conn,
+                dict(row),
+                "archived",
+                action="merge",
+                reason=merge_reason,
+                meta={"into": winner_code, "counterpart_id": winner_id},
+                actor=actor or "agente",
+                session_id=session_id,
+            )
+            merged.append(
+                {
+                    "code": str(row["code"]),
+                    "into": winner_code,
+                    "reason": merge_reason,
+                }
+            )
+        core.check_budget(conn, scope, cfg)
+        receipt = core.receipt(conn, core.memory_row(conn, winner_code), cfg)
+        receipt["merged"] = merged
+        return receipt
+
+
 __all__ = [
     "approve_memory",
     "archive_memory",
     "feedback_memory",
+    "merge_memories",
     "patch_memory",
     "pin_memory",
     "reject_memory",
