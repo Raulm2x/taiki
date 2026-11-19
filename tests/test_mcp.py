@@ -673,6 +673,70 @@ def run(h: Harness) -> None:
         ),
     )
 
+    # ── gate_run: solo ejecuta gates declarados ──────────────────────────
+    gate_body = (
+        "Gates del ticket:\n```gates\n"
+        '{"ok": ["python3", "-c", "print(\'ok\')"], '
+        '"fail": ["python3", "-c", "import sys; sys.exit(3)"], '
+        '"slow": ["python3", "-c", "import time; time.sleep(5)"]}\n'
+        "```\n"
+    )
+    gate_ticket = handlers.call_tool(
+        "create",
+        {
+            "title": "Ticket con gates declarados",
+            "body": gate_body,
+            "agent": "mcp:tester",
+        },
+    )
+    passed = handlers.call_tool(
+        "gate_run", {"ticket": gate_ticket["code"], "name": "ok"}
+    )
+    failed = handlers.call_tool(
+        "gate_run", {"ticket": gate_ticket["code"], "name": "fail"}
+    )
+    timed = handlers.call_tool(
+        "gate_run",
+        {"ticket": gate_ticket["code"], "name": "slow", "timeout": 1},
+    )
+    _ok(
+        h,
+        (
+            passed["ok"] is True
+            and passed["gates"][0]["exit"] == 0
+            and "ok" in passed["gates"][0]["stdout"],
+            "gate_run ejecuta un gate declarado y devuelve su salida",
+        ),
+        (
+            failed["ok"] is False and failed["gates"][0]["exit"] == 3,
+            "gate_run propaga el código de salida distinto de cero",
+        ),
+        (
+            timed["gates"][0]["timedOut"] is True
+            and timed["gates"][0]["exit"] is None,
+            "gate_run corta por timeout con timedOut y exit nulo",
+        ),
+        (
+            _falla(
+                lambda: handlers.call_tool(
+                    "gate_run",
+                    {"ticket": gate_ticket["code"], "name": "no-declarado"},
+                ),
+                domain.ValidationError,
+            ),
+            "gate_run rechaza un nombre que no está declarado",
+        ),
+        (
+            _falla(
+                lambda: handlers.call_tool(
+                    "gate_run", {"command": "echo libre"}
+                ),
+                domain.ValidationError,
+            ),
+            "gate_run no acepta comandos fuera de las fuentes declaradas",
+        ),
+    )
+
     # Errores de contrato del despachador
     _ok(
         h,

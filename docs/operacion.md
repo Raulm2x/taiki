@@ -94,6 +94,36 @@ hija está en el worktree y que el commit vive en `agent/T-XXXX-*`, no en
 `main`. Cualquier write de estado va por MCP y `uvx` queda limitado a `ruff` y
 `mypy`: `python3 tests/run.py --verify` los ejecuta internamente.
 
+### Gates desde MCP (`gate_run`)
+
+`gate_run` ejecuta solo comandos **declarados**; no es un shell y no acepta
+texto libre en la llamada. Fuentes permitidas:
+
+- `verify.command` de `.taiki/config.json` (nombre `verify`). Una cadena con
+  metacaracteres (`&&`, `|`, `;`, `$(`, backticks, `>`) se ejecuta con shell de
+  forma deliberada; un array se ejecuta tal cual, sin `shlex.split`.
+- Un bloque `gates` en el body del ticket con JSON `{nombre: comando}` o una
+  lista de `{"name", "command"}`:
+
+  ````
+  ```gates
+  {"test": ["pnpm", "test"], "lint": "pnpm run lint"}
+  ```
+  ````
+
+El worker llama `gate_run` con `ticket` (y opcionalmente `name` y `timeout` en
+segundos). Sin `name` ejecuta todos y devuelve `{"gates": [...], "ok": bool}`;
+cada gate trae `{name, command, cwd, exit, stdout, stderr, durationMs,
+truncated, timedOut}`. Se ejecuta en el worktree de la sesión del ticket si
+existe y, si no, en el árbol vivo; la salida se trunca a 8000 caracteres por
+flujo con la marca `…[truncado]` y el timeout por defecto es 120 s. Es
+read-only respecto a tickets.
+
+Al cerrar, cita el resultado en la resolución de `complete` como texto
+estructurado, por ejemplo `gate_run name=test ticket=T-XXXX: exit=0
+durationMs=1234`. Adjuntar la evidencia de forma automática llega con
+T-0085.10.
+
 ### Permisos de shell
 
 Cada perfil declara sus reglas en `.opencode/agents/*.md`. La cadena de escalado
@@ -687,7 +717,7 @@ detectar saltos, no como valor absoluto.
 
 | Métrica | Valor | Objetivo | Comando |
 | --- | --- | --- | --- |
-| `tools/list`: tools / bytes | 34 tools / 35.100 bytes (34,3 KiB) | ≤ 32 KiB | `python3 -m tests.benchmarks` |
+| `tools/list`: tools / bytes | 35 tools / 35.851 bytes (35,0 KiB) | ≤ 32 KiB | `python3 -m tests.benchmarks` |
 | Arranque del CLI (`list`) | 201 ms (mediana de 3) | ≤ 300 ms | `python3 -m tests.benchmarks` |
 | Suite `--strict-budget` | 1.968 comprobaciones / 10,86 s | ≤ 11 s (presupuesto 11,6 s) | `python3 tests/run.py --strict-budget` |
 | Brief | 2.443 chars (54 % de 4.500) | ≤ `brief_budget_chars` | `wc -c .taiki/generated/brief.md` |

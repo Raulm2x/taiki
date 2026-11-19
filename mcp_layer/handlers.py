@@ -17,6 +17,7 @@ from ticketlib import (
     db,
     domain,
     githook,
+    gate as gate_lib,
     repo,
     runtime,
     servers as servers_lib,
@@ -275,10 +276,38 @@ def _handle_health(
     return data
 
 
+def _handle_gate_run(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    session: str | None = None,
+    actor: str = "agente",
+) -> dict[str, Any]:
+    """Ejecuta gates declarados; nunca comandos recibidos en la llamada."""
+    ticket = str(args.get("ticket") or "").strip() or None
+    all_entries = gate_lib.resolve_gates(conn, ticket)
+    wanted = str(args.get("name") or "").strip()
+    entries = all_entries
+    if wanted:
+        entries = [entry for entry in all_entries if entry["name"] == wanted]
+        if not entries:
+            available = ", ".join(entry["name"] for entry in all_entries)
+            raise domain.ValidationError(
+                f"Gate desconocido: {wanted}. Disponibles: {available}"
+            )
+    cwd = gate_lib.resolve_cwd(conn, ticket)
+    timeout = args.get("timeout")
+    results = [
+        gate_lib.run_gate(entry, cwd, timeout=timeout) for entry in entries
+    ]
+    return {
+        "gates": results,
+        "ok": all(item["exit"] == 0 for item in results),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Tabla de Despacho (Registry)
 # ---------------------------------------------------------------------------
-
 _DOMAIN_MODULES = (_handler_tickets, _handler_orchestration)
 
 

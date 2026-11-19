@@ -4,7 +4,7 @@ Volver a [README](../README.md) · [Índice de documentación](README.md)
 
 ## Herramientas MCP
 
-El servidor expone 34 herramientas. El nombre real no lleva prefijo (`list`,
+El servidor expone 35 herramientas. El nombre real no lleva prefijo (`list`,
 `claim`…), aunque algunos clientes las muestren como `taiki_*`.
 
 | Herramienta | Uso |
@@ -64,7 +64,7 @@ cualquier worktree; no se crea una DB vacía dentro de `.worktrees/`.
 
 ## Recursos y prompts MCP
 
-El catálogo de 34 herramientas está en [Herramientas MCP](#herramientas-mcp) y
+El catálogo de 35 herramientas está en [Herramientas MCP](#herramientas-mcp) y
 se genera desde `mcp_layer/schemas.py`. Aquí solo quedan los recursos y prompts:
 
 Recursos: `taiki://inbox`, `taiki://stats`, `taiki://ticket/{code}`,

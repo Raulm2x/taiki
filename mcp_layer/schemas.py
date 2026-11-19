@@ -17,6 +17,7 @@ from .schema_common import (
     ToolSpec,
 )
 from .schema_memory import MEMORY_SPECS
+from .schema_gate import GATE_SPECS
 from .schema_meta import (
     PROMPTS,
     RESOURCES,
@@ -26,7 +27,13 @@ from .schema_meta import (
 from .schema_reorg import REORG_SPECS
 from .schema_tickets import TICKET_SPECS
 
-TOOL_SPECS = [*TICKET_SPECS, *REORG_SPECS, *MEMORY_SPECS, *SKILL_SPECS]
+TOOL_SPECS = [
+    *TICKET_SPECS,
+    *REORG_SPECS,
+    *MEMORY_SPECS,
+    *SKILL_SPECS,
+    *GATE_SPECS,
+]
 
 TOOLS = [spec.schema() for spec in TOOL_SPECS]
 
