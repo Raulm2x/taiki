@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import json
+from collections import deque
 from datetime import datetime, timedelta
 from typing import Any
 
 from . import audit, db, servers, sessions as sessions_lib, workspace
-from .domain import DEPENDENCY_DONE_STATUSES
+from .domain import (
+    DEPENDENCY_DONE_STATUSES,
+    STATUSES,
+    TRANSITIONS,
+)
+from .store.common import row_by_code
 from .store.workflow import stale_claims
 
 DEFAULT_WINDOW = 600
@@ -340,3 +346,86 @@ def lines(data: dict[str, Any]) -> list[str]:
 def session_lines(data: dict[str, Any]) -> list[str]:
     """Solo la tabla de sesiones (para el modal de la TUI)."""
     return lines(data)
+
+
+def _close_path(current: str) -> list[str]:
+    """Camino más corto de ``current`` a ``confirmado`` sobre TRANSITIONS.
+
+    La máquina de estados no cambia: ``nuevo`` no conecta con ``confirmado``
+    y el camino real pasa por ``en_progreso -> completado`` (o ``verificado``).
+    """
+    if current == "confirmado":
+        return []
+    pending: deque[tuple[str, list[str]]] = deque([(current, [current])])
+    seen = {current}
+    while pending:
+        state, trail = pending.popleft()
+        for nxt in sorted(TRANSITIONS.get(state, ())):
+            if nxt in seen:
+                continue
+            path = trail + [nxt]
+            if nxt == "confirmado":
+                return path
+            seen.add(nxt)
+            pending.append((nxt, path))
+    return []
+
+
+def epic_check(conn: Any, code: str) -> dict[str, Any]:
+    """Estado derivado de una épica calculado desde sus hijas (solo lectura).
+
+    Sin caché: se consulta a las hijas en cada llamada y no se escribe ni
+    estado ni eventos. La épica se considera cerrada cuando todas sus hijas
+    están en ``confirmado`` o ``cancelado``; una hija cancelada no bloquea el
+    cierre, pero las demás deben estar confirmadas.
+    """
+    epic = row_by_code(conn, code)
+    children = conn.execute(
+        "SELECT code, status FROM tickets WHERE parent_id = ? "
+        "AND archived = 0 ORDER BY id",
+        (epic["id"],),
+    ).fetchall()
+    counts: dict[str, int] = {status: 0 for status in STATUSES}
+    for child in children:
+        counts[child["status"]] = counts.get(child["status"], 0) + 1
+    closing = ("confirmado", "cancelado")
+    blocked = [
+        {
+            "code": child["code"],
+            "estado": child["status"],
+            "motivo": "sigue abierta y bloquea el cierre de la épica",
+        }
+        for child in children
+        if child["status"] not in closing
+    ]
+    cancelled = [
+        {
+            "code": child["code"],
+            "motivo": "cancelada: no bloquea el cierre, pero el resto de "
+            "hijas debe estar confirmada",
+        }
+        for child in children
+        if child["status"] == "cancelado"
+    ]
+    complete = bool(children) and not blocked
+    return {
+        "epic": epic["code"],
+        "estado_epica": epic["status"],
+        "estado": "completa" if complete else "abierta",
+        "hijas": counts,
+        "total": len(children),
+        "bloqueadas": blocked,
+        "canceladas": cancelled,
+        "criterio": (
+            "la épica cuenta como cerrada cuando todas sus hijas están en "
+            "'confirmado' o 'cancelado': una hija cancelada no bloquea el "
+            "cierre, pero las demás deben estar confirmadas; sin hijas el "
+            "cierre no se deriva y la épica sigue su ciclo propio"
+        ),
+        "camino_cierre": _close_path(epic["status"]),
+        "nota": (
+            "el paso final a 'confirmado' es exclusivo del usuario "
+            "(taiki confirm); el conductor lleva la épica hasta "
+            "'verificado' con la máquina actual y el usuario cierra"
+        ),
+    }
