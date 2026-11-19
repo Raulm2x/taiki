@@ -19,7 +19,7 @@ from ticketlib import (
 from ticketlib.guard.context import find_active, session_chain
 from ticketlib.memory.advice import routing_advice
 
-from .handler_common import _project_root, _summary
+from .handler_common import _project_root, _receipt, _summary
 from .handler_tickets import _attach_worktree
 
 
@@ -132,6 +132,30 @@ def _handle_reassign(
     return orchestrator_lib.reassign_stale(
         conn, agent=actor, session_id=session
     )
+
+
+def _handle_reject_delivery(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    session: str | None = None,
+    actor: str = "agente",
+) -> dict[str, Any]:
+    code = args.get("code")
+    if not code:
+        raise domain.ValidationError("El parámetro 'code' es obligatorio")
+    reason = args.get("reason")
+    if not reason:
+        raise domain.ValidationError("El parámetro 'reason' es obligatorio")
+    ticket = repo.reject_delivery(
+        conn,
+        code,
+        reason,
+        actor=actor,
+        actor_type="agente",
+        session_id=session,
+        reopen=bool(args.get("reopen")),
+    )
+    return _receipt(ticket, detail=bool(args.get("detail", False)))
 
 
 def _handle_schedule(

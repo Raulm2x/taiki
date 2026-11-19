@@ -15,6 +15,7 @@ def run(h: Harness) -> None:
     # Catálogo MCP: nombres estables y anotaciones solo donde aportan.
     expected_catalog = {
         "create", "list", "get", "claim", "update", "transition", "complete",
+        "reject_delivery",
         "comment", "link", "stats", "next", "agents", "status", "whoami",
         "heartbeat", "checkpoint", "retry", "reassign", "schedule",
         "worktree_create", "worktree_list", "promote", "scratch_drop",

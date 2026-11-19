@@ -393,6 +393,7 @@ def _handle_transition(
         session_id=session,
         resolution=args.get("resolution"),
         force=bool(args.get("force")),
+        evidence=args.get("evidence"),
     )
     return _receipt(
         ticket,

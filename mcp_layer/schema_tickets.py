@@ -9,6 +9,7 @@ from ticketlib.domain import (
     PRIORITIES,
     STATUSES,
 )
+from ticketlib.store.workflow import EVIDENCE_KEYS
 
 from .schema_common import (
     AGENT,
@@ -44,6 +45,20 @@ REVERSAL = {
     "additionalProperties": False,
     "description": "Plan de reversión: {kind, ref, command}; null lo limpia",
 }
+EVIDENCE = {
+    "type": "object",
+    "properties": {
+        key: {
+            "type": "array",
+            "items": {"type": "string", "maxLength": 200},
+            "maxItems": 20,
+        }
+        for key in EVIDENCE_KEYS
+    },
+    "additionalProperties": False,
+    "description": "Evidencia estructurada del verificado: "
+    "{gates, commits, commands}",
+}
 
 TICKET_SPECS = [
     ToolSpec(
@@ -54,10 +69,7 @@ TICKET_SPECS = [
         "se registra sola. Con subtasks crea las hijas en la misma llamada y "
         "con idempotency_key los reintentos devuelven el mismo ticket.",
         {
-            "title": {
-                "type": "string", "maxLength": 200,
-                "description": "Título corto y accionable",
-            },
+            "title": {"type": "string", "maxLength": 200, "description": "Título corto y accionable"},
             "body": {
                 "type": "string", "maxLength": 100_000,
                 "description": "Contexto, criterios de aceptación, pasos para reproducir, etc.",
@@ -92,19 +104,13 @@ TICKET_SPECS = [
                 "items": {"type": "string", "maxLength": 80},
                 "description": "Etiquetas libres",
             },
-            "parent_id": {
-                "type": "string", "maxLength": 40,
-                "description": "Código del ticket padre, si es una subtarea",
-            },
+            "parent_id": {"type": "string", "maxLength": 40, "description": "Código del ticket padre, si es una subtarea"},
             "subtasks": {
                 "type": "array", "maxItems": 100,
                 "items": {"type": "string", "maxLength": 200},
                 "description": "Títulos de las tareas hijas a crear con el ticket",
             },
-            "idempotency_key": {
-                "type": "string", "maxLength": 200,
-                "description": "Clave para que un reintento devuelva el mismo ticket",
-            },
+            "idempotency_key": {"type": "string", "maxLength": 200, "description": "Clave para que un reintento devuelva el mismo ticket"},
             "detail": DETAIL,
             "agent": AGENT,
         },
@@ -344,16 +350,8 @@ TICKET_SPECS = [
                 "maxItems": 50,
                 "description": "Reemplaza el conjunto completo de etiquetas",
             },
-            "parent_id": {
-                "type": ["string", "null"],
-                "maxLength": 40,
-                "description": "Épica de la tarea; null la devuelve a la raíz",
-            },
-            "assigned_to": {
-                "type": ["string", "null"],
-                "maxLength": 80,
-                "description": "Reasigna el ticket; null lo deja sin agente",
-            },
+            "parent_id": {"type": ["string", "null"], "maxLength": 40, "description": "Épica de la tarea; null la devuelve a la raíz"},
+            "assigned_to": {"type": ["string", "null"], "maxLength": 80, "description": "Reasigna el ticket; null lo deja sin agente"},
             "detail": DETAIL,
             "agent": AGENT,
             "session_id": SESSION,
@@ -363,7 +361,8 @@ TICKET_SPECS = [
     ToolSpec(
         "transition",
         "Cambia el estado de un ticket validando la máquina de estados. "
-        "Pasar a 'verificado' exige evidencia en note. "
+        "Pasar a 'verificado' exige evidencia en note y/o el objeto "
+        "evidence {gates, commits, commands}. "
         "Si se indica 'resolution' con el estado actual, documenta el cierre "
         "sin cambiar de estado (útil en tickets ya confirmados). "
         "No permite pasar a 'confirmado' (reservado al usuario).",
@@ -371,18 +370,15 @@ TICKET_SPECS = [
             "code": CODE,
             "status": STATUS,
             "note": {
-                "type": "string",
-                "maxLength": 10_000,
+                "type": "string", "maxLength": 10_000,
                 "description": "Motivo o contexto. Obligatorio al reabrir.",
             },
             "resolution": {
-                "type": "string",
-                "maxLength": 100_000,
-                "description": (
-                    "Resolución del cierre. Con el mismo estado, solo "
-                    "actualiza la resolución sin reabrir el ticket."
-                ),
+                "type": "string", "maxLength": 100_000,
+                "description": "Resolución del cierre. Con el mismo estado, "
+                "solo actualiza la resolución sin reabrir el ticket.",
             },
+            "evidence": EVIDENCE,
             "agent": AGENT,
             "session_id": SESSION,
             "force": FORCE,
@@ -397,19 +393,13 @@ TICKET_SPECS = [
         {
             "code": CODE,
             "resolution": {
-                "type": "string",
-                "maxLength": 100_000,
+                "type": "string", "maxLength": 100_000,
                 "description": "Qué se hizo, cómo se verificó y cualquier efecto secundario",
             },
-            "commit": {
-                "type": "string",
-                "maxLength": 200,
-                "description": "Hash o referencia del commit",
-            },
+            "commit": {"type": "string", "maxLength": 200, "description": "Hash o referencia del commit"},
             "files": {
-                "type": "array",
+                "type": "array", "maxItems": 500,
                 "items": {"type": "string", "maxLength": 2_000},
-                "maxItems": 500,
                 "description": "Archivos modificados",
             },
             "agent": AGENT,
@@ -418,6 +408,28 @@ TICKET_SPECS = [
             "detail": DETAIL,
         },
         ("code", "resolution"),
+    ),
+    ToolSpec(
+        "reject_delivery",
+        "Rechaza una entrega antes de verificarla (p. ej. un gate roto): "
+        "deja un evento delivery_rejected con motivo obligatorio, actor y "
+        "sesión. Con reopen=true reabre además el ticket a en_progreso en "
+        "la misma acción.",
+        {
+            "code": CODE,
+            "reason": {
+                "type": "string", "maxLength": 10_000,
+                "description": "Motivo del rechazo; queda en el histórico",
+            },
+            "reopen": {
+                "type": "boolean", "default": False,
+                "description": "Reabre además el ticket a en_progreso",
+            },
+            "agent": AGENT,
+            "session_id": SESSION,
+            "detail": DETAIL,
+        },
+        ("code", "reason"),
     ),
     ToolSpec(
         "comment",
@@ -437,15 +449,10 @@ TICKET_SPECS = [
         {
             "code": CODE,
             "kind": {
-                "type": "string",
-                "enum": list(LINK_KINDS),
+                "type": "string", "enum": list(LINK_KINDS),
                 "description": "Tipo de referencia",
             },
-            "ref": {
-                "type": "string",
-                "maxLength": 2_000,
-                "description": "Commit, ruta, URL o id de sesión",
-            },
+            "ref": {"type": "string", "maxLength": 2_000, "description": "Commit, ruta, URL o id de sesión"},
             "agent": AGENT,
             "session_id": SESSION,
             "detail": DETAIL,
@@ -536,16 +543,11 @@ TICKET_SPECS = [
                 "steps_exhausted registra pasos agotados",
             },
             "reason": {
-                "type": "string",
-                "maxLength": 10_000,
+                "type": "string", "maxLength": 10_000,
                 "description": "Motivo: obligatorio en abandon con force; "
                 "texto libre en steps_exhausted",
             },
-            "phase": {
-                "type": "string",
-                "maxLength": 40,
-                "description": "Fase donde se agotaron los pasos (default: estado actual)",
-            },
+            "phase": {"type": "string", "maxLength": 40, "description": "Fase donde se agotaron los pasos (default: estado actual)"},
             "force": FORCE,
             "minutes": {
                 "type": "integer",
@@ -681,15 +683,11 @@ TICKET_SPECS = [
         "worktrees y servidores. Úsalo si algo no cuadra.",
         {
             "days": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 365,
-                "default": 2,
+                "type": "integer", "minimum": 1, "maximum": 365, "default": 2,
                 "description": "Días para detectar tickets estancados",
             },
             "servers": {
-                "type": "boolean",
-                "default": True,
+                "type": "boolean", "default": True,
                 "description": "Incluye el resumen de servidores MCP",
             },
         },
