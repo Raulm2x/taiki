@@ -28,6 +28,14 @@ def cmd_servers(args: argparse.Namespace) -> int:
     if args.duplicates and not args.prune:
         print("Error: --duplicates requiere --prune", file=sys.stderr)
         return 2
+    if args.dry_run and not args.reload:
+        print("Error: --dry-run requiere --reload", file=sys.stderr)
+        return 2
+    if args.reload and args.prune:
+        print(
+            "Error: --reload y --prune son operaciones distintas", file=sys.stderr
+        )
+        return 2
     conn = db.connect(workspace.registry_path())
     try:
         entries = servers.inventory(conn)
@@ -38,11 +46,19 @@ def cmd_servers(args: argparse.Namespace) -> int:
             if args.prune
             else None
         )
+        reload_plan = (
+            servers.reload_processes(conn, apply=not args.dry_run)
+            if args.reload
+            else None
+        )
     finally:
         conn.close()
 
     if args.json:
-        print(json.dumps({"servers": entries, "prune": plan}, ensure_ascii=False))
+        payload = {"servers": entries, "prune": plan}
+        if reload_plan is not None:
+            payload["reload"] = reload_plan
+        print(json.dumps(payload, ensure_ascii=False))
         return 0
 
     if not entries:
@@ -102,4 +118,17 @@ def cmd_servers(args: argparse.Namespace) -> int:
                 and not plan["duplicates"]
             ):
                 print("Nada que limpiar.")
+
+    if reload_plan is not None:
+        print(
+            f"Recarga: señalados: {len(reload_plan['signalled'])} · "
+            f"omitidos: {len(reload_plan['skipped'])} · {reload_plan['reason']}"
+        )
+        if reload_plan["signalled"]:
+            print(
+                "  PIDs: "
+                + ", ".join(str(pid) for pid in reload_plan["signalled"])
+                + (" (dry-run; usa --reload sin --dry-run para señalar)"
+                   if args.dry_run else "")
+            )
     return 0

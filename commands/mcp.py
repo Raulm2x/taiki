@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from ticketlib import agents, db, workspace
+from ticketlib import agents, db, servers, workspace
 from ticketlib.domain import TicketError
 from ticketlib.githook import (
     install_commit_msg_hook,
@@ -317,6 +317,29 @@ def cmd_mcp_install(args: argparse.Namespace) -> int:
             "(ese cliente no admite alcance por proyecto)."
         )
     print(f"Guard activado en {folder / workspace.CONFIG_NAME}")
+
+    # La instalación suele seguir a un merge: se pide a los MCP vivos de este
+    # workspace que recarguen su código por señal en vez de esperar a que
+    # alguien reinicie OpenCode. Sin servidores vivos no hay ruido ni fallo.
+    if getattr(args, "no_reload", False):
+        print("OpenCode: recarga de servidores MCP omitida (--no-reload)")
+        return 0
+    try:
+        registry = db.connect(workspace.registry_path())
+        try:
+            reload_plan = servers.reload_processes(
+                registry, workspace=str(folder), apply=True
+            )
+        finally:
+            registry.close()
+    except Exception:  # noqa: BLE001 - la recarga nunca rompe el install
+        reload_plan = None
+    if reload_plan and reload_plan["signalled"]:
+        print(
+            "OpenCode: SIGHUP de recarga a "
+            + ", ".join(str(pid) for pid in reload_plan["signalled"])
+            + "; recargan su código en el siguiente límite de petición"
+        )
     return 0
 
 

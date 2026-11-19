@@ -879,6 +879,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="sobrescribe los perfiles de .opencode/agents con la versión de Taiki",
     )
+    mcp_add.add_argument(
+        "--no-reload",
+        action="store_true",
+        help="no pedir a los servidores MCP vivos que recarguen su código "
+        "al terminar",
+    )
     mcp_add.set_defaults(func=cmd_mcp_install)
     mcp_rm = mcp_sub.add_parser(
         "uninstall", help="retira el MCP del proyecto actual"
@@ -1188,7 +1194,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Inventario de servidores MCP y limpieza de huérfanos",
         description="Lista los procesos del servidor MCP con su estado (al día, "
         "desactualizado, huérfano). Un proceso con padre vivo nunca se toca, "
-        "aunque la sesión esté idle.",
+        "aunque la sesión esté idle. Con --reload se pide a los vivos de este "
+        "workspace que recarguen su código por señal (SIGHUP).",
     )
     p.add_argument("--prune", action="store_true", help="Prepara la limpieza")
     p.add_argument(
@@ -1198,6 +1205,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--duplicates",
         action="store_true",
         help="Incluye duplicados en la limpieza (conserva el más reciente)",
+    )
+    p.add_argument(
+        "--reload",
+        action="store_true",
+        help="SIGHUP a los MCP vivos de este workspace: recargan su código "
+        "en el siguiente límite de petición",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Con --reload: lista a quién se señalaría sin enviar la señal",
     )
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_servers)
