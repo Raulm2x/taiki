@@ -249,14 +249,14 @@ def _message(
 def _parallel_message(action: str, others: list[dict[str, Any]]) -> str:
     codes = ", ".join(item["code"] for item in others[:5])
     extra = "" if len(others) <= 5 else f" y {len(others) - 5} más"
-    message = (
-        f"Bloqueado: `{action}` afecta a todo el árbol y hay otras sesiones "
-        f"activas ({codes}{extra}). Usa un worktree o stagea rutas concretas."
+    alternative = deny_alternative(action) or (
+        "stagea rutas concretas o usa un worktree"
     )
-    alternative = deny_alternative(action)
-    if alternative:
-        message = f"{message} Alternativa: {alternative}."
-    return message
+    return (
+        f"Bloqueado: `{action}` afecta a todo el árbol y hay otras sesiones "
+        f"activas ({codes}{extra}). "
+        f"{alternative[0].upper()}{alternative[1:]}."
+    )
 
 
 def other_active_sessions(

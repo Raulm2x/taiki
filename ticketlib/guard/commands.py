@@ -828,29 +828,16 @@ def command_scope_problem(
 # ── Allowlist de perfiles: lectura, veredicto y alternativa ────────────────
 
 # Alternativa permitida para una denegación conocida: el mensaje de rechazo
-# la sugiere en vez de dejar al agente adivinando la puerta correcta.
+# la sugiere en vez de dejar al agente adivinando la puerta correcta. Breve:
+# el guard no escribe párrafos (los mensajes caben en el límite de política).
 _DENY_ALTERNATIVES = {
-    "git add -A": (
-        "stagea rutas concretas: `git add -- <ruta>` o `git add <ruta>` "
-        "(o deja que `taiki commit` valide el índice del ticket)"
-    ),
-    "git commit -a": (
-        "stagea con `git add -- <ruta>` y commitea con "
-        "`taiki commit --ticket T-XXXX`"
-    ),
-    "git stash": (
-        "commitea el WIP en tu rama: el stash es único para todos los worktrees"
-    ),
-    "git reset": (
-        "commitea el WIP en tu rama antes de reordenar: el índice es compartido"
-    ),
-    "git clean": (
-        "pide al conductor que autorice el borrado por ticket; nunca a ciegas"
-    ),
-    "git checkout -- .": (
-        "revierte solo ficheros concretos: `git checkout -- <ruta>`"
-    ),
-    "git restore .": "restaura solo ficheros concretos: `git restore <ruta>`",
+    "git add -A": "usa `git add -- <rutas>` o un worktree",
+    "git commit -a": "stagea con `git add -- <rutas>` y usa `taiki commit`",
+    "git stash": "commitea el WIP en tu rama; el stash es compartido",
+    "git reset": "commitea el WIP antes de reordenar; el índice es compartido",
+    "git clean": "pide al conductor autorizar el borrado por ticket",
+    "git checkout -- .": "revierte solo rutas: `git checkout -- <ruta>`",
+    "git restore .": "restaura solo rutas: `git restore <ruta>`",
 }
 
 
