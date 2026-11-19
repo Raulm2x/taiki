@@ -111,6 +111,10 @@ texto libre en la llamada. Fuentes permitidas:
   ```
   ````
 
+Los gates del ticket solo se ejecutan para la sesión que lo tiene reclamado
+(`owner_session`); `verify.command` vale para todos porque el guard protege el
+config. Si la sesión no coincide, el bloque `gates` del body se ignora.
+
 El worker llama `gate_run` con `ticket` (y opcionalmente `name` y `timeout` en
 segundos). Sin `name` ejecuta todos y devuelve `{"gates": [...], "ok": bool}`;
 cada gate trae `{name, command, cwd, exit, stdout, stderr, durationMs,

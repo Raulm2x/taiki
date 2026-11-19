@@ -284,7 +284,7 @@ def _handle_gate_run(
 ) -> dict[str, Any]:
     """Ejecuta gates declarados; nunca comandos recibidos en la llamada."""
     ticket = str(args.get("ticket") or "").strip() or None
-    all_entries = gate_lib.resolve_gates(conn, ticket)
+    all_entries = gate_lib.resolve_gates(conn, ticket, session)
     wanted = str(args.get("name") or "").strip()
     entries = all_entries
     if wanted:

@@ -689,15 +689,36 @@ def run(h: Harness) -> None:
             "agent": "mcp:tester",
         },
     )
+    handlers.call_tool(
+        "claim",
+        {
+            "code": gate_ticket["code"],
+            "agent": "mcp:tester",
+            "session_id": "gate-owner",
+        },
+    )
     passed = handlers.call_tool(
-        "gate_run", {"ticket": gate_ticket["code"], "name": "ok"}
+        "gate_run",
+        {"ticket": gate_ticket["code"], "name": "ok"},
+        meta={"sessionId": "gate-owner"},
     )
     failed = handlers.call_tool(
-        "gate_run", {"ticket": gate_ticket["code"], "name": "fail"}
+        "gate_run",
+        {"ticket": gate_ticket["code"], "name": "fail"},
+        meta={"sessionId": "gate-owner"},
     )
     timed = handlers.call_tool(
         "gate_run",
         {"ticket": gate_ticket["code"], "name": "slow", "timeout": 1},
+        meta={"sessionId": "gate-owner"},
+    )
+    ajeno = _falla(
+        lambda: handlers.call_tool(
+            "gate_run",
+            {"ticket": gate_ticket["code"], "name": "ok"},
+            meta={"sessionId": "gate-intruso"},
+        ),
+        domain.ValidationError,
     )
     _ok(
         h,
@@ -717,10 +738,15 @@ def run(h: Harness) -> None:
             "gate_run corta por timeout con timedOut y exit nulo",
         ),
         (
+            ajeno,
+            "gate_run no ejecuta los gates del body para una sesión ajena",
+        ),
+        (
             _falla(
                 lambda: handlers.call_tool(
                     "gate_run",
                     {"ticket": gate_ticket["code"], "name": "no-declarado"},
+                    meta={"sessionId": "gate-owner"},
                 ),
                 domain.ValidationError,
             ),

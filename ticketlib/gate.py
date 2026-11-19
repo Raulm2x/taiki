@@ -84,9 +84,16 @@ def _parse_gates(body: str) -> list[dict[str, Any]]:
 
 
 def resolve_gates(
-    conn: Any = None, ticket: str | None = None
+    conn: Any = None,
+    ticket: str | None = None,
+    session: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Gates disponibles: ``verify.command`` y, si hay ticket, su bloque gates."""
+    """Gates disponibles: ``verify.command`` y, si hay ticket, su bloque gates.
+
+    Los gates del body solo cuentan si el ticket lo tiene reclamado esa misma
+    sesión: el body es escribible por agentes y no puede ser una vía para
+    ejecutar comandos que la allowlist les niega.
+    """
     entries: list[dict[str, Any]] = []
     verify = workspace.verify_command()
     if verify:
@@ -94,7 +101,15 @@ def resolve_gates(
     if ticket:
         if conn is None:
             raise ValidationError("Hace falta la conexión para leer el ticket")
-        entries.extend(_parse_gates(_ticket_body(conn, ticket)))
+        if session:
+            owner = conn.execute(
+                "SELECT owner_session FROM tickets WHERE code = ? "
+                "AND archived = 0",
+                (ticket,),
+            ).fetchone()
+            if owner is not None and owner["owner_session"] == session:
+                entries.extend(_parse_gates(_ticket_body(conn, ticket)))
+
     if not entries:
         where = (
             "declara 'verify.command' en .taiki/config.json o un bloque "
