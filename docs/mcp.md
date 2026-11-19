@@ -4,7 +4,7 @@ Volver a [README](../README.md) · [Índice de documentación](README.md)
 
 ## Herramientas MCP
 
-El servidor expone 38 herramientas. El nombre real no lleva prefijo (`list`,
+El servidor expone 39 herramientas. El nombre real no lleva prefijo (`list`,
 `claim`…), aunque algunos clientes las muestren como `taiki_*`.
 
 | Herramienta | Uso |
@@ -14,6 +14,7 @@ El servidor expone 38 herramientas. El nombre real no lleva prefijo (`list`,
 | `next` | Siguiente ticket en resumen; `detail=true` para el registro completo |
 | `epic_check` | Solo lectura: estado derivado de una épica (`abierta`/`completa`) desde sus hijas, recuento por estado, bloqueadas y canceladas con motivo, criterio de cierre y camino real sobre la máquina de estados |
 | `create`, `update`, `transition`, `complete`, `comment`, `link` | Ciclo de vida |
+| `reject_delivery` | Escribe: rechaza una entrega con `reason` obligatorio, registra el evento `delivery_rejected` y con `reopen=true` reabre a `en_progreso` |
 | `claim` | Reclama; `worktree=true` solo en modo `worktree`, `lease_minutes`, `steal`, `force` |
 | `heartbeat` | Renueva el lease en comandos largos |
 | `status`, `whoami` | Sesiones, claims, worktrees y tu ticket activo |
@@ -67,7 +68,7 @@ cualquier worktree; no se crea una DB vacía dentro de `.worktrees/`.
 
 ## Recursos y prompts MCP
 
-El catálogo de 38 herramientas está en [Herramientas MCP](#herramientas-mcp) y
+El catálogo de 39 herramientas está en [Herramientas MCP](#herramientas-mcp) y
 se genera desde `mcp_layer/schemas.py`. Aquí solo quedan los recursos y prompts:
 
 Recursos: `taiki://inbox`, `taiki://stats`, `taiki://ticket/{code}`,

@@ -473,6 +473,112 @@ def run(h: Harness) -> None:
         ),
     )
 
+    # ── evidence estructurada y reject_delivery ────────────────────────
+    evidence_case = handlers.call_tool(
+        "create",
+        {"title": "Evidencia estructurada MCP"},
+        meta={"sessionId": "session-claim-111"},
+    )
+    handlers.call_tool(
+        "claim",
+        {"code": evidence_case["code"]},
+        meta={"sessionId": "session-claim-111"},
+    )
+    handlers.call_tool(
+        "complete",
+        {"code": evidence_case["code"], "resolution": "Listo para verificar"},
+        meta={"sessionId": "session-claim-111"},
+    )
+    evidence_verified = handlers.call_tool(
+        "transition",
+        {
+            "code": evidence_case["code"],
+            "status": "verificado",
+            "evidence": {
+                "gates": ["ruff", "mypy"],
+                "commits": ["abc123"],
+                "commands": ["python3 tests/run.py"],
+            },
+        },
+        meta={"sessionId": "session-claim-111"},
+    )
+    evidence_seen = handlers.call_tool("get", {"code": evidence_case["code"]})
+    notes = " ".join(
+        item.get("note") or "" for item in evidence_seen["events"]
+    )
+    bad_type = _falla(
+        lambda: handlers.call_tool(
+            "transition",
+            {
+                "code": evidence_case["code"],
+                "status": "verificado",
+                "evidence": {"gates": [1]},
+            },
+        ),
+        domain.ValidationError,
+    )
+    too_many = _falla(
+        lambda: handlers.call_tool(
+            "transition",
+            {
+                "code": evidence_case["code"],
+                "status": "verificado",
+                "evidence": {"gates": [str(n) for n in range(21)]},
+            },
+        ),
+        domain.ValidationError,
+    )
+    rejectable = handlers.call_tool(
+        "create",
+        {"title": "Entrega rechazada MCP"},
+        meta={"sessionId": "session-claim-111"},
+    )
+    handlers.call_tool(
+        "claim",
+        {"code": rejectable["code"]},
+        meta={"sessionId": "session-claim-111"},
+    )
+    handlers.call_tool(
+        "complete",
+        {"code": rejectable["code"], "resolution": "Entrega a revisar"},
+        meta={"sessionId": "session-claim-111"},
+    )
+    before = handlers.call_tool("status")["metrics"]["verification_failures"]
+    rejected = handlers.call_tool(
+        "reject_delivery",
+        {"code": rejectable["code"], "reason": "gate roto"},
+        meta={"sessionId": "session-claim-111"},
+    )
+    failures = handlers.call_tool("status")["metrics"]["verification_failures"]
+    rejected_events = handlers.call_tool("get", {"code": rejectable["code"]})
+    rejected_note = any(
+        item.get("action") == "delivery_rejected"
+        for item in rejected_events["events"]
+    )
+    no_reason = _falla(
+        lambda: handlers.call_tool(
+            "reject_delivery", {"code": rejectable["code"]}
+        ),
+        domain.ValidationError,
+    )
+    _ok(
+        h,
+        (
+            evidence_verified["status"] == "verificado"
+            and "gates: ruff" in notes
+            and "commits: abc123" in notes,
+            "transition guarda evidence y aparece en get",
+        ),
+        (bad_type and too_many, "transition rechaza evidence inválida"),
+        (
+            rejected["status"] == "completado"
+            and rejected_note
+            and failures == before + 1,
+            "reject_delivery registra el evento y sube verification_failures",
+        ),
+        (no_reason, "reject_delivery sin reason se rechaza"),
+    )
+
     # ── list cerrados, next, leaves, stats y alias ──────────────────────
     open_only = handlers.call_tool("list", {"limit": 200})
     with_closed = handlers.call_tool("list", {"limit": 200, "include_closed": True})
