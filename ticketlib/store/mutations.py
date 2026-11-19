@@ -437,7 +437,17 @@ def _reorg_finish(
     new_codes = [item["new_code"] for item in items]
     if len(new_codes) != len(set(new_codes)):
         raise ValidationError("El plan genera códigos duplicados")
-    return {"action": action, "items": items, "warnings": warnings}
+    aliases = [
+        {"old_code": item["code"], "new_code": item["new_code"]}
+        for item in items
+        if item["new_code"] != item["code"]
+    ]
+    return {
+        "action": action,
+        "items": items,
+        "aliases": aliases,
+        "warnings": warnings,
+    }
 
 
 def _plan_move(
@@ -501,6 +511,7 @@ def _plan_renumber(
     conn: sqlite3.Connection,
     rows: list[sqlite3.Row],
     include_adopted: bool,
+    allow_root: bool = False,
 ) -> dict[str, Any]:
     adopted = {
         row["ticket_id"]
@@ -509,14 +520,14 @@ def _plan_renumber(
         )
     }
     children = {row["id"]: row for row in _child_rows(conn)}
+    roots: list[sqlite3.Row] = []
     if rows:
         selected: list[sqlite3.Row] = []
         for row in rows:
             child = children.get(row["id"])
             if child is None:
-                raise ValidationError(
-                    f"{row['code']} no es una tarea; no hay nada que renumerar"
-                )
+                roots.append(row)
+                continue
             if child["parent_archived"]:
                 raise ValidationError(
                     f"El padre de {row['code']} está archivado"
@@ -557,6 +568,36 @@ def _plan_renumber(
             )
             number += 1
     warnings: list[str] = []
+    historic = {
+        row["old_code"] for row in conn.execute("SELECT old_code FROM renamed_from")
+    }
+    for row in sorted(roots, key=lambda value: value["id"]):
+        child_count = conn.execute(
+            "SELECT COUNT(*) FROM tickets WHERE parent_id = ?", (row["id"],)
+        ).fetchone()[0]
+        if child_count:
+            raise ValidationError(
+                f"{row['code']} es una épica con {child_count} tarea(s); "
+                "renumera o mueve sus tareas antes de renumerar la raíz"
+            )
+        published = conn.execute(
+            "SELECT 1 FROM links WHERE ticket_id = ? "
+            "AND kind IN ('commit', 'external') LIMIT 1",
+            (row["id"],),
+        ).fetchone()
+        if published is not None and not allow_root:
+            raise ValidationError(
+                f"{row['code']} ya se publicó (tiene commits enlazados); "
+                "usa allow_root para renumerar una raíz publicada"
+            )
+        number = 1
+        while True:
+            new_code = f"T-{number:04d}"
+            if new_code not in used and new_code not in historic:
+                break
+            number += 1
+        used.add(new_code)
+        items.append(_reorg_item(row, new_code, None))
     if rows and not items:
         warnings.append("No hay tareas que renumerar con esos filtros")
     return _reorg_finish("renumber", items, warnings)
@@ -659,6 +700,7 @@ def reorg_plan(
     children_to: Any = UNSET,
     include_adopted: bool = False,
     renumber: bool | None = None,
+    allow_root: bool = False,
 ) -> dict[str, Any]:
     """Plan puro de reorganización: no escribe en la base de datos.
 
@@ -678,7 +720,7 @@ def reorg_plan(
     if action == "move":
         return _plan_move(conn, rows, parent, renumber)
     if action == "renumber":
-        return _plan_renumber(conn, rows, include_adopted)
+        return _plan_renumber(conn, rows, include_adopted, allow_root)
     if action == "promote":
         return _plan_promote(conn, rows)
     return _plan_demote(conn, rows, children_to, parent)
@@ -742,6 +784,7 @@ def reorg_apply(
     children_to: Any = UNSET,
     include_adopted: bool = False,
     renumber: bool | None = None,
+    allow_root: bool = False,
     actor: str = "agente",
     actor_type: str = "agente",
     session_id: str | None = None,
@@ -762,6 +805,7 @@ def reorg_apply(
         children_to=children_to,
         include_adopted=include_adopted,
         renumber=renumber,
+        allow_root=allow_root,
     )
     items = plan["items"]
     references = {"links": 0, "evidence": 0, "memories": 0}
@@ -808,6 +852,9 @@ def reorg_apply(
             conn.execute(
                 "UPDATE tickets SET code = ? WHERE id = ?",
                 (item["new_code"], item["id"]),
+            )
+            db.record_renamed(
+                conn, item["code"], item["new_code"], ts
             )
 
         # (b) Parent_id resuelto desde el padre destino del plan.
@@ -935,6 +982,9 @@ def renumber_children(
                     f"renumerado:{item['code']}->{item['new_code']}",
                     ts,
                 ),
+            )
+            db.record_renamed(
+                conn, item["code"], item["new_code"], ts
             )
     return plan
 
