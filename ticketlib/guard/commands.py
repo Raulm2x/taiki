@@ -830,20 +830,69 @@ def command_scope_problem(
 # Alternativa permitida para una denegación conocida: el mensaje de rechazo
 # la sugiere en vez de dejar al agente adivinando la puerta correcta. Breve:
 # el guard no escribe párrafos (los mensajes caben en el límite de política).
-_DENY_ALTERNATIVES = {
-    "git add -A": "usa `git add -- <rutas>` o un worktree",
-    "git commit -a": "stagea con `git add -- <rutas>` y usa `taiki commit`",
-    "git stash": "commitea el WIP en tu rama; el stash es compartido",
-    "git reset": "commitea el WIP antes de reordenar; el índice es compartido",
-    "git clean": "pide al conductor autorizar el borrado por ticket",
-    "git checkout -- .": "revierte solo rutas: `git checkout -- <ruta>`",
-    "git restore .": "restaura solo rutas: `git restore <ruta>`",
+# Cada entrada lleva ``samples`` con un comando literal por cada sugerencia
+# entre backticks: el test adverso las evalúa con ``command_verdict`` contra
+# los perfiles worker, así ninguna alternativa vuelve a proponer una puerta
+# cerrada. Sin samples, el texto escala al conductor en vez de sugerir.
+_DENY_ALTERNATIVES: dict[str, dict[str, Any]] = {
+    "git add -A": {
+        "text": "usa `git add -- <rutas>` o un worktree",
+        "samples": ["git add -- src/a.py"],
+    },
+    "git commit -a": {
+        "text": (
+            "stagea con `git add -- <rutas>` y usa "
+            "`TAIKI_TICKET=<código> taiki commit`"
+        ),
+        "samples": [
+            "git add -- src/a.py",
+            'TAIKI_TICKET=T-0001 taiki commit -m "fix: x (T-0001)"',
+        ],
+    },
+    "git stash": {
+        "text": "commitea el WIP en tu rama; el stash es compartido",
+        "samples": ['TAIKI_TICKET=T-0001 taiki commit -m "wip (T-0001)"'],
+    },
+    "git reset": {
+        "text": "commitea el WIP antes de reordenar; el índice es compartido",
+        "samples": ['TAIKI_TICKET=T-0001 taiki commit -m "wip (T-0001)"'],
+    },
+    "git clean": {
+        "text": "pide al conductor autorizar el borrado por ticket",
+        "samples": [],
+    },
+    "git checkout -- .": {
+        "text": (
+            "revertir no es de worker: inspecciona con "
+            "`git show HEAD -- <ruta>` o escala al conductor"
+        ),
+        "samples": ["git show HEAD -- src/a.py"],
+    },
+    "git restore .": {
+        "text": (
+            "restaurar no es de worker: inspecciona con "
+            "`git show HEAD -- <ruta>` o escala al conductor"
+        ),
+        "samples": ["git show HEAD -- src/a.py"],
+    },
 }
 
 
 def deny_alternative(label: str | None) -> str | None:
-    """Alternativa permitida para una etiqueta de denegación, o ``None``."""
-    return _DENY_ALTERNATIVES.get((label or "").strip()) or None
+    """Texto de alternativa permitida para una etiqueta, o ``None``."""
+    entry = _DENY_ALTERNATIVES.get((label or "").strip())
+    return str(entry["text"]) if entry else None
+
+
+def deny_alternative_samples(label: str | None) -> list[str]:
+    """Muestras literales de la alternativa, para el test adverso."""
+    entry = _DENY_ALTERNATIVES.get((label or "").strip())
+    return list(entry["samples"]) if entry else []
+
+
+def deny_alternative_labels() -> list[str]:
+    """Etiquetas con alternativa documentada, para recorrer el mapa."""
+    return list(_DENY_ALTERNATIVES)
 
 
 def parse_permissions(text: str) -> list[dict[str, str]]:

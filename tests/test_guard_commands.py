@@ -718,6 +718,26 @@ def run(h: Harness) -> None:
         and shell_rules.deny_alternative("desconocido") is None,
         "deny_alternative sugiere la alternativa conocida y calla lo demás",
     )
+    # Test adverso: recorre el mapa completo y evalúa cada muestra con la
+    # allowlist real de cada perfil worker. Ninguna alternativa puede estar
+    # denegada (la trampa original: sugerir `git checkout -- <ruta>` cuando
+    # el perfil deniega `git checkout -- *`).
+    for label in shell_rules.deny_alternative_labels():
+        text = shell_rules.deny_alternative(label) or ""
+        samples = shell_rules.deny_alternative_samples(label)
+        denied = sorted(
+            f"{profile['name']}: {sample}"
+            for sample in samples
+            for profile in profiles
+            if not shell_rules.command_verdict(sample, profile["rules"])[
+                "allowed"
+            ]
+        )
+        h.ok(
+            (bool(samples) or "conductor" in text) and not denied,
+            f"la alternativa de {label} es ejecutable por todo worker: "
+            f"{'; '.join(denied) if denied else text}",
+        )
     h.ok(
         shell_rules.high_risk_command("sudo id") == "sudo"
         and shell_rules.high_risk_command("rm -f /etc/x") == "sistema"
