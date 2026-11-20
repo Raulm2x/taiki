@@ -78,8 +78,7 @@ ROOT = {
 REORG_SPECS = [
     ToolSpec(
         "reorg_plan",
-        "Dry-run de la reorganización: revisa items y warnings y aplica "
-        "después con reorg_apply.",
+        "Dry-run: revisa items y warnings; aplica después con reorg_apply.",
         {
             "action": ACTION,
             "codes": CODES,
@@ -94,8 +93,8 @@ REORG_SPECS = [
     ),
     ToolSpec(
         "reorg_apply",
-        "Aplica la reorganización con apply=true; purge exige force y hace "
-        "backup. No reescribe el histórico.",
+        "Aplica la reorganización con apply=true; purge exige force y "
+        "backup. No reescribe histórico.",
         {
             "action": ACTION,
             "codes": CODES,
@@ -111,8 +110,8 @@ REORG_SPECS = [
     ),
     ToolSpec(
         "unlink",
-        "Quita un enlace concreto del ticket verificando que es suyo; "
-        "registra el evento desvincular.",
+        "Quita un enlace del ticket verificando que es suyo; registra "
+        "desvincular.",
         {
             "code": CODE,
             "kind": LINK_KIND,
@@ -123,9 +122,8 @@ REORG_SPECS = [
     ),
     ToolSpec(
         "links_repair",
-        "Detecta enlaces rotos (commits que no resuelven, depende de "
-        "tickets inexistentes, archivos ausentes); sin apply lista y con "
-        "apply=true retira; depende de bloqueado exige force=true.",
+        "Detecta enlaces rotos (commits, dependencias, archivos); dry-run, "
+        "con apply=true retira; depende de bloqueado exige force.",
         {
             "root": ROOT,
             "repos": REPOS,

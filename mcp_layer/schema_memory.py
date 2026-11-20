@@ -147,16 +147,15 @@ MEMORY_SPECS = [
     ),
     ToolSpec(
         "memory_write",
-        "Escribe o mantiene memorias (add/patch/remove/supersede/feedback) y "
-        "playbooks; las propuestas esperan aprobación. Aporta evidence "
-        "(ticket, commit, file, url, session); con kind=playbook usa "
-        "key=playbook:<slug>.",
+        "Escribe o mantiene memorias y playbooks; las propuestas esperan "
+        "aprobación. Aporta evidence (ticket, commit, file, url o session); "
+        "con kind=playbook usa key=playbook:<slug>.",
         {
             "target": {
                 "type": "string",
                 "enum": list(MEMORY_SCOPES),
                 "default": "project",
-                "description": "Scope de las memorias nuevas",
+                "description": "Scope de las nuevas",
             },
             "operations": {
                 "type": "array",
@@ -180,7 +179,7 @@ MEMORY_SPECS = [
                         "code": {
                             "type": "string",
                             "maxLength": 40,
-                            "description": "M-0001 para patch/remove/supersede/feedback",
+                            "description": "M-0001 de la memoria",
                         },
                         "kind": {
                             "type": "string",
@@ -191,18 +190,18 @@ MEMORY_SPECS = [
                             "type": "array",
                             "items": {"type": "string", "enum": list(KINDS)},
                             "maxItems": 20,
-                            "description": "Tipos de ticket (vacío = general)",
+                            "description": "Tipos de ticket",
                         },
                         "tags": {
                             "type": "array",
                             "items": {"type": "string", "maxLength": 33},
                             "maxItems": 20,
-                            "description": "Etiquetas de dominio (slug corto)",
+                            "description": "Etiquetas de dominio",
                         },
                         "key": {
                             "type": "string",
                             "maxLength": 200,
-                            "description": "Clave estable; una nueva reemplaza la vigente",
+                            "description": "Clave estable",
                         },
                         "title": {
                             "type": "string",
@@ -212,7 +211,7 @@ MEMORY_SPECS = [
                         "content": {
                             "type": "string",
                             "maxLength": 12_000,
-                            "description": "Contenido destilado (procedimiento en playbooks)",
+                            "description": "Contenido destilado",
                         },
                         "description": {
                             "type": "string",
@@ -230,7 +229,7 @@ MEMORY_SPECS = [
                                     "path": {
                                         "type": "string",
                                         "maxLength": 500,
-                                        "description": "Ruta interna (references/, scripts/, …)",
+                                        "description": "Ruta interna del apoyo",
                                     },
                                     "content": {
                                         "type": "string",
@@ -239,13 +238,13 @@ MEMORY_SPECS = [
                                     },
                                 },
                             },
-                            "description": "Ficheros de apoyo de un playbook",
+                            "description": "Ficheros de apoyo",
                         },
                         "evidence": {
                             "type": "array",
                             "maxItems": 20,
                             "items": {"type": ["string", "object"]},
-                            "description": "Referencias que respaldan la memoria",
+                            "description": "Referencias que la respaldan",
                         },
                         "reason": {
                             "type": "string",
@@ -268,7 +267,7 @@ MEMORY_SPECS = [
                         },
                     },
                 },
-                "description": "Operaciones a aplicar en orden",
+                "description": "Operaciones en orden",
             },
         },
         ("operations",),

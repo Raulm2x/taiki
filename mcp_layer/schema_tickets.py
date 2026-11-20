@@ -60,13 +60,13 @@ EVIDENCE = {
 TICKET_SPECS = [
     ToolSpec(
         "create",
-        "Crea un ticket 'nuevo'; subtasks crea las hijas y "
-        "idempotency_key deduplica reintentos.",
+        "Crea un ticket 'nuevo'; subtasks crea hijas, idempotency_key "
+        "deduplica.",
         {
             "title": {"type": "string", "maxLength": 200, "description": "Título corto y accionable"},
             "body": {
                 "type": "string", "maxLength": 100_000,
-                "description": "Contexto, criterios, pasos para reproducir",
+                "description": "Contexto y criterios",
             },
             "kind": {
                 "type": "string", "enum": list(KINDS),
@@ -78,11 +78,11 @@ TICKET_SPECS = [
             },
             "project": {
                 "type": "string", "maxLength": 200,
-                "description": "Proyecto; por defecto el directorio actual",
+                "description": "Proyecto (defecto: actual)",
             },
             "path": {
                 "type": "string", "maxLength": 2_000,
-                "description": "Ruta; por defecto el directorio actual",
+                "description": "Ruta (defecto: actual)",
             },
             "paths": {
                 "type": "array",
@@ -102,9 +102,9 @@ TICKET_SPECS = [
             "subtasks": {
                 "type": "array", "maxItems": 100,
                 "items": {"type": "string", "maxLength": 200},
-                "description": "Títulos de las hijas a crear",
+                "description": "Títulos de las hijas",
             },
-            "idempotency_key": {"type": "string", "maxLength": 200, "description": "Reintento devuelve el mismo ticket"},
+            "idempotency_key": {"type": "string", "maxLength": 200, "description": "Deduplica reintentos"},
             "detail": DETAIL,
             "agent": AGENT,
         },
@@ -112,15 +112,15 @@ TICKET_SPECS = [
     ),
     ToolSpec(
         "list",
-        "Abiertos en resumen (20 por defecto); include_closed añade "
-        "cerrados y 'total' pagina con 'offset'.",
+        "Abiertos en resumen (20); include_closed añade cerrados; "
+        "'total' pagina con offset.",
         {
             "status": STATUS,
             "statuses": {
                 "type": "array",
                 "items": {"type": "string", "enum": list(STATUSES)},
                 "maxItems": 10,
-                "description": "Estados varios; gana a 'status'",
+                "description": "Estados varios",
             },
             "kind": {"type": "string", "enum": list(KINDS)},
             "priority": {"type": "string", "enum": list(PRIORITIES)},
@@ -168,7 +168,7 @@ TICKET_SPECS = [
             "query": {
                 "type": "string",
                 "maxLength": 500,
-                "description": "Texto en título y descripción",
+                "description": "Búsqueda de texto",
             },
             "include_archived": {"type": "boolean", "default": False},
             "include_closed": {
@@ -179,13 +179,13 @@ TICKET_SPECS = [
             "detail": {
                 "type": "boolean",
                 "default": False,
-                "description": "Registro completo en vez de resumen",
+                "description": "Registro completo",
             },
             "fields": {
                 "type": "array",
                 "items": {"type": "string", "maxLength": 40},
                 "maxItems": 50,
-                "description": "Campos a devolver (body solo si se pide)",
+                "description": "Campos a devolver",
             },
             "limit": {
                 "type": "integer",
@@ -203,21 +203,21 @@ TICKET_SPECS = [
                 "type": "string",
                 "enum": ["code", "priority"],
                 "default": "code",
-                "description": "code: recientes primero; priority: prioridad y edad",
+                "description": "Orden code o priority",
             },
         },
         read_only=True,
     ),
     ToolSpec(
         "get",
-        "Ticket completo por secciones: include acota, *_limit limita, "
-        "fields proyecta y raw=true lo da íntegro.",
+        "Ticket completo por secciones; fields proyecta, raw=true lo da "
+        "íntegro.",
         {
             "code": CODE,
             "raw": {
                 "type": "boolean",
                 "default": False,
-                "description": "Ticket íntegro; ignora include, events_detail y límites",
+                "description": "Ticket íntegro, sin proyecciones",
             },
             "fields": {
                 "type": "array",
@@ -272,7 +272,7 @@ TICKET_SPECS = [
             "events_detail": {
                 "type": "boolean",
                 "default": False,
-                "description": "Campos completos del evento (defecto: ts/actor/action/note)",
+                "description": "Campos completos del evento",
             },
         },
         ("code",),

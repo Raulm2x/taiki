@@ -4,7 +4,8 @@ Volver a [README](../README.md) · [Índice de documentación](README.md)
 
 ## Herramientas MCP
 
-El servidor expone 39 herramientas. El nombre real no lleva prefijo (`list`,
+El servidor expone 39 herramientas; `tools/list` mide 32.480 bytes (31,7 KiB,
+bajo el techo de 32 KiB del benchmark). El nombre real no lleva prefijo (`list`,
 `claim`…), aunque algunos clientes las muestren como `taiki_*`.
 
 | Herramienta | Uso |
