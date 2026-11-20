@@ -369,6 +369,8 @@ def run(h: Harness) -> None:
                             ],
                         ),
                         servers.identify_active(twins_db, plain),
+                        servers.identify_active(twins_db, plain, 110),
+                        servers.identify_active(twins_db, plain, 999),
                         servers.identify_active(
                             twins_db,
                             [
@@ -390,6 +392,8 @@ def run(h: Harness) -> None:
                         (110, "meta.mcp_pid"),
                         (110, "connection"),
                         (110, "heartbeat_at"),
+                        (None, None),
+                        (110, "meta del proyecto"),
                         (None, None),
                         (None, None),
                     ],
@@ -448,6 +452,47 @@ def run(h: Harness) -> None:
                 "el activo identificado se conserva aunque el más nuevo "
                 "sea otro",
             )
+
+            forged[111] = {
+                "pid": 111,
+                "ppid": 50,
+                "cmdline": "python3 /x/tickets/server.py",
+            }
+            project_db = db.connect(":memory:")
+            try:
+                for pid, beat in ((110, "10:01"), (111, "10:05")):
+                    project_db.execute(
+                        "INSERT INTO mcp_servers(pid, ppid, name, fingerprint, "
+                        "started_at, heartbeat_at) VALUES (?, 50, 'tickets', "
+                        "'abc', '2026-10-31T10:00:00-05:00', ?)",
+                        (pid, beat),
+                    )
+                by_project = servers.prune(
+                    project_db,
+                    apply=True,
+                    process=fake3,
+                    killer=killer3,
+                    current="abc",
+                    live=forged,
+                    duplicates=True,
+                    active_pid=110,
+                    grace=0,
+                    slug=0,
+                    sleep=lambda _s: None,
+                )
+                h.ok(
+                    by_project["killed"] == [111]
+                    and 110 in by_project["kept"]
+                    and by_project["active"]
+                    == [
+                        {"pid": 110, "evidence": "meta del proyecto"}
+                    ]
+                    and not by_project["warnings"],
+                    "el PID activo de la DB del proyecto se conserva aunque "
+                    "sea el más viejo y su latido el más antiguo",
+                )
+            finally:
+                project_db.close()
         finally:
             twins_db.close()
 

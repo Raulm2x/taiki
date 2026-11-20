@@ -21,6 +21,25 @@ def _space(value: object) -> str:
     return path.parent.name if path.name == ".taiki" else path.name
 
 
+def _project_active_pid() -> int | None:
+    """PID activo según ``meta.mcp_pid`` de la DB del proyecto.
+
+    ``runtime.register`` deja el PID del último MCP en el proyecto, no en el
+    registro global que usa este comando: sin esta lectura la evidencia más
+    fiable no llegaría a ``servers.prune``. Si el proyecto no tiene DB
+    accesible, no se falla el comando: se sigue con el resto de evidencias.
+    """
+    try:
+        conn = db.connect()
+        try:
+            pid = db.meta_get(conn, "mcp_pid")
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - la limpieza no puede depender del proyecto
+        return None
+    return int(pid) if pid and pid.isdigit() else None
+
+
 def cmd_servers(args: argparse.Namespace) -> int:
     if args.apply and not args.prune:
         print("Error: --apply requiere --prune", file=sys.stderr)
@@ -54,6 +73,11 @@ def cmd_servers(args: argparse.Namespace) -> int:
                 apply=args.apply,
                 duplicates=args.duplicates,
                 force=args.force,
+                active_pid=(
+                    _project_active_pid()
+                    if args.duplicates
+                    else None
+                ),
             )
             if args.prune
             else None

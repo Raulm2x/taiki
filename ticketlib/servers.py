@@ -373,15 +373,20 @@ def _terminate(
 def identify_active(
     conn: Any,
     group: list[dict[str, Any]],
+    active_pid: int | None = None,
 ) -> tuple[int | None, str | None]:
     """El PID activo de un grupo de duplicados y la evidencia que lo respalda.
 
-    Orden de evidencia: ``meta.mcp_pid`` (lo escribe ``runtime.register``), el
-    ``connection`` que declaró el cliente y el ``heartbeat_at`` más reciente del
-    grupo. ``(None, None)`` cuando ninguna evidencia alcanza: entonces el grupo
-    se conserva entero y solo ``force`` permite terminarlo.
+    Orden de evidencia: ``active_pid`` explícito (el ``meta.mcp_pid`` de la DB
+    del proyecto, que ``runtime.register`` escribe al arrancar y la CLI lee
+    aparte del registro global), ``meta.mcp_pid`` de la propia conexión, el
+    ``connection`` que declaró el cliente y el ``heartbeat_at`` más reciente
+    del grupo. ``(None, None)`` cuando ninguna evidencia alcanza: entonces el
+    grupo se conserva entero y solo ``force`` permite terminarlo.
     """
     pids = {entry["pid"] for entry in group}
+    if active_pid is not None and active_pid in pids:
+        return active_pid, "meta del proyecto"
     meta_pid = db.meta_get(conn, "mcp_pid")
     if meta_pid and meta_pid.isdigit() and int(meta_pid) in pids:
         return int(meta_pid), "meta.mcp_pid"
@@ -410,14 +415,17 @@ def prune(
     sleep: Callable[[float], None] = time.sleep,
     duplicates: bool = False,
     force: bool = False,
+    active_pid: int | None = None,
 ) -> dict[str, Any]:
     """Limpia registros muertos y termina huérfanos; nunca un proceso con dueño.
 
     Un proceso cuyo padre sigue vivo (aunque la sesión esté idle durante horas)
     no se toca. Los duplicados solo se terminan con ``duplicates=True`` y se
-    conserva el activo del grupo según :func:`identify_active`, aunque no sea
-    el más reciente; sin evidencia del activo se conservan todos y solo
-    ``force`` limpia como antes (dejando el más reciente).
+    conserva el activo del grupo según :func:`identify_active` (su primer
+    criterio es ``active_pid``, el PID que la DB del proyecto dejó en
+    ``meta.mcp_pid``), aunque no sea el más reciente; sin evidencia del activo
+    se conservan todos y solo ``force`` limpia como antes (dejando el más
+    reciente).
     """
     plan: dict[str, Any] = {
         "dead": [],
@@ -442,7 +450,7 @@ def prune(
             if entry["state"] == "duplicado":
                 groups.setdefault(int(entry["duplicate_of"]), []).append(entry)
         for group in groups.values():
-            pid, evidence = identify_active(conn, group)
+            pid, evidence = identify_active(conn, group, active_pid=active_pid)
             if pid is None or evidence is None:
                 roster = ", ".join(
                     str(item["pid"])
