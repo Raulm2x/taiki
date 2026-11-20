@@ -7,25 +7,21 @@ from .schema_common import ToolSpec
 SKILL_SPECS = [
     ToolSpec(
         "skills_suggest",
-        "Sugiere skills curadas de AutoSkills para el stack del proyecto o "
-        "para las tecnologías indicadas. Devuelve fuente, hash, revisión y "
-        "comprobación de seguridad; nunca instala ni modifica nada. Solo lectura.",
+        "Sugiere skills curadas de AutoSkills para el stack o las "
+        "tecnologías indicadas; solo lectura, nunca instala.",
         {
             "techs": {
                 "type": "array",
                 "items": {"type": "string", "maxLength": 80},
                 "maxItems": 20,
-                "description": (
-                    "Tecnologías a consultar; si se omite se detecta el stack "
-                    "del proyecto sin red"
-                ),
+                "description": "Tecnologías; sin valor, stack detectado",
             },
             "limit": {
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 100,
                 "default": 20,
-                "description": "Máximo de sugerencias devueltas",
+                "description": "Tope de sugerencias",
             },
         },
         read_only=True,

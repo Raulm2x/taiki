@@ -9,8 +9,7 @@ from .schema_common import CODE, ToolSpec
 ACTION = {
     "type": "string",
     "enum": ["move", "renumber", "promote", "demote", "purge"],
-    "description": "Operación: mover de épica, renumerar, promover a épica, "
-    "degradar a tarea o purgar cancelados",
+    "description": "move/renumber/promote/demote/purge",
 }
 CODES = {
     "type": "array",
@@ -22,18 +21,16 @@ CODES = {
 PARENT = {
     "type": ["string", "null"],
     "maxLength": 40,
-    "description": "Épica destino para move o padre de la tarea degradada",
+    "description": "Épica destino (move) o padre (demote)",
 }
 CHILDREN_TO = {
     "type": ["string", "null"],
     "maxLength": 40,
-    "description": "Destino de las tareas al degradar: código de épica o "
-    "'root' para dejarlas en la raíz",
+    "description": "Destino de las hijas: épica o 'root'",
 }
 RENUMBER = {
     "type": ["boolean", "null"],
-    "description": "En move, renumerar con el prefijo del padre; por defecto "
-    "se conserva el código",
+    "description": "En move, renumerar con el prefijo del padre",
 }
 INCLUDE_ADOPTED = {
     "type": "boolean",
@@ -41,9 +38,7 @@ INCLUDE_ADOPTED = {
 }
 ALLOW_ROOT = {
     "type": "boolean",
-    "description": "En renumber, permite renumerar una raíz publicada (con "
-    "commits enlazados); sigue rechazando épicas con tareas y destinos "
-    "ocupados",
+    "description": "En renumber, permite una raíz publicada (con commits)",
 }
 APPLY = {
     "type": "boolean",
@@ -56,38 +51,35 @@ FORCE = {
 LINK_KIND = {
     "type": "string",
     "enum": list(LINK_KINDS),
-    "description": "Tipo de enlace, tal como se guardó en el ticket",
+    "description": "Tipo de enlace, tal como se guardó",
 }
 LINK_REF = {
     "type": "string",
     "maxLength": 2_000,
-    "description": "Referencia exacta del enlace (commit, código, ruta o URL)",
+    "description": "Referencia exacta del enlace",
 }
 LINK_REASON = {
     "type": "string",
     "maxLength": 2_000,
-    "description": "Motivo opcional que se anota en el evento desvincular",
+    "description": "Motivo anotado en el evento desvincular",
 }
 REPOS = {
     "type": "array",
     "items": {"type": "string", "maxLength": 2_000},
     "maxItems": 50,
-    "description": "Repos extra donde resolver commits de enlaces",
+    "description": "Repos extra donde resolver commits",
 }
 ROOT = {
     "type": ["string", "null"],
     "maxLength": 2_000,
-    "description": "Raíz del checkout para resolver rutas y commits; por "
-    "defecto la raíz actual",
+    "description": "Raíz del checkout (defecto: la actual)",
 }
 
 REORG_SPECS = [
     ToolSpec(
         "reorg_plan",
-        "Planifica move, renumber, promote, demote o purge sin escribir en la "
-        "base de datos. Es un dry-run: revisa items y warnings y usa después "
-        "reorg_apply con apply=true. Nunca reescribe eventos, comentarios ni "
-        "mensajes históricos.",
+        "Dry-run de la reorganización: revisa items y warnings y aplica "
+        "después con reorg_apply.",
         {
             "action": ACTION,
             "codes": CODES,
@@ -102,10 +94,8 @@ REORG_SPECS = [
     ),
     ToolSpec(
         "reorg_apply",
-        "Aplica una reorganización con apply=true. Para purge exige además "
-        "force=true y hace backup previo. No reescribe el histórico: solo "
-        "códigos, padre y referencias estructuradas. Usa reorg_plan primero "
-        "para simular.",
+        "Aplica la reorganización con apply=true; purge exige force y hace "
+        "backup. No reescribe el histórico.",
         {
             "action": ACTION,
             "codes": CODES,
@@ -121,9 +111,8 @@ REORG_SPECS = [
     ),
     ToolSpec(
         "unlink",
-        "Quita un enlace concreto de un ticket (code + kind + ref). Verifica "
-        "que el enlace pertenece al ticket y registra el evento desvincular "
-        "con el motivo; no borra en cascadas ni histórico.",
+        "Quita un enlace concreto del ticket verificando que es suyo; "
+        "registra el evento desvincular.",
         {
             "code": CODE,
             "kind": LINK_KIND,
@@ -134,12 +123,9 @@ REORG_SPECS = [
     ),
     ToolSpec(
         "links_repair",
-        "Detecta enlaces rotos: commits que ya no resuelven (raíz, repos y "
-        "dotfiles), dependencias de tickets inexistentes y archivos "
-        "ausentes cuyo padre se puede leer. Sin apply es un dry-run que "
-        "lista broken; con apply=true retira los rotos con un evento "
-        "desvincular por retirada. Un enlace depende de un ticket bloqueado "
-        "exige force=true. Nunca borra tickets, solo enlaces.",
+        "Detecta enlaces rotos (commits que no resuelven, depende de "
+        "tickets inexistentes, archivos ausentes); sin apply lista y con "
+        "apply=true retira; depende de bloqueado exige force=true.",
         {
             "root": ROOT,
             "repos": REPOS,

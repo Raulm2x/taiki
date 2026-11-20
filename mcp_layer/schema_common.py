@@ -72,13 +72,12 @@ class ToolSpec:
 CODE = {
     "type": "string",
     "maxLength": 40,
-    "description": "Código del ticket, por ejemplo T-0001 o T-0014.2",
+    "description": "Código del ticket (T-0001, T-0014.2)",
 }
 AGENT = {
     "type": "string",
     "maxLength": 80,
-    "description": "Nombre del agente que ejecuta la acción. Al crear, asigna el "
-    "ticket a ese agente; en el resto de acciones identifica quién lo hizo",
+    "description": "Agente que ejecuta la acción; al crear, además asigna",
 }
 STATUS = {
     "type": "string",
@@ -87,15 +86,15 @@ STATUS = {
 }
 SESSION = {
     "type": "string",
-    "description": "Identificador de sesión. Solo si tu cliente no lo envía en _meta.",
+    "description": "Sesión; solo si tu cliente no la envía en _meta",
 }
 FORCE = {
     "type": "boolean",
     "default": False,
-    "description": "Fuerza la operación aunque el ticket esté reclamado por otra sesión.",
+    "description": "Fuerza aunque el ticket lo tenga otra sesión",
 }
 DETAIL = {
     "type": "boolean",
     "default": False,
-    "description": "Devuelve el ticket completo en vez del recibo compacto",
+    "description": "Devuelve el ticket completo, no el recibo",
 }
