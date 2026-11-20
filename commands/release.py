@@ -52,8 +52,9 @@ Sin ``--push`` no se toca la red: es el modo local determinista. ``--push`` y
 La versión sube según los commits: ``!`` o ``BREAKING CHANGE`` → major,
 ``feat`` → minor y el resto → patch; ``--bump`` fuerza el incremento. Un
 commit puede declarar su nivel con el trailer ``Release-Bump: patch|minor|
-major`` en el cuerpo (véase ``_declared_bump``): gana el mayor declarado y un
-``BREAKING CHANGE`` nunca se degrada. Si el rango no tiene commits publicables,
+major`` en el cuerpo (véase ``_declared_bump``): el mayor declarado puede
+subir el nivel por encima de lo que dictan los tipos, pero nunca degradarlo,
+y un ``BREAKING CHANGE`` nunca se degrada. Si el rango no tiene commits publicables,
 la release aborta con un error claro.
 
 Rollback: ``git revert <commit>`` del commit de release (y retira el tag si aún
@@ -388,16 +389,49 @@ def _explicit_bumps(commits: list[dict[str, str]]) -> list[dict[str, str]]:
 
 
 def _bump_for(commits: list[dict[str, str]]) -> str:
+    """Nivel de la release: los tipos mandan y el trailer solo puede subir.
+
+    ``BREAKING`` siempre gana. El nivel que dictan los tipos (``feat`` →
+    minor, resto → patch) es el suelo: el mayor trailer declarado sube por
+    encima de él si pide más, pero nunca degrada la release (T-0090.01).
+    """
     if any(_is_breaking(commit) for commit in commits):
         return "major"
+    by_type = (
+        "minor" if any(_commit_type(commit) == "feat" for commit in commits) else "patch"
+    )
     declared = [
         level for level in (_declared_bump(commit) for commit in commits) if level
     ]
     if declared:
-        return max(declared, key=_BUMP_RANK.__getitem__)
-    if any(_commit_type(commit) == "feat" for commit in commits):
-        return "minor"
-    return "patch"
+        return max([by_type, *declared], key=_BUMP_RANK.__getitem__)
+    return by_type
+
+
+def _labels(commits: list[dict[str, str]]) -> str:
+    return ", ".join(f"{commit['sha'][:12]} {commit['subject']}" for commit in commits)
+
+
+def _bump_reason(commits: list[dict[str, str]], level: str) -> str:
+    """Qué commit fijó el nivel: BREAKING, trailer que sube o los ``feat``.
+
+    Hace visible en el plan el caso raro (un trailer que cambia el nivel)
+    antes de publicar.
+    """
+    breaking = [commit for commit in commits if _is_breaking(commit)]
+    if breaking:
+        return "BREAKING en " + _labels(breaking)
+    by_type = (
+        "minor" if any(_commit_type(commit) == "feat" for commit in commits) else "patch"
+    )
+    if _BUMP_RANK[level] > _BUMP_RANK[by_type]:
+        raised = [commit for commit in commits if _declared_bump(commit) == level]
+        return f"trailer Release-Bump: {level} en " + _labels(raised)
+    if by_type == "minor":
+        return "feat en " + _labels(
+            [commit for commit in commits if _commit_type(commit) == "feat"]
+        )
+    return "sin feat ni trailer que suba"
 
 
 def _groups(commits: list[dict[str, str]]) -> dict[str, list[str]]:
@@ -831,6 +865,9 @@ def run(
     if not commits:
         raise TicketError(f"No hay commits nuevos desde {start_label}")
     level = bump or _bump_for(commits)
+    reason = (
+        f"forzado con --bump {bump}" if bump else _bump_reason(commits, level)
+    )
     current = _parse_version(previous) if previous else (0, 0, 0)
     version = ".".join(str(part) for part in _next_version(current, level))
     tag = f"v{version}"
@@ -850,6 +887,7 @@ def run(
         "range": start,
         "released_sha": released_sha,
         "bump": level,
+        "bump_reason": reason,
         "explicit_bumps": _explicit_bumps(commits),
         "tickets": tickets,
         "commits": len(commits),
@@ -1021,6 +1059,7 @@ def cmd_release(args: argparse.Namespace) -> int:
     if result["dry_run"]:
         print(f"Release {result['tag']} ({result['integration']} → {result['main']})")
         print(result["message"])
+        print(f"Nivel {result['bump']}: {result.get('bump_reason')}")
         _print_explicit(result)
         if result.get("allow_ahead"):
             print(
