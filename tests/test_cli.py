@@ -324,6 +324,14 @@ def run(h: Harness) -> None:
     with contextlib.redirect_stdout(out):
         cli.main(["list", "--json-summary", "--limit", "5"])
     summary_data = json.loads(out.getvalue().strip())
+    rejected_row = next(
+        (
+            item
+            for item in summary_data["tickets"]
+            if item["code"] == rejected["code"]
+        ),
+        None,
+    )
     _ok(
         h,
         (
@@ -332,6 +340,12 @@ def run(h: Harness) -> None:
                 for ticket in summary_data["tickets"]
             ),
             "list --json-summary implica --json y omite sesiones y cuerpo",
+        ),
+        (
+            rejected_row is not None
+            and rejected_row["iterations"] == 2
+            and rejected_row["attempts"] == 2,
+            "list --json-summary expone iterations y attempts (alias) tras reabrir",
         ),
     )
     out = io.StringIO()

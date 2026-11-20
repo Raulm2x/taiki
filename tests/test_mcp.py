@@ -578,6 +578,39 @@ def run(h: Harness) -> None:
         ),
         (no_reason, "reject_delivery sin reason se rechaza"),
     )
+    reopened = handlers.call_tool(
+        "reject_delivery",
+        {
+            "code": rejectable["code"],
+            "reason": "gate roto de nuevo",
+            "reopen": True,
+        },
+        meta={"sessionId": "session-claim-111"},
+    )
+    reopened_iter = int(
+        repo.get_ticket(conn, rejectable["code"])["iterations"] or 0
+    )
+    reopened_row = next(
+        item
+        for item in handlers.call_tool("list", {"limit": 200})["tickets"]
+        if item["code"] == rejectable["code"]
+    )
+    summary_pair = {
+        "iterations": reopened_row["iterations"],
+        "attempts": reopened_row["attempts"],
+    }
+    _ok(
+        h,
+        (
+            reopened["status"] == "en_progreso" and reopened_iter >= 2,
+            "reject_delivery con reopen reabre el ticket y sube iterations",
+        ),
+        (
+            summary_pair
+            == {"iterations": reopened_iter, "attempts": reopened_iter},
+            "list expone iterations y attempts (alias) con el valor del contador",
+        ),
+    )
 
     # ── list cerrados, next, leaves, stats y alias ──────────────────────
     open_only = handlers.call_tool("list", {"limit": 200})

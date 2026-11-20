@@ -95,6 +95,14 @@ taiki tui                      # TUI con toggles para confirmar
 En `list` y `show`, `--compact` y `--json-summary` implican `--json`: no hay
 combinaciones que se ignoren en silencio.
 
+El resumen de `list --json-summary` es lean: `code`, `title`, `status`,
+`priority`, `kind`, `project`, `assigned_to`, `parent_id`, `updated_at` y, si
+aplican, `paths`, `tags`, `progress`, `risk`, `requires_review`, `isolation`.
+Además expone `iterations` (el contador de intentos de trabajo: 1 al empezar,
+uno más por cada reapertura) y `attempts`, un alias explícito con el mismo
+valor, para auditar esfuerzo sin hacer un `show` por ticket. El mismo resumen
+devuelve el MCP en `list` (paridad de campos CLI/MCP).
+
 ### Memoria y brief
 
 La memoria guarda hechos, convenciones y pitfalls reutilizables; no sustituye
