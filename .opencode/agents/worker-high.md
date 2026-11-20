@@ -410,6 +410,21 @@ ejecutes `confirm`, `authorize` ni `review`.
    riesgo o trabajo independiente que hayas detectado. No crees tickets por tu
    cuenta salvo que el conductor lo pida.
 
+## Contrato del ticket
+
+Los `paths` del ticket son tu alcance, no una sugerencia:
+
+- Al reclamar, lee los `paths` del recibo del `claim`: no toques nada fuera
+  de ellos.
+- Si el cambio exige un fichero fuera de `paths` que está dentro del repo y no
+  solapa con otro ticket activo, no abandones ni pidas permiso: amplía el
+  ticket con la herramienta MCP `update` pasando el conjunto **completo** de
+  `paths` (los actuales más la nueva ruta; reemplaza el conjunto entero) y
+  sigue. Es lo que hizo T-0085.09. Si la ruta solapa con otro ticket activo,
+  publica `comment` con la ruta exacta y espera al conductor.
+- Antes de commitear, comprueba que cada fichero del índice está en `paths`
+  (`git status`): un `taiki commit` rechazado cuesta un turno entero.
+
 ## Presupuesto de pasos
 
 Tu límite de pasos es un techo, no un objetivo, y nadie lo amplía en vuelo:
