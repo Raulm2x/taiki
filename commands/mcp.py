@@ -328,18 +328,28 @@ def cmd_mcp_install(args: argparse.Namespace) -> int:
         registry = db.connect(workspace.registry_path())
         try:
             reload_plan = servers.reload_processes(
-                registry, workspace=str(folder), apply=True
+                registry,
+                workspace=str(folder),
+                apply=True,
+                wait=not getattr(args, "no_wait", False),
             )
         finally:
             registry.close()
     except Exception:  # noqa: BLE001 - la recarga nunca rompe el install
         reload_plan = None
     if reload_plan and reload_plan["signalled"]:
-        print(
+        statuses = reload_plan.get("statuses") or {}
+        line = (
             "OpenCode: SIGHUP de recarga a "
             + ", ".join(str(pid) for pid in reload_plan["signalled"])
-            + "; recargan su código en el siguiente límite de petición"
         )
+        if statuses:
+            recargados = sum(1 for s in statuses.values() if s == "recargado")
+            pendientes = sum(1 for s in statuses.values() if s == "pendiente")
+            line += f"; recargados: {recargados}, pendientes: {pendientes}"
+        else:
+            line += "; recargan su código en el siguiente límite de petición"
+        print(line)
     return 0
 
 

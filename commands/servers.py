@@ -31,6 +31,9 @@ def cmd_servers(args: argparse.Namespace) -> int:
     if args.dry_run and not args.reload:
         print("Error: --dry-run requiere --reload", file=sys.stderr)
         return 2
+    if args.no_wait and not args.reload:
+        print("Error: --no-wait requiere --reload", file=sys.stderr)
+        return 2
     if args.reload and args.prune:
         print(
             "Error: --reload y --prune son operaciones distintas", file=sys.stderr
@@ -47,7 +50,12 @@ def cmd_servers(args: argparse.Namespace) -> int:
             else None
         )
         reload_plan = (
-            servers.reload_processes(conn, apply=not args.dry_run)
+            servers.reload_processes(
+                conn,
+                apply=not args.dry_run,
+                wait=not args.no_wait,
+                timeout=min(max(args.wait_timeout, 0.0), 60.0),
+            )
             if args.reload
             else None
         )
@@ -120,15 +128,32 @@ def cmd_servers(args: argparse.Namespace) -> int:
                 print("Nada que limpiar.")
 
     if reload_plan is not None:
-        print(
-            f"Recarga: señalados: {len(reload_plan['signalled'])} · "
-            f"omitidos: {len(reload_plan['skipped'])} · {reload_plan['reason']}"
-        )
-        if reload_plan["signalled"]:
+        statuses = reload_plan.get("statuses") or {}
+        if statuses:
+            counts = {
+                state: sum(1 for value in statuses.values() if value == state)
+                for state in servers.RELOAD_WAITED
+            }
             print(
-                "  PIDs: "
-                + ", ".join(str(pid) for pid in reload_plan["signalled"])
-                + (" (dry-run; usa --reload sin --dry-run para señalar)"
-                   if args.dry_run else "")
+                f"Recarga: señalados: {len(reload_plan['signalled'])} · "
+                f"recargados: {counts['recargado']} · "
+                f"pendientes: {counts['pendiente']} · "
+                f"sin respuesta: {counts['sin respuesta']} · "
+                f"omitidos: {len(reload_plan['skipped'])}"
             )
+            for pid in reload_plan["signalled"]:
+                print(f"  PID {pid}: {statuses.get(pid, 'sin estado')}")
+        else:
+            print(
+                f"Recarga: señalados: {len(reload_plan['signalled'])} · "
+                f"omitidos: {len(reload_plan['skipped'])} · "
+                f"{reload_plan['reason']}"
+            )
+            if reload_plan["signalled"]:
+                print(
+                    "  PIDs: "
+                    + ", ".join(str(pid) for pid in reload_plan["signalled"])
+                    + (" (dry-run; usa --reload sin --dry-run para señalar)"
+                       if args.dry_run else "")
+                )
     return 0

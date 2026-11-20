@@ -446,6 +446,66 @@ def prune(
     return plan
 
 
+def registered_fingerprint(conn: Any, pid: int) -> str | None:
+    """Huella registrada de un proceso: su fila o el handshake de ``meta``."""
+    row = conn.execute(
+        "SELECT fingerprint FROM mcp_servers WHERE pid = ?", (pid,)
+    ).fetchone()
+    if row is not None and row["fingerprint"]:
+        return row["fingerprint"]
+    meta_pid = db.meta_get(conn, "mcp_pid")
+    if meta_pid and meta_pid.isdigit() and int(meta_pid) == pid:
+        return db.meta_get(conn, "mcp_fingerprint")
+    return None
+
+
+def _wait_reload(
+    conn: Any,
+    pids: list[int],
+    *,
+    fingerprint_reader: Callable[[Any, int], str | None],
+    clock: Callable[[], float],
+    sleep: Callable[[float], None],
+    timeout: float,
+    step: float,
+) -> dict[int, str]:
+    """Sondea la huella registrada hasta ver el código nuevo (o el timeout).
+
+    Estado por proceso: ``recargado`` (la huella registrada ya coincide con la
+    del disco), ``pendiente`` (venció el timeout sin coincidir) o
+    ``sin respuesta`` (no hay huella registrada que comparar).
+    """
+    disk = runtime.disk_fingerprint()
+    statuses: dict[int, str] = {}
+    pending: list[int] = []
+    for pid in pids:
+        fingerprint = fingerprint_reader(conn, pid)
+        if fingerprint is None:
+            statuses[pid] = "sin respuesta"
+        elif fingerprint == disk:
+            statuses[pid] = "recargado"
+        else:
+            pending.append(pid)
+    deadline = clock() + max(0.0, timeout)
+    while pending and clock() < deadline:
+        sleep(step)
+        for pid in list(pending):
+            fingerprint = fingerprint_reader(conn, pid)
+            if fingerprint is None:
+                statuses[pid] = "sin respuesta"
+                pending.remove(pid)
+            elif fingerprint == disk:
+                statuses[pid] = "recargado"
+                pending.remove(pid)
+    for pid in pending:
+        statuses[pid] = "pendiente"
+    return statuses
+
+
+# Estados de la espera tras señalar: la huella nueva ya consta, aún no, o no
+RELOAD_WAITED = ("recargado", "pendiente", "sin respuesta")
+
+
 def reload_processes(
     conn: Any,
     workspace: str | None = None,
@@ -455,6 +515,14 @@ def reload_processes(
     signaller: Callable[[int, int], None] = os.kill,
     current: str | None = None,
     live: dict[int, dict[str, Any]] | None = None,
+    wait: bool = False,
+    timeout: float = 5.0,
+    fingerprint_reader: Callable[[Any, int], str | None] = (
+        registered_fingerprint
+    ),
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+    step: float = 0.1,
 ) -> dict[str, Any]:
     """Envía SIGHUP a los MCP vivos del workspace para que recarguen código.
 
@@ -463,6 +531,14 @@ def reload_processes(
     quedan para :func:`prune`. Con ``apply=False`` devuelve la selección sin
     enviar la señal. Cada servidor re-ejecuta su código en su siguiente punto
     seguro entre peticiones; el stdio se hereda y el cliente no ve el relevo.
+
+    Con ``wait`` la llamada no vuelve enseguida: sondea la huella registrada
+    de cada proceso señalado hasta que coincide con el código en disco (el
+    re-exec ya ocurrió) o hasta ``timeout`` segundos, y reporta por PID
+    ``recargado``/``pendiente``/``sin respuesta`` en ``statuses``. Así la
+    primera llamada MCP posterior no falla con ``StaleServerError``. La CLI lo
+    activa por defecto; el lector de huella, el reloj y la espera son
+    inyectables para probarlo sin procesos ni señales reales.
     """
     if workspace is None:
         from . import workspace as workspace_lib
@@ -473,10 +549,16 @@ def reload_processes(
         return {
             "signalled": [],
             "skipped": [],
+            "statuses": {},
             "reason": "SIGHUP no disponible en esta plataforma",
         }
     entries = inventory(conn, process=process, current=current, live=live)
-    plan: dict[str, Any] = {"signalled": [], "skipped": [], "reason": ""}
+    plan: dict[str, Any] = {
+        "signalled": [],
+        "skipped": [],
+        "statuses": {},
+        "reason": "",
+    }
     for entry in entries:
         pid = entry["pid"]
         if pid == SELF:
@@ -497,15 +579,37 @@ def reload_processes(
                     plan["skipped"].append(
                         {"pid": pid, "reason": "señal no entregada"}
                     )
+    if apply and wait and plan["signalled"]:
+        plan["statuses"] = _wait_reload(
+            conn,
+            plan["signalled"],
+            fingerprint_reader=fingerprint_reader,
+            clock=clock,
+            sleep=sleep,
+            timeout=timeout,
+            step=step,
+        )
     if not plan["signalled"]:
         plan["reason"] = "sin servidores vivos de este workspace"
-    elif apply:
+    elif not apply:
         plan["reason"] = (
-            f"SIGHUP a {len(plan['signalled'])} servidor(es); "
-            "recargan su código en el siguiente límite de petición"
+            f"dry-run: {len(plan['signalled'])} servidor(es) recibirían SIGHUP"
+        )
+    elif plan["statuses"]:
+        counts = {
+            state: sum(1 for s in plan["statuses"].values() if s == state)
+            for state in RELOAD_WAITED
+        }
+        plan["reason"] = (
+            f"señalados: {len(plan['signalled'])} · "
+            f"recargados: {counts['recargado']} · "
+            f"pendientes: {counts['pendiente']} · "
+            f"sin respuesta: {counts['sin respuesta']} · "
+            f"omitidos: {len(plan['skipped'])}"
         )
     else:
         plan["reason"] = (
-            f"dry-run: {len(plan['signalled'])} servidor(es) recibirían SIGHUP"
+            f"SIGHUP a {len(plan['signalled'])} servidor(es); "
+            "recargan su código en el siguiente límite de petición"
         )
     return plan

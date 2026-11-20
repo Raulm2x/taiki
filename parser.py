@@ -891,6 +891,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="no pedir a los servidores MCP vivos que recarguen su código "
         "al terminar",
     )
+    mcp_add.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="con la recarga: no esperar a que los servidores confirmen "
+        "su nuevo código",
+    )
     mcp_add.set_defaults(func=cmd_mcp_install)
     mcp_rm = mcp_sub.add_parser(
         "uninstall", help="retira el MCP del proyecto actual"
@@ -1223,6 +1229,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="Con --reload: lista a quién se señalaría sin enviar la señal",
+    )
+    p.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="Con --reload: señalar y volver sin esperar a la huella nueva "
+        "(para scripts y CI)",
+    )
+    p.add_argument(
+        "--wait-timeout",
+        type=float,
+        default=5.0,
+        help="Con --reload: segundos máximos esperando la huella nueva "
+        "(defecto 5, tope 60)",
     )
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_servers)
