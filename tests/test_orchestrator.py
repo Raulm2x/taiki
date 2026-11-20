@@ -1027,21 +1027,28 @@ def run(h: Harness) -> None:
         and plans["mantenimiento"]["fallback"] is True,
         "los tipos y perfiles son lanzables; worker-medium va sin variante medium",
     )
+    contract_ok = True
+    for profile in ("worker-low", "worker-medium", "worker-high"):
+        body = _frontmatter(f"{profile}.md")[1]
+        if (
+            "## Contrato del ticket" not in body
+            or "## Presupuesto de pasos" not in body
+        ):
+            contract_ok = False
+            continue
+        start = body.index("## Contrato del ticket")
+        end = body.index("## Presupuesto de pasos")
+        contract = body[start:end]
+        contract_ok = contract_ok and (
+            start < end
+            and "espera al conductor" in contract
+            and "amplía el ticket con" not in contract
+            and "no pidas permiso" not in contract
+        )
     h.ok(
-        all(
-            (
-                "## Contrato del ticket" in body
-                and "## Presupuesto de pasos" in body
-                and "herramienta MCP `update`" in body
-                and body.index("## Contrato del ticket")
-                < body.index("## Presupuesto de pasos")
-            )
-            for body in (
-                _frontmatter(f"{profile}.md")[1]
-                for profile in ("worker-low", "worker-medium", "worker-high")
-            )
-        ),
-        "los perfiles worker llevan el contrato del ticket antes del presupuesto",
+        contract_ok,
+        "los perfiles worker reportan los paths fuera de alcance y esperan al "
+        "conductor sin ampliar el ticket",
     )
     h.ok(
         _rule(worker, "shell", "git add -A*") == "deny"
