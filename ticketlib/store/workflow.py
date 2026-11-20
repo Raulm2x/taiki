@@ -235,16 +235,35 @@ def transition(
         evidence_note = render_evidence(clean_evidence(evidence))
         note = f"{note}\n{evidence_note}" if note else evidence_note
 
+    # T-0088.06: quien no es el dueño del claim distingue caducidad rutinaria
+    # de bypass consciente. Un lease caducado es un claim muerto: se procede
+    # sin ``force`` y el evento registra la toma de control con ``forced:
+    # false``. Un lease vivo sigue exigiendo ``force`` con ``reason``
+    # (T-0085.07): ese camino no se relaja.
     owner = row["owner_session"]
-    if current == "en_progreso" and owner and not force and actor_type != "usuario":
+    takeover: str | None = None
+    if current == "en_progreso" and owner and actor_type != "usuario":
         same = session_id == owner or (
             session_id is None and owner == f"agent:{actor}"
         )
         if not same:
-            raise PermissionDenied(
-                f"{row['code']} está reclamado por otra sesión ({owner}); "
-                "usa force=true si de verdad debes cambiarlo."
-            )
+            if force:
+                takeover = (
+                    f"toma de control forzada · forced: true · "
+                    f"lease vigente de {owner}"
+                )
+            elif _expired(row["lease_until"], now()):
+                takeover = (
+                    f"toma de control sin force · forced: false · "
+                    f"lease caducado de {owner} "
+                    f"({row['lease_until'] or 'sin fecha'})"
+                )
+            else:
+                raise PermissionDenied(
+                    f"{row['code']} está reclamado por otra sesión ({owner}) "
+                    "con lease vigente; usa force=true con reason si de "
+                    "verdad debes cambiarlo."
+                )
 
     if resolution is not None and status == current:
         # Documentar un cierre ya hecho: solo se escribe la resolución. No se
@@ -327,6 +346,17 @@ def transition(
                 f"cerrar: {detail}"
             )
 
+    # Punto 3 del diseño: el evento de toma de control guarda actor y sesión
+    # (columnas del evento) más el motivo y ``forced: true|false`` en la
+    # nota, para que el histórico distinga caducidad de bypass consciente.
+    event_note = note
+    if force_reason and event_note != force_reason:
+        event_note = (
+            f"{event_note} · {force_reason}" if event_note else force_reason
+        )
+    if takeover:
+        event_note = f"{event_note}\n{takeover}" if event_note else takeover
+
     ts = now()
     changes: list[tuple[str, Any]] = [("status", status), ("updated_at", ts)]
 
@@ -372,7 +402,7 @@ def transition(
             session_id,
             current,
             status,
-            note or force_reason,
+            event_note,
         )
 
     return get_ticket(conn, code)
@@ -450,9 +480,12 @@ def steps_exhausted(
 ) -> dict[str, Any]:
     """Registra que el cliente cortó la sesión por agotar pasos.
 
-    No cambia el estado ni el claim: solo deja un evento ``steps_exhausted``
-    con la fase en la que ocurrió y el actor. La liberación del lease, si
-    procede, es una acción ``abandon`` aparte.
+    No cambia el estado: deja un evento ``steps_exhausted`` con la fase en la
+    que ocurrió y el actor, y libera el claim en el mismo paso. T-0088.06
+    eligió esta alternativa (y no comprobar el evento en cada transición):
+    es más simple y deja el cierre por otra sesión sin ``force``, porque el
+    lease muerto ya no existe. Solo una de las dos; no se comprueba además
+    el evento en las transiciones.
     """
     actor = normalize_agent(actor)
     check_enum(actor_type, ACTOR_TYPES, "actor_type")
@@ -463,7 +496,17 @@ def steps_exhausted(
     extra = (note or "").strip()
     if extra:
         text = f"{text}: {extra}"
+    claimed = bool(row["owner_session"] or row["lease_until"])
+    if claimed:
+        text = f"{text} · claim liberado"
+    ts = now()
     with db.tx(conn):
+        if claimed:
+            conn.execute(
+                "UPDATE tickets SET owner_session = NULL, lease_until = NULL, "
+                "heartbeat_at = NULL, updated_at = ? WHERE id = ?",
+                (ts, row["id"]),
+            )
         event(
             conn,
             row["id"],
