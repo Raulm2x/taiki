@@ -276,16 +276,19 @@ pequeño (un flag, un ajuste de salida) puede declarar su nivel en el cuerpo del
 commit con el trailer `Release-Bump`:
 
 ```text
-feat: añade --push a release (T-0040)
+fix: endurece la validación de gates (T-0040)
 
-Release-Bump: patch
+Release-Bump: minor
 ```
 
-La release usa el **mayor** de los trailers declarados en el rango; si no hay
-ninguno, mantiene la convención anterior, y un `BREAKING CHANGE` (o `!`) siempre
-sube **major** aunque un commit pida `patch`. `--bump` prevalece sobre el
-trailer. El resumen (también con `--json`) lista esos commits en
-`explicit_bumps`, y el texto avisa de qué commits declararon el nivel.
+La release calcula el nivel en dos pasos: el que dictan los tipos (`!` o
+`BREAKING CHANGE` → major, `feat` → minor, resto → patch) y el **máximo** de los
+trailers declarados en el rango. El nivel final es el mayor de ambos, así que un
+trailer puede **subir** el resultado pero nunca degradarlo, y un `BREAKING
+CHANGE` (o `!`) siempre gana aunque un commit pida `patch`. `--bump` prevalece
+sobre ambos. El resumen (también con `--json`) lista esos commits en
+`explicit_bumps`, explica en `bump_reason` qué fijó el nivel (BREAKING, trailer
+o `feat`) y el texto lo imprime en el plan.
 
 El `CHANGELOG.md` se genera durante la release agrupando los tickets y commits
 desde el `released_sha` de `.taiki/releases.json` (o desde el tag anterior si
