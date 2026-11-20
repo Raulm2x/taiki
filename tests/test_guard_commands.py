@@ -712,6 +712,74 @@ def run(h: Harness) -> None:
         and denied_verdict["segments"][0]["effect"] == "deny",
         "el perfil worker deniega git add .",
     )
+    # T-0088.01: lecturas de git que faltaban en la allowlist, en los cuatro
+    # perfiles worker. El deny de merge quedó afinado a `git merge *` para que
+    # no tape `git merge-base`: sin ese afinado, la última regla que casa
+    # vuelve a denegar la lectura.
+    git_reads = (
+        "git merge-base --is-ancestor fb5bf71 HEAD",
+        "git -C .worktrees/T-0001 merge-base --is-ancestor fb5bf71 HEAD",
+        "git rev-list --count fb5bf71..HEAD",
+        "git cat-file -t v0.4.1",
+        "git branch --contains fb5bf71",
+        "git for-each-ref refs/heads/agent",
+    )
+    denied_reads = sorted(
+        f"{profile['name']}: {cmd}"
+        for cmd in git_reads
+        for profile in profiles
+        if not shell_rules.command_verdict(cmd, profile["rules"])[
+            "allowed"
+        ]
+    )
+    h.ok(
+        not denied_reads,
+        "los cuatro perfiles worker permiten las lecturas de git "
+        "nuevas (merge-base, rev-list, cat-file, branch --contains, "
+        f"for-each-ref): {'; '.join(denied_reads) if denied_reads else 'ok'}",
+    )
+    h.ok(
+        all(
+            not shell_rules.command_verdict(cmd, profile["rules"])[
+                "allowed"
+            ]
+            for profile in profiles
+            for cmd in (
+                "git merge develop",
+                "git merge --no-ff develop",
+                "git push origin develop",
+                "rm -rf /tmp/x",
+                "sudo id",
+            )
+        ),
+        "ninguna regla nueva abre escritura: merge, push, rm -rf y sudo "
+        "siguen denegados en todos los perfiles worker",
+    )
+    merge_rule = next(
+        (
+            index
+            for index, rule in enumerate(rules)
+            if rule.get("action") == "shell"
+            and rule.get("resource") == "git merge-base *"
+            and rule.get("effect") == "allow"
+        ),
+        None,
+    )
+    h.ok(
+        merge_rule is not None
+        and shell_rules.rule_wins(rules, merge_rule)
+        and not shell_rules.command_is_mutating(
+            "git rev-list --count fb5bf71..HEAD"
+        )
+        and not shell_rules.command_is_mutating("git cat-file -t v0.4.1")
+        and not shell_rules.command_is_mutating(
+            "git for-each-ref refs/heads/agent"
+        )
+        and shell_rules.risky_git("git merge-base --is-ancestor a HEAD")
+        is None,
+        "el allow de merge-base no queda tapado y el guard trata las "
+        "lecturas nuevas como lecturas",
+    )
     h.ok(
         "git add --" in (shell_rules.deny_alternative("git add -A") or "")
         and "commitea el WIP"

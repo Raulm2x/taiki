@@ -77,7 +77,7 @@ def run(h: Harness) -> None:
         and _rule(conductor, "subagent", "reviewer") == "allow"
         and _rule(conductor, "subagent", "merger") == "allow"
         and _rule(conductor, "shell", "taiki confirm*") == "deny"
-        and _rule(conductor, "shell", "git merge*") == "deny"
+        and _rule(conductor, "shell", "git merge *") == "deny"
         and _rule(conductor, "shell", "taiki worktree merge*") == "allow"
         and _rule(conductor, "shell", "taiki sys *") == "allow"
         and _rule(conductor, "shell", "taiki commit *") == "allow"
@@ -104,7 +104,7 @@ def run(h: Harness) -> None:
         and _rule(worker, "edit", "*") == "allow"
         and _rule(worker, "subagent", "*") == "deny"
         and _rule(worker, "shell", "git push*") == "deny"
-        and _rule(worker, "shell", "git merge*") == "deny"
+        and _rule(worker, "shell", "git merge *") == "deny"
         and _rule(worker, "shell", "taiki confirm*") == "deny"
         and _rule(worker, "shell", "taiki worktree merge*") == "deny"
         and _rule(worker, "shell", "*2>/dev/null*") is None
@@ -1310,7 +1310,7 @@ def run(h: Harness) -> None:
             for meta in profiles.values()
             for pattern in (
                 "git push*",
-                "git merge*",
+                "git merge *",
                 "taiki confirm*",
                 "rm -rf*",
                 "rm -fr*",

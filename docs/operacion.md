@@ -155,8 +155,10 @@ Dentro de la lista blanca de los workers:
 
 - **Permitido sin preguntar**: `pwd`, `ls`, `cat`, `head`, `tail`, `sed -n`,
   `sed`, `echo`, `printf`, `md5sum`, `sha256sum`, `grep`, `rg`, `find`, `wc`,
-  `diff`, `file`, `stat`, `mkdir -p docs`, `git show`, `git rev-parse` y las
-  lecturas con `git -C <worktree>` (`show`, `diff`, `log`, `rev-parse`);
+  `diff`, `file`, `stat`, `mkdir -p docs`, `git show`, `git rev-parse`,
+  `git merge-base`, `git rev-list`, `git cat-file`, `git branch --contains`,
+  `git for-each-ref` y las lecturas con `git -C <worktree>` (`show`, `diff`,
+  `log`, `rev-parse`, `merge-base`);
   además de `python3 tests/*`, `timeout * python3 tests/*`,
   `python3 -m tests.*`, `git status/diff/log/add/commit`, `git rebase <rama>`
   (`--continue`, `--abort`, `--skip`), `git add .opencode/*`,
@@ -192,6 +194,27 @@ allowlist no es un sandbox.
 El límite de confianza es explícito: estas reglas evitan prompts repetidos y
 reducen el daño accidental, **no son un sandbox de seguridad**. La garantía
 sigue siendo el guard de tickets, la revisión del conductor y los gates.
+
+#### Allowlist por perfil
+
+Criterio único: **lectura sí, mutación no**. Un subcomando entra en la lista
+solo porque consulta sin tocar el árbol de trabajo ni publicar; lo que no
+esté, no se adivina: se pide al conductor con `checkpoint`/`comment` (comando
+exacto, motivo y resultado esperado) y él lo ejecuta o autoriza.
+
+| perfil | fallback | lecturas git | escrituras acotadas |
+|---|---|---|---|
+| worker / -low / -medium / -high | deny | `status`, `diff`, `log`, `show`, `rev-parse`, `merge-base`, `rev-list`, `cat-file`, `branch --contains`, `for-each-ref` (más `git -C <ruta>` en las mismas) | `git add <ruta>`, `git commit`, `git rebase`, `taiki commit`, `rm -f <ruta>` solo tras autorización |
+| conductor | allow | las mismas, sin deny que las tape | gates, `taiki commit`, `taiki sys`, `taiki worktree merge` de tickets confirmados |
+| reviewer | deny | `status`, `diff`, `log`, `show`, `rev-parse` | `python3 tests/*` |
+| merger | deny | añade `merge-base`, `branch`, `worktree list` | `taiki worktree merge <T-XXXX>` |
+
+`git merge` directo sigue denegado en todos los perfiles (patrón `git merge *`);
+`git merge-base` es lectura y pasa sin más. Los scripts de un solo uso
+(`python3 /tmp/opencode/dbg_*.py` y similares) **no** se permiten ni se añaden
+a ninguna lista: ejecutar un script arbitrario es un shell disfrazado. La vía
+correcta es pedir el comando al conductor en el ticket o declararlo como gate
+del mismo.
 
 ### Borrado seguro
 
