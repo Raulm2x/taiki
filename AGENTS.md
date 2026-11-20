@@ -110,6 +110,12 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    muestra la cola (listos, en curso, verificando, bloqueados) y métricas.
    Una dependencia solo se cierra al `verificado`/`confirmado`, no al
    `completado`.
+   **Plantilla de delegación**: al lanzar un worker incluye solo código y
+   body (criterios incluidos), `paths` completos —también los tests y docs
+   que el cambio toca— y el gate exacto (p. ej.
+   `python3 tests/run.py --only <modulo>`). No repitas el protocolo de
+   claim, el presupuesto de pasos, el escalado ni el cierre: ya viven en
+   `worker*.md`.
 
 ## Reorganización de tickets
 

@@ -957,6 +957,22 @@ def run(h: Harness) -> None:
         "los tipos y perfiles son lanzables; worker-medium va sin variante medium",
     )
     h.ok(
+        all(
+            (
+                "## Contrato del ticket" in body
+                and "## Presupuesto de pasos" in body
+                and "herramienta MCP `update`" in body
+                and body.index("## Contrato del ticket")
+                < body.index("## Presupuesto de pasos")
+            )
+            for body in (
+                _frontmatter(f"{profile}.md")[1]
+                for profile in ("worker-low", "worker-medium", "worker-high")
+            )
+        ),
+        "los perfiles worker llevan el contrato del ticket antes del presupuesto",
+    )
+    h.ok(
         _rule(worker, "shell", "git add -A*") == "deny"
         and _rule(worker, "shell", "git add .*") == "deny"
         and _rule(worker, "shell", "git commit -a*") == "deny"
