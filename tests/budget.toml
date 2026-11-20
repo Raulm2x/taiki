@@ -100,6 +100,11 @@
 # El techo baja al valor medido; la cobertura por capa no cambia porque
 # las rutas ejecutadas son las mismas, solo se compara en bloque.
 max_seconds = 12.5
+# Política de subidas (docs/desarrollo.md, "Presupuesto y cuarentena"):
+# un ajuste de hasta ~3% del recuento o del tiempo, medido en frío y derivado
+# de integrar el tip verificado, se commitea en el propio ticket de
+# integración (commit separado con la medición), sin ticket nuevo; por
+# encima de ese umbral, o cualquier poda, exige ticket propio justificado.
 baseline_checks = 1567
 # Margen estrecho para que cualquier adición vuelva a avisar.
 # T-0071/T-0072: grouped, stats índice/almacenamiento, tags y capa 0; techo 1604.

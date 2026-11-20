@@ -329,6 +329,13 @@ Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
   `--strict-budget` y con los umbrales por capa de `tests/coverage_gate.py`.
 - **Poda periódica:** shims sin uso, módulos de más de 700 líneas y matrices
   repetidas (transiciones, enums, filtros) se convierten en tablas.
+- **Subida del techo junto a la integración:** si integrar el tip verificado
+  empuja el presupuesto, el ajuste medido en frío (hasta ~3% del recuento o
+  del tiempo) se commitea en el propio ticket de integración, con commit
+  separado y la medición adjunta; sin ticket nuevo. Por encima del umbral, o
+  cualquier poda, exigen ticket propio justificado. Cerrar con `force` un
+  ticket así es señal de que el ticket sobraba
+  (detalle en [docs/desarrollo.md](docs/desarrollo.md)).
 
 ## Comandos útiles
 

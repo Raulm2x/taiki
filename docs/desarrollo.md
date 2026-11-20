@@ -409,6 +409,17 @@ el total real de comprobaciones, que cubre filtros de tags, subtareas, concurren
   **aviso accionable**; con `--strict-budget` (lo que usa la CI) el tiempo es un
   **gate duro** y la suite termina con código 1. Bajar comprobaciones no avisa:
   el contador es un techo, no un objetivo.
+- **Subida del techo derivada de una integración:** cuando integrar el tip
+  verificado empuja el recuento o el tiempo por encima del presupuesto, el
+  ajuste —pequeño y medido en frío, sin la instrumentación de coverage— se
+  commitea **en el propio ticket de integración**, en un commit separado y con
+  la medición adjunta; no abre ticket nuevo. Umbral: ajustes de hasta ~3% del
+  recuento de `baseline_checks` o del tiempo pueden ir así; por encima, o
+  cualquier **poda**, exigen ticket propio con justificación. Un `force` para
+  cerrar un ticket de gobernanza de una línea de TOML es señal de que el
+  ticket no debía existir (T-0085 abrió cinco tickets solo para subir el
+  techo, cuatro cerrados con `force`; solo la poda real, -8,4%, merecía
+  ticket).
 - Presupuestos **runner-aware**: con `CI=true` (o `TAIKI_CI=true`) se aplica el
   perfil `[ci.suite]`/`[ci.module]` de `budget.toml` (8 s de suite y 1,5 s por
   módulo). `TAIKI_SUITE_BUDGET` y `TAIKI_MODULE_BUDGET` sobrescriben cualquier
