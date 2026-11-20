@@ -1038,11 +1038,15 @@ def run(h: Harness) -> None:
             continue
         start = body.index("## Contrato del ticket")
         end = body.index("## Presupuesto de pasos")
-        contract = body[start:end]
+        contract = " ".join(body[start:end].split())
         contract_ok = contract_ok and (
             start < end
             and "espera al conductor" in contract
+            and "Nunca llamas a `update`" in contract
+            and "`transition` a `bloqueado`" in contract
             and "amplía el ticket con" not in contract
+            and "amplía el ticket" not in contract
+            and "amplía los `paths`" not in contract
             and "no pidas permiso" not in contract
         )
     h.ok(
