@@ -304,8 +304,13 @@ def run(h: Harness) -> None:
                 sleep=lambda _s: None,
             )
             h.ok(
-                pruned["killed"] == [110] and 111 in pruned["kept"],
-                "con --duplicates termina el viejo y conserva el nuevo",
+                pruned["killed"] == []
+                and pruned["duplicates"] == []
+                and 110 in pruned["kept"]
+                and 111 in pruned["kept"]
+                and len(pruned["warnings"]) == 1,
+                "sin evidencia del activo no se termina ningún duplicado "
+                "y se avisa del motivo",
             )
         finally:
             twins_db.close()

@@ -28,6 +28,12 @@ def cmd_servers(args: argparse.Namespace) -> int:
     if args.duplicates and not args.prune:
         print("Error: --duplicates requiere --prune", file=sys.stderr)
         return 2
+    if args.force and not args.prune:
+        print("Error: --force requiere --prune", file=sys.stderr)
+        return 2
+    if args.force and not args.duplicates:
+        print("Error: --force requiere --duplicates", file=sys.stderr)
+        return 2
     if args.dry_run and not args.reload:
         print("Error: --dry-run requiere --reload", file=sys.stderr)
         return 2
@@ -44,7 +50,10 @@ def cmd_servers(args: argparse.Namespace) -> int:
         entries = servers.inventory(conn)
         plan = (
             servers.prune(
-                conn, apply=args.apply, duplicates=args.duplicates
+                conn,
+                apply=args.apply,
+                duplicates=args.duplicates,
+                force=args.force,
             )
             if args.prune
             else None
@@ -90,6 +99,13 @@ def cmd_servers(args: argparse.Namespace) -> int:
         print(f"\n{len(entries)} servidor(es) · {summary}")
 
     if plan is not None:
+        for item in plan.get("active") or []:
+            print(
+                f"Conservado por ser el activo: PID {item['pid']} "
+                f"(evidencia: {item['evidence']})"
+            )
+        for warning in plan.get("warnings") or []:
+            print(f"Aviso: {warning}")
         if not args.apply:
             targets = plan["orphans"] + plan["duplicates"] + plan["dead"]
             if targets:

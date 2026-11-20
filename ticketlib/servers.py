@@ -370,6 +370,33 @@ def _terminate(
     return _wait_dead(pid, process, slug, sleep)
 
 
+def identify_active(
+    conn: Any,
+    group: list[dict[str, Any]],
+) -> tuple[int | None, str | None]:
+    """El PID activo de un grupo de duplicados y la evidencia que lo respalda.
+
+    Orden de evidencia: ``meta.mcp_pid`` (lo escribe ``runtime.register``), el
+    ``connection`` que declaró el cliente y el ``heartbeat_at`` más reciente del
+    grupo. ``(None, None)`` cuando ninguna evidencia alcanza: entonces el grupo
+    se conserva entero y solo ``force`` permite terminarlo.
+    """
+    pids = {entry["pid"] for entry in group}
+    meta_pid = db.meta_get(conn, "mcp_pid")
+    if meta_pid and meta_pid.isdigit() and int(meta_pid) in pids:
+        return int(meta_pid), "meta.mcp_pid"
+    declared = [entry for entry in group if entry.get("connection")]
+    if len(declared) == 1:
+        return declared[0]["pid"], "connection"
+    beats = [entry for entry in group if entry.get("heartbeat_at")]
+    if beats:
+        newest = max(entry["heartbeat_at"] for entry in beats)
+        candidates = [entry for entry in beats if entry["heartbeat_at"] == newest]
+        if len(candidates) == 1:
+            return candidates[0]["pid"], "heartbeat_at"
+    return None, None
+
+
 def prune(
     conn: Any,
     apply: bool = False,
@@ -382,23 +409,60 @@ def prune(
     escalate: bool = True,
     sleep: Callable[[float], None] = time.sleep,
     duplicates: bool = False,
-) -> dict[str, list[int]]:
+    force: bool = False,
+) -> dict[str, Any]:
     """Limpia registros muertos y termina huérfanos; nunca un proceso con dueño.
 
     Un proceso cuyo padre sigue vivo (aunque la sesión esté idle durante horas)
     no se toca. Los duplicados solo se terminan con ``duplicates=True`` y se
-    conserva siempre el más reciente.
+    conserva el activo del grupo según :func:`identify_active`, aunque no sea
+    el más reciente; sin evidencia del activo se conservan todos y solo
+    ``force`` limpia como antes (dejando el más reciente).
     """
-    plan: dict[str, list[int]] = {
+    plan: dict[str, Any] = {
         "dead": [],
         "orphans": [],
         "killed": [],
         "stubborn": [],
         "duplicates": [],
         "kept": [],
+        "active": [],
+        "warnings": [],
     }
     entries = inventory(conn, process=process, current=current, live=live)
     current_pid = os.getpid()
+
+    # Grupos de duplicados: el activo identificado se conserva siempre; sin
+    # evidencia se conserva el grupo entero y solo ``force`` lo limpia.
+    active: dict[int, str] = {}
+    undetermined: set[int] = set()
+    if duplicates:
+        groups: dict[int, list[dict[str, Any]]] = {}
+        for entry in entries:
+            if entry["state"] == "duplicado":
+                groups.setdefault(int(entry["duplicate_of"]), []).append(entry)
+        for group in groups.values():
+            pid, evidence = identify_active(conn, group)
+            if pid is None or evidence is None:
+                roster = ", ".join(
+                    str(item["pid"])
+                    for item in sorted(group, key=lambda item: item["pid"])
+                )
+                undetermined.update(item["pid"] for item in group)
+                newest = max(item["pid"] for item in group)
+                plan["warnings"].append(
+                    f"sin evidencia del activo en ({roster}): "
+                    + (
+                        f"--force conserva el más nuevo ({newest}) "
+                        "y termina los demás"
+                        if force
+                        else "se conservan todos; usa --force para terminar "
+                        "igualmente"
+                    )
+                )
+                continue
+            active[pid] = evidence
+            plan["active"].append({"pid": pid, "evidence": evidence})
 
     for entry in entries:
         pid = entry["pid"]
@@ -411,9 +475,16 @@ def prune(
             continue
 
         if state == "duplicado":
-            if not duplicates or pid == entry.get("duplicate_of") or pid == current_pid:
+            newest = pid == entry.get("duplicate_of")
+            if not duplicates or pid == current_pid or pid in active:
                 plan["kept"].append(pid)
                 continue
+            if pid in undetermined:
+                # Sin evidencia del activo: solo --force termina, conservando
+                # el más reciente del grupo, como hacia antes del arreglo.
+                if not force or newest:
+                    plan["kept"].append(pid)
+                    continue
             plan["duplicates"].append(pid)
             if not apply:
                 continue
