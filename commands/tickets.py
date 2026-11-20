@@ -65,6 +65,10 @@ def _json_summary(ticket: dict) -> dict:
     data = presentation.summary(ticket)
     data["risk"] = risk_for(ticket.get("paths"), ticket.get("resources"))
     data["requires_review"] = requires_review(ticket.get("paths"))
+    # ``attempts`` es un alias explícito de ``iterations`` (mismo entero).
+    attempts = int(ticket.get("iterations") or 0)
+    data["iterations"] = attempts
+    data["attempts"] = attempts
     return data
 
 
