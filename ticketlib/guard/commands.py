@@ -113,6 +113,9 @@ _SAFE_GIT = {
     "shortlog",
     "config",
     "merge-base",
+    "rev-list",
+    "cat-file",
+    "for-each-ref",
 }
 
 # Prefijos que se descartan para encontrar el comando real.

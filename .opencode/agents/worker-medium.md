@@ -152,6 +152,24 @@ permissions:
     resource: "git -C * status*"
     effect: allow
   - action: shell
+    resource: "git merge-base *"
+    effect: allow
+  - action: shell
+    resource: "git -C * merge-base *"
+    effect: allow
+  - action: shell
+    resource: "git rev-list *"
+    effect: allow
+  - action: shell
+    resource: "git cat-file *"
+    effect: allow
+  - action: shell
+    resource: "git branch --contains *"
+    effect: allow
+  - action: shell
+    resource: "git for-each-ref *"
+    effect: allow
+  - action: shell
     resource: "git -C * add *"
     effect: allow
   - action: shell
@@ -179,7 +197,7 @@ permissions:
     resource: "git push*"
     effect: deny
   - action: shell
-    resource: "git merge*"
+    resource: "git merge *"
     effect: deny
   - action: shell
     resource: "taiki confirm*"
