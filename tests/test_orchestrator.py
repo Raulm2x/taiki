@@ -390,6 +390,77 @@ def run(h: Harness) -> None:
         and bad_gates[0]["output"] == "E501 línea larga",
         "un gate rojo conserva la salida para la nota",
     )
+    time_gates = suite_run.run_verification(
+        runner=lambda *args, **kwargs: _Done(
+            1,
+            "\n".join(
+                [
+                    "OK: 1579 comprobaciones (66 módulos, 12.56s)",
+                    "",
+                    "Presupuesto incumplido:",
+                    "  - suite en 12.56s supera el presupuesto de 12.50s",
+                    "  - test_release tarda 2.11s (máximo 1.90s)",
+                ]
+            ),
+        ),
+        steps=(("suite", ["x"]),),
+    )
+    h.ok(
+        not suite_run.verification_ok(time_gates)
+        and suite_run.verification_evidence(time_gates) == "suite=tiempo",
+        "un fallo solo de tiempo (suite o módulo) se etiqueta tiempo",
+    )
+    checks_gates = suite_run.run_verification(
+        runner=lambda *args, **kwargs: _Done(
+            1,
+            "\n".join(
+                [
+                    "Presupuesto incumplido:",
+                    "  - 1622 comprobaciones superan el techo de 1567 "
+                    "(+40); poda o justifica el aumento",
+                ]
+            ),
+        ),
+        steps=(("suite", ["x"]),),
+    )
+    h.ok(
+        suite_run.verification_evidence(checks_gates) == "suite=fallo",
+        "el techo de comprobaciones no se disfraza de tiempo",
+    )
+    mixed_gates = suite_run.run_verification(
+        runner=lambda *args, **kwargs: _Done(
+            1,
+            "\n".join(
+                [
+                    "Presupuesto incumplido:",
+                    "  - suite en 12.60s supera el presupuesto de 12.50s",
+                    "  - 1622 comprobaciones superan el techo de 1567 (+40)",
+                ]
+            ),
+        ),
+        steps=(("suite", ["x"]),),
+    )
+    h.ok(
+        suite_run.verification_evidence(mixed_gates) == "suite=fallo",
+        "tiempo mezclado con techo de comprobaciones sigue siendo fallo",
+    )
+    broken_gates = suite_run.run_verification(
+        runner=lambda *args, **kwargs: _Done(
+            1,
+            "\n".join(
+                [
+                    "FALLO test_parser: suma mal",
+                    "1 incidencia(s) en 0.50s",
+                    "  - test_parser: suma mal",
+                ]
+            ),
+        ),
+        steps=(("suite", ["x"]),),
+    )
+    h.ok(
+        suite_run.verification_evidence(broken_gates) == "suite=fallo",
+        "una aserción rota sigue siendo suite=fallo",
+    )
     h.ok(
         len(coverage_gate.COVERAGE_STEPS) == 2
         and "coverage" in coverage_gate.COVERAGE_STEPS[0],
