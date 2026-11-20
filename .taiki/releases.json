@@ -28,5 +28,11 @@
     "version": "0.5.0",
     "released_sha": "b550c2379586b748bcd766a947047f54aeb1d429",
     "date": "2026-11-19"
+  },
+  {
+    "tag": "v0.5.1",
+    "version": "0.5.1",
+    "released_sha": "3ac09ba3c07c67095f1886f91220c2f6289d027e",
+    "date": "2026-11-20"
   }
 ]

@@ -392,7 +392,9 @@ nuevos): ellos publican el comando exacto y su motivo en un
 `comment`. El guard de tickets sigue siendo la frontera: sin ticket activo y sin
 worktree no se escribe, y los denies destructivos (`rm -rf`, `sudo`, `git push`,
 `git reset`, `git clean`, `git checkout --`, `bash`/`sh`, staging masivo) se
-mantienen.
+mantienen. Cuando un worker reporta un fichero fuera de sus `paths`, decides
+tú: amplías el ticket con `update` (paths completos) y se lo avisas, o lo
+deniegas con motivo; nunca esperas que el worker amplíe su propio alcance.
 
 ## Reglas
 

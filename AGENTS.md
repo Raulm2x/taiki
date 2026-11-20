@@ -113,9 +113,18 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    **Plantilla de delegación**: al lanzar un worker incluye solo código y
    body (criterios incluidos), `paths` completos —también los tests y docs
    que el cambio toca— y el gate exacto (p. ej.
-   `python3 tests/run.py --only <modulo>`). No repitas el protocolo de
-   claim, el presupuesto de pasos, el escalado ni el cierre: ya viven en
-   `worker*.md`.
+   `python3 tests/run.py --only <modulo>`). Los `paths` de entrada los declara
+   el conductor **antes** de lanzar, para que rara vez haya que esperar por
+   alcance; si el worker descubre un fichero que falta, reporta con
+   `comment`/`checkpoint` y espera: no amplía el ticket. No repitas el
+   protocolo de claim, el presupuesto de pasos, el escalado ni el cierre: ya
+   viven en `worker*.md`.
+   **Decisión (salvaguarda de `update`)**: `update` de `paths` desde la sesión
+   dueña no exige `force` ni emite aviso; tras la ampliación el commit casa con
+   los paths ya ampliados, así que no hay contraste automático commit↔paths y
+   solo queda el evento de `update` en `taiki show` para que el conductor lo
+   revise. No compensa la fricción. La decisión cambiaría si un worker
+   ampliara `paths` y su commit pasara sin revisión.
 
 ## Reorganización de tickets
 

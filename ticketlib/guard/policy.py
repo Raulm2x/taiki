@@ -373,8 +373,9 @@ def _authorization_message(code: str, risk: str) -> str:
 
 def _scope_message(detail: str, code: str) -> str:
     return (
-        f"Bloqueado: {detail} no está en el scope de {code}. Un agente no "
-        f"amplía el scope: pide `taiki update {code} --paths <ruta>`."
+        f"Bloqueado: {detail} no está en el scope de {code}. El alcance lo "
+        f"declara el conductor: publica comment/checkpoint con ruta y motivo "
+        f"y espera."
     )
 
 

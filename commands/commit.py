@@ -136,8 +136,9 @@ def cmd_commit(args: argparse.Namespace) -> int:
             )
         if not report["ok"]:
             print(
-                "Commit cancelado. Stagea solo tus rutas o ajusta "
-                f"`taiki update {ticket['code']} --paths ...`.",
+                "Commit cancelado. Stagea solo tus rutas; si alguna debería "
+                "estar en el scope, publica comment/checkpoint y espera al "
+                "conductor.",
                 file=sys.stderr,
             )
             return 1

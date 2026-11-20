@@ -236,11 +236,17 @@ def run(h: Harness) -> None:
             args = argparse.Namespace(
                 message="mezcla", ticket=ticket["code"], dry_run=True, json=False
             )
+            err = io.StringIO()
             with contextlib.chdir(root), contextlib.redirect_stdout(
                 io.StringIO()
-            ), contextlib.redirect_stderr(io.StringIO()):
+            ), contextlib.redirect_stderr(err):
                 code = cmd_commit(args)
-            h.eq(code, 1, "taiki commit rechaza el staged ajeno")
+            h.ok(
+                code == 1
+                and "comment/checkpoint" in err.getvalue()
+                and "update" not in err.getvalue(),
+                "taiki commit rechaza el staged ajeno y remite al conductor",
+            )
             with h.env(TAIKI_TICKET=ticket["code"]), contextlib.chdir(
                 root
             ), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
@@ -293,6 +299,8 @@ def run(h: Harness) -> None:
                 and scoped_report["isolation"] == "scope"
                 and not scoped_report["ok"]
                 and empty_report["scope_error"] is not None
+                and "comment/checkpoint" in empty_report["scope_error"]
+                and "update" not in empty_report["scope_error"]
                 and empty_report["outside"] == ["src/a.py"]
                 and not empty_report["ok"],
                 "scope rechaza el staged fuera y el scope vacío deniega todo (fail-closed)",

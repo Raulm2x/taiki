@@ -261,8 +261,9 @@ def run(h: Harness) -> None:
     h.ok(
         outside["action"] == "scope"
         and not outside["allow"]
-        and "taiki update" in outside["message"],
-        "scope bloquea fuera y sugiere taiki update",
+        and "comment/checkpoint" in outside["message"]
+        and "update" not in outside["message"],
+        "scope bloquea fuera y remite al conductor",
     )
     command_out = guard.evaluate(
         tool="bash",
@@ -540,8 +541,9 @@ def run(h: Harness) -> None:
     h.ok(
         empty_block["action"] == "scope"
         and "paths" in empty_block["message"]
-        and "taiki update" in empty_block["message"],
-        "scope sin paths es fail-closed y sugiere taiki update",
+        and "comment/checkpoint" in empty_block["message"]
+        and "update" not in empty_block["message"],
+        "scope sin paths es fail-closed y remite al conductor",
     )
     repo.transition(
         conn,
@@ -625,6 +627,7 @@ def run(h: Harness) -> None:
     ]
     h.ok(
         all(len(message) < 180 for message in scale_messages)
-        and any("taiki update" in message for message in scale_messages),
-        "los mensajes de modo/scope son breves y accionables",
+        and not any("update" in message for message in scale_messages)
+        and any("comment/checkpoint" in message for message in scale_messages),
+        "los mensajes de modo/scope son breves y remiten al conductor",
     )

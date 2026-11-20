@@ -1217,13 +1217,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--duplicates",
         action="store_true",
-        help="Incluye duplicados en la limpieza (conserva el activo del grupo)",
+        help="Incluye duplicados en el inventario; sin --kill/--force solo los "
+        "lista y avisa (no termina ninguno)",
+    )
+    p.add_argument(
+        "--kill",
+        nargs="+",
+        type=int,
+        metavar="PID",
+        help="PIDs concretos de duplicados u huérfanos a terminar con "
+        "--prune --duplicates (exige --apply para matarlos)",
     )
     p.add_argument(
         "--force",
         action="store_true",
-        help="Con --prune --duplicates: termina aunque no se pueda identificar "
-        "al servidor activo (conserva el más reciente)",
+        help="Con --prune --duplicates: termina el grupo duplicado aunque no se "
+        "pueda identificar al servidor activo (conserva el activo si lo hay o "
+        "el más reciente)",
     )
     p.add_argument(
         "--reload",

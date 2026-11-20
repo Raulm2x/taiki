@@ -434,12 +434,11 @@ Los `paths` del ticket son tu alcance, no una sugerencia:
 
 - Al reclamar, lee los `paths` del recibo del `claim`: no toques nada fuera
   de ellos.
-- Si el cambio exige un fichero fuera de `paths` que está dentro del repo y no
-  solapa con otro ticket activo, no abandones ni pidas permiso: amplía el
-  ticket con la herramienta MCP `update` pasando el conjunto **completo** de
-  `paths` (los actuales más la nueva ruta; reemplaza el conjunto entero) y
-  sigue. Es lo que hizo T-0085.09. Si la ruta solapa con otro ticket activo,
-  publica `comment` con la ruta exacta y espera al conductor.
+- Si el cambio exige un fichero fuera de `paths`, no lo toques ni amplíes el
+  ticket: publica `comment`/`checkpoint` con las rutas exactas y el motivo y
+  espera al conductor. Si la espera bloquea el trabajo, `transition` a
+  `bloqueado` con el motivo. Nunca llamas a `update` sobre tu propio ticket
+  para cambiar `paths`: el alcance lo declara el conductor.
 - Antes de commitear, comprueba que cada fichero del índice está en `paths`
   (`git status`): un `taiki commit` rechazado cuesta un turno entero.
 
