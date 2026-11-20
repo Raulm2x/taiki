@@ -312,6 +312,142 @@ def run(h: Harness) -> None:
                 "sin evidencia del activo no se termina ningún duplicado "
                 "y se avisa del motivo",
             )
+
+            twins_meta = db.connect(":memory:")
+            try:
+                db.meta_set(twins_meta, "mcp_pid", "110")
+                plain = [
+                    {"pid": 110, "connection": None, "heartbeat_at": None},
+                    {"pid": 111, "connection": None, "heartbeat_at": None},
+                ]
+                h.eq(
+                    [
+                        servers.identify_active(twins_meta, plain),
+                        servers.identify_active(
+                            twins_meta,
+                            [
+                                {
+                                    "pid": 110,
+                                    "connection": None,
+                                    "heartbeat_at": None,
+                                },
+                                {
+                                    "pid": 111,
+                                    "connection": None,
+                                    "heartbeat_at": "nuevo",
+                                },
+                            ],
+                        ),
+                        servers.identify_active(
+                            twins_db,
+                            [
+                                {
+                                    "pid": 110,
+                                    "connection": "ses_a",
+                                    "heartbeat_at": None,
+                                },
+                                {
+                                    "pid": 111,
+                                    "connection": None,
+                                    "heartbeat_at": "nuevo",
+                                },
+                            ],
+                        ),
+                        servers.identify_active(
+                            twins_db,
+                            [
+                                {
+                                    "pid": 110,
+                                    "connection": None,
+                                    "heartbeat_at": "10:05",
+                                },
+                                {
+                                    "pid": 111,
+                                    "connection": None,
+                                    "heartbeat_at": "10:01",
+                                },
+                            ],
+                        ),
+                        servers.identify_active(twins_db, plain),
+                        servers.identify_active(
+                            twins_db,
+                            [
+                                {
+                                    "pid": 110,
+                                    "connection": None,
+                                    "heartbeat_at": "igual",
+                                },
+                                {
+                                    "pid": 111,
+                                    "connection": None,
+                                    "heartbeat_at": "igual",
+                                },
+                            ],
+                        ),
+                    ],
+                    [
+                        (110, "meta.mcp_pid"),
+                        (110, "meta.mcp_pid"),
+                        (110, "connection"),
+                        (110, "heartbeat_at"),
+                        (None, None),
+                        (None, None),
+                    ],
+                    "el activo se identifica por meta, connection o latido, "
+                    "en ese orden",
+                )
+            finally:
+                twins_meta.close()
+
+            forced = servers.prune(
+                twins_db,
+                apply=True,
+                process=fake3,
+                killer=killer3,
+                current="abc",
+                live=forged,
+                duplicates=True,
+                force=True,
+                grace=0,
+                slug=0,
+                sleep=lambda _s: None,
+            )
+            h.ok(
+                forced["killed"] == [110]
+                and 111 in forced["kept"]
+                and forced["warnings"]
+                and "--force conserva el más nuevo (111)"
+                in forced["warnings"][0],
+                "con --force se termina sin evidencia y el aviso lo dice",
+            )
+
+            forged[110] = {
+                "pid": 110,
+                "ppid": 50,
+                "cmdline": "python3 /x/tickets/server.py",
+            }
+            db.meta_set(twins_db, "mcp_pid", "110")
+            guarded = servers.prune(
+                twins_db,
+                apply=True,
+                process=fake3,
+                killer=killer3,
+                current="abc",
+                live=forged,
+                duplicates=True,
+                grace=0,
+                slug=0,
+                sleep=lambda _s: None,
+            )
+            h.ok(
+                guarded["killed"] == [111]
+                and 110 in guarded["kept"]
+                and guarded["active"]
+                == [{"pid": 110, "evidence": "meta.mcp_pid"}]
+                and not guarded["warnings"],
+                "el activo identificado se conserva aunque el más nuevo "
+                "sea otro",
+            )
         finally:
             twins_db.close()
 
