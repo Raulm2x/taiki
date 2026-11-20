@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -25,9 +26,10 @@ def _project_active_pid() -> int | None:
     """PID activo según ``meta.mcp_pid`` de la DB del proyecto.
 
     ``runtime.register`` deja el PID del último MCP en el proyecto, no en el
-    registro global que usa este comando: sin esta lectura la evidencia más
-    fiable no llegaría a ``servers.prune``. Si el proyecto no tiene DB
-    accesible, no se falla el comando: se sigue con el resto de evidencias.
+    registro global que usa este comando: sin esta lectura no llegaría a
+    ``servers.prune`` la evidencia que publica como informativa y que ``--force``
+    usa para elegir a quién conservar. Si el proyecto no tiene DB accesible, no
+    se falla el comando: se sigue con el resto de evidencias.
     """
     try:
         conn = db.connect()
@@ -53,6 +55,12 @@ def cmd_servers(args: argparse.Namespace) -> int:
     if args.force and not args.duplicates:
         print("Error: --force requiere --duplicates", file=sys.stderr)
         return 2
+    if args.kill and not args.prune:
+        print("Error: --kill requiere --prune", file=sys.stderr)
+        return 2
+    if args.kill and not args.duplicates:
+        print("Error: --kill requiere --duplicates", file=sys.stderr)
+        return 2
     if args.dry_run and not args.reload:
         print("Error: --dry-run requiere --reload", file=sys.stderr)
         return 2
@@ -67,12 +75,30 @@ def cmd_servers(args: argparse.Namespace) -> int:
     conn = db.connect(workspace.registry_path())
     try:
         entries = servers.inventory(conn)
+        if args.kill:
+            states = {item["pid"]: item["state"] for item in entries}
+            own = os.getpid()
+            invalid = [
+                pid
+                for pid in args.kill
+                if pid != own
+                and states.get(pid) not in ("duplicado", "huérfano")
+            ]
+            if invalid:
+                print(
+                    "Error: --kill solo admite PIDs duplicados u huérfanos del "
+                    "inventario: "
+                    + ", ".join(str(pid) for pid in invalid),
+                    file=sys.stderr,
+                )
+                return 2
         plan = (
             servers.prune(
                 conn,
                 apply=args.apply,
                 duplicates=args.duplicates,
                 force=args.force,
+                kill=args.kill,
                 active_pid=(
                     _project_active_pid()
                     if args.duplicates
@@ -125,11 +151,13 @@ def cmd_servers(args: argparse.Namespace) -> int:
     if plan is not None:
         for item in plan.get("active") or []:
             print(
-                f"Conservado por ser el activo: PID {item['pid']} "
-                f"(evidencia: {item['evidence']})"
+                f"Activo (informativo): PID {item['pid']} "
+                f"(evidencia: {item['evidence']}); con --force elige a quién "
+                "conservar, sin --force no decide qué se termina"
             )
         for warning in plan.get("warnings") or []:
             print(f"Aviso: {warning}")
+        deferred = plan.get("deferred") or []
         if not args.apply:
             targets = plan["orphans"] + plan["duplicates"] + plan["dead"]
             if targets:
@@ -140,6 +168,11 @@ def cmd_servers(args: argparse.Namespace) -> int:
                 )
             else:
                 print("Nada que limpiar.")
+            if deferred:
+                print(
+                    "Duplicados vivos que se conservan: "
+                    + ", ".join(str(pid) for pid in deferred)
+                )
         else:
             if plan["killed"]:
                 print("Terminados: " + ", ".join(str(pid) for pid in plan["killed"]))
@@ -159,11 +192,17 @@ def cmd_servers(args: argparse.Namespace) -> int:
                     + ", ".join(str(pid) for pid in plan["stubborn"])
                     + " (se conserva el registro para reintentar)"
                 )
+            if deferred:
+                print(
+                    "Duplicados vivos conservados (no terminados): "
+                    + ", ".join(str(pid) for pid in deferred)
+                )
             if (
                 not plan["killed"]
                 and not plan["dead"]
                 and not plan["stubborn"]
                 and not plan["duplicates"]
+                and not deferred
             ):
                 print("Nada que limpiar.")
 

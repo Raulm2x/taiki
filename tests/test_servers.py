@@ -306,11 +306,14 @@ def run(h: Harness) -> None:
             h.ok(
                 pruned["killed"] == []
                 and pruned["duplicates"] == []
+                and pruned["deferred"] == [110, 111]
                 and 110 in pruned["kept"]
                 and 111 in pruned["kept"]
-                and len(pruned["warnings"]) == 1,
-                "sin evidencia del activo no se termina ningún duplicado "
-                "y se avisa del motivo",
+                and len(pruned["warnings"]) == 1
+                and "--kill ni --force" in pruned["warnings"][0]
+                and "110, 111" in pruned["warnings"][0],
+                "sin --kill/--force no se termina ningún duplicado vivo, se "
+                "listan en deferred y se avisa",
             )
 
             twins_meta = db.connect(":memory:")
@@ -403,6 +406,28 @@ def run(h: Harness) -> None:
             finally:
                 twins_meta.close()
 
+            dry = servers.prune(
+                twins_db,
+                apply=False,
+                process=fake3,
+                killer=killer3,
+                current="abc",
+                live=forged,
+                duplicates=True,
+                kill=[110],
+                grace=0,
+                slug=0,
+                sleep=lambda _s: None,
+            )
+            h.ok(
+                dry["duplicates"] == [110]
+                and dry["killed"] == []
+                and dry["deferred"] == [111]
+                and 110 in forged
+                and 111 in forged,
+                "el dry-run con --kill lista el PID exacto sin matarlo",
+            )
+
             forced = servers.prune(
                 twins_db,
                 apply=True,
@@ -419,6 +444,7 @@ def run(h: Harness) -> None:
             h.ok(
                 forced["killed"] == [110]
                 and 111 in forced["kept"]
+                and forced["deferred"] == [111]
                 and forced["warnings"]
                 and "--force conserva el más nuevo (111)"
                 in forced["warnings"][0],
@@ -427,6 +453,32 @@ def run(h: Harness) -> None:
 
             forged[110] = {
                 "pid": 110,
+                "ppid": 50,
+                "cmdline": "python3 /x/tickets/server.py",
+            }
+            killed = servers.prune(
+                twins_db,
+                apply=True,
+                process=fake3,
+                killer=killer3,
+                current="abc",
+                live=forged,
+                duplicates=True,
+                kill=[111],
+                grace=0,
+                slug=0,
+                sleep=lambda _s: None,
+            )
+            h.ok(
+                killed["killed"] == [111]
+                and killed["duplicates"] == [111]
+                and killed["deferred"] == [110]
+                and 111 not in forged
+                and 110 in forged,
+                "con --kill se termina exactamente el PID pedido",
+            )
+            forged[111] = {
+                "pid": 111,
                 "ppid": 50,
                 "cmdline": "python3 /x/tickets/server.py",
             }
@@ -439,6 +491,7 @@ def run(h: Harness) -> None:
                 current="abc",
                 live=forged,
                 duplicates=True,
+                force=True,
                 grace=0,
                 slug=0,
                 sleep=lambda _s: None,
@@ -475,6 +528,7 @@ def run(h: Harness) -> None:
                     current="abc",
                     live=forged,
                     duplicates=True,
+                    force=True,
                     active_pid=110,
                     grace=0,
                     slug=0,

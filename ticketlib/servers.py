@@ -377,12 +377,20 @@ def identify_active(
 ) -> tuple[int | None, str | None]:
     """El PID activo de un grupo de duplicados y la evidencia que lo respalda.
 
+    **Informativo desde T-0092**: este resultado ya no decide por sí solo qué
+    se termina. ``meta.mcp_pid`` es un único hueco que cada servidor sobrescribe
+    al registrarse, así que con duplicados apunta al último en arrancar, no al
+    que sirve al cliente. :func:`prune` lo usa solo para elegir a quién
+    conservar con ``force``; sin ``force`` los duplicados vivos se conservan y
+    se avisa. La selección automática volverá solo con evidencia fiable de la
+    conexión del cliente (``connection``, protocolo MCP o un PID que el cliente
+    declare) y su test.
+
     Orden de evidencia: ``active_pid`` explícito (el ``meta.mcp_pid`` de la DB
     del proyecto, que ``runtime.register`` escribe al arrancar y la CLI lee
     aparte del registro global), ``meta.mcp_pid`` de la propia conexión, el
     ``connection`` que declaró el cliente y el ``heartbeat_at`` más reciente
-    del grupo. ``(None, None)`` cuando ninguna evidencia alcanza: entonces el
-    grupo se conserva entero y solo ``force`` permite terminarlo.
+    del grupo. ``(None, None)`` cuando ninguna evidencia alcanza.
     """
     pids = {entry["pid"] for entry in group}
     if active_pid is not None and active_pid in pids:
@@ -416,16 +424,19 @@ def prune(
     duplicates: bool = False,
     force: bool = False,
     active_pid: int | None = None,
+    kill: list[int] | None = None,
 ) -> dict[str, Any]:
     """Limpia registros muertos y termina huérfanos; nunca un proceso con dueño.
 
     Un proceso cuyo padre sigue vivo (aunque la sesión esté idle durante horas)
-    no se toca. Los duplicados solo se terminan con ``duplicates=True`` y se
-    conserva el activo del grupo según :func:`identify_active` (su primer
-    criterio es ``active_pid``, el PID que la DB del proyecto dejó en
-    ``meta.mcp_pid``), aunque no sea el más reciente; sin evidencia del activo
-    se conservan todos y solo ``force`` limpia como antes (dejando el más
-    reciente).
+    no se toca. Los duplicados solo se terminan con ``--kill`` (PIDs explícitos)
+    o ``--force``; por defecto se conservan y se listan en ``deferred`` con un
+    aviso, porque ``identify_active`` no puede probar qué PID sirve al cliente.
+    ``identify_active`` queda informativo en ``active`` y, con ``force``, elige
+    a quién conservar: el activo si hay evidencia y, si no, el más reciente del
+    grupo. ``kill`` tiene prioridad sobre ``force`` para los PIDs que incluya y
+    nunca termina el proceso propio (se omite con aviso). Muertos y huérfanos
+    se limpian como siempre.
     """
     plan: dict[str, Any] = {
         "dead": [],
@@ -433,44 +444,56 @@ def prune(
         "killed": [],
         "stubborn": [],
         "duplicates": [],
+        "deferred": [],
         "kept": [],
         "active": [],
         "warnings": [],
     }
     entries = inventory(conn, process=process, current=current, live=live)
     current_pid = os.getpid()
+    kill_set = set(kill or [])
+    if current_pid in kill_set:
+        kill_set.discard(current_pid)
+        plan["warnings"].append(
+            f"--kill incluye el PID propio ({current_pid}): se omite"
+        )
 
-    # Grupos de duplicados: el activo identificado se conserva siempre; sin
-    # evidencia se conserva el grupo entero y solo ``force`` lo limpia.
-    active: dict[int, str] = {}
-    undetermined: set[int] = set()
+    # Grupos de duplicados: sin ``force`` no se termina ninguno (solo ``kill``
+    # puede señalar PIDs concretos); con ``force`` se conserva el activo si hay
+    # evidencia y, si no, el más reciente, como hacía antes del arreglo.
+    forced_kills: set[int] = set()
     if duplicates:
         groups: dict[int, list[dict[str, Any]]] = {}
         for entry in entries:
             if entry["state"] == "duplicado":
                 groups.setdefault(int(entry["duplicate_of"]), []).append(entry)
         for group in groups.values():
-            pid, evidence = identify_active(conn, group, active_pid=active_pid)
-            if pid is None or evidence is None:
-                roster = ", ".join(
-                    str(item["pid"])
-                    for item in sorted(group, key=lambda item: item["pid"])
-                )
-                undetermined.update(item["pid"] for item in group)
-                newest = max(item["pid"] for item in group)
-                plan["warnings"].append(
-                    f"sin evidencia del activo en ({roster}): "
-                    + (
-                        f"--force conserva el más nuevo ({newest}) "
-                        "y termina los demás"
-                        if force
-                        else "se conservan todos; usa --force para terminar "
-                        "igualmente"
-                    )
-                )
+            live_pids = sorted(
+                item["pid"] for item in group if item["pid"] != current_pid
+            )
+            if not live_pids:
                 continue
-            active[pid] = evidence
-            plan["active"].append({"pid": pid, "evidence": evidence})
+            roster = ", ".join(str(pid) for pid in live_pids)
+            pid, evidence = identify_active(conn, group, active_pid=active_pid)
+            if pid is not None and evidence is not None:
+                plan["active"].append({"pid": pid, "evidence": evidence})
+            if force:
+                keep = pid if pid in live_pids else max(live_pids)
+                forced_kills.update(p for p in live_pids if p != keep)
+                if pid is None or pid not in live_pids:
+                    plan["warnings"].append(
+                        f"sin evidencia del activo en ({roster}): "
+                        f"--force conserva el más nuevo ({keep}) "
+                        "y termina los demás"
+                    )
+            else:
+                deferred = [p for p in live_pids if p not in kill_set]
+                if deferred:
+                    plan["warnings"].append(
+                        f"duplicados vivos ({roster}): sin --kill ni --force "
+                        "se conservan; pendientes: "
+                        + ", ".join(str(p) for p in deferred)
+                    )
 
     for entry in entries:
         pid = entry["pid"]
@@ -483,16 +506,13 @@ def prune(
             continue
 
         if state == "duplicado":
-            newest = pid == entry.get("duplicate_of")
-            if not duplicates or pid == current_pid or pid in active:
+            if not duplicates or pid == current_pid:
                 plan["kept"].append(pid)
                 continue
-            if pid in undetermined:
-                # Sin evidencia del activo: solo --force termina, conservando
-                # el más reciente del grupo, como hacia antes del arreglo.
-                if not force or newest:
-                    plan["kept"].append(pid)
-                    continue
+            if pid not in kill_set and pid not in forced_kills:
+                plan["kept"].append(pid)
+                plan["deferred"].append(pid)
+                continue
             plan["duplicates"].append(pid)
             if not apply:
                 continue
