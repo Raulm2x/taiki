@@ -1100,8 +1100,9 @@ def build_parser() -> argparse.ArgumentParser:
         "perms",
         help="Lista la allowlist de shell: perfiles y guard (solo lectura)",
         description="Muestra qué puede ejecutar cada perfil worker y qué "
-        "deniega el guard, con el origen de cada regla y la última que gana. "
-        "Con --command da un veredicto por segmento.",
+        "deniega el guard, con el origen de cada regla y si queda tapada por "
+        "otra posterior (aproximación por contención de patrones, no el "
+        "evaluador). Para el veredicto exacto de un comando usa --command.",
     )
     p.add_argument("--agent", help="Solo un perfil (p. ej. worker o worker-low)")
     p.add_argument("--command", help="Veredicto para un comando concreto")
