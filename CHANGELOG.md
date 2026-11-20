@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.5.1 — 2026-11-20
+
+Tickets: T-0092, T-0093, T-0094
+
+### fix
+- fix: los mensajes de scope remiten al conductor en vez de a taiki update (T-0094)
+- fix: prune no termina duplicados vivos sin --kill/--force (T-0092)
+
+### docs
+- docs: el worker reporta paths fuera de alcance y espera al conductor (T-0093)
+
+### test
+- test: reforzar el contrato de paths y aclarar la decisión (T-0093)
+
 ## v0.5.0 — 2026-11-19
 
 Tickets: T-0062.01, T-0062.02, T-0062.03, T-0062.05, T-0063, T-0064, T-0065.01, T-0065.02, T-0065.03, T-0065.04, T-0065.05, T-0066, T-0067.01, T-0067.02, T-0067.03, T-0067.04, T-0067.05, T-0068, T-0069, T-0070, T-0071, T-0072, T-0073, T-0074, T-0075, T-0076, T-0079, T-0078.01, T-0078.02, T-0078.03, T-0078.04, T-0078.05, T-0078.06, T-0080, T-0081, T-0082, T-0083, T-0084, T-0085.14, T-0085.15, T-0085.01, T-0085.05, T-0085.11, T-0085.17, T-0085.04, T-0085.07, T-0085.18, T-0085.02, T-0085.06, T-0085.08, T-0085.13, T-0085.12, T-0085.03, T-0085.09, T-0085.22, T-0085.20, T-0085.21, T-0085.16, T-0085.10, T-0085.19, T-0085.23, T-0088.03, T-0088.04, T-0088.05, T-0088.02, T-0088.06, T-0088.01, T-0088.07, T-0088.08, T-0089, T-0091, T-0090.01, T-0090.02
