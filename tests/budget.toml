@@ -99,7 +99,12 @@
 # test_sessions (57→15), sin borrar escenarios: 1711→1567 medidos (-8.4%).
 # El techo baja al valor medido; la cobertura por capa no cambia porque
 # las rutas ejecutadas son las mismas, solo se compara en bloque.
-max_seconds = 12.5
+# T-0089 (techo al nivel del ruido): la suite vive en 12.0-12.6s y el techo
+# de 12.5 fallaba en la primera ejecución tras un rebase (bytecode frío).
+# Medido N=5 en frío (primera tras rebase / worktree virgen):
+# 12.22/12.26/12.29/12.51/12.56; N=5 en caliente:
+# 12.00/12.07/12.15/12.34/12.42. Techo = peor caso frío + ~12%: 14.0.
+max_seconds = 14.0
 # Política de subidas (docs/desarrollo.md, "Presupuesto y cuarentena"):
 # un ajuste de hasta ~3% del recuento o del tiempo, medido en frío y derivado
 # de integrar el tip verificado, se commitea en el propio ticket de
@@ -124,7 +129,9 @@ max_seconds = 1.9
 [ci.suite]
 # T-0062.05: margen de +0.5s sobre el presupuesto local.
 # T-0085.14: 11.5s para runners compartidos (local 11.0s).
-max_seconds = 13.5
+# T-0089: mismo ajuste que el local (+1.0s para runners compartidos):
+# 14.0 local → 15.0 CI.
+max_seconds = 15.0
 
 [ci.module]
 max_seconds = 2.1
