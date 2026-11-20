@@ -331,7 +331,8 @@ def check(
         if not scope:
             scope_error = (
                 "isolation=scope sin paths: el ticket no puede commitear "
-                "(fail-closed). Declara paths con `taiki update --paths ...`."
+                "(fail-closed). El conductor declara los paths en el ticket: "
+                "publica comment/checkpoint y espera."
             )
             outside = list(files)
         else:
