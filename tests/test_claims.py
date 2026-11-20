@@ -314,6 +314,7 @@ def run(h: Harness) -> None:
     )
     own_ev = conn.execute(
         "SELECT note FROM events WHERE action = 'transicion' AND "
+        "to_status = 'completado' AND "
         "ticket_id = (SELECT id FROM tickets WHERE code = ?)",
         (second["code"],),
     ).fetchone()
@@ -343,6 +344,7 @@ def run(h: Harness) -> None:
     )
     oev = conn.execute(
         "SELECT note FROM events WHERE action = 'transicion' AND "
+        "to_status = 'completado' AND "
         "ticket_id = (SELECT id FROM tickets WHERE code = ?)",
         (orphan["code"],),
     ).fetchone()
@@ -383,6 +385,7 @@ def run(h: Harness) -> None:
     )
     aev = conn.execute(
         "SELECT note FROM events WHERE action = 'transicion' AND "
+        "to_status = 'completado' AND "
         "ticket_id = (SELECT id FROM tickets WHERE code = ?)",
         (alive["code"],),
     ).fetchone()
