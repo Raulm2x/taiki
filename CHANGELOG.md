@@ -1,23 +1,131 @@
 # Changelog
 
-## Unreleased
+## v0.5.0 — 2026-11-19
 
-Tickets: T-0078.01, T-0078.02, T-0078.03, T-0078.04, T-0078.05, T-0078.06
+Tickets: T-0062.01, T-0062.02, T-0062.03, T-0062.05, T-0063, T-0064, T-0065.01, T-0065.02, T-0065.03, T-0065.04, T-0065.05, T-0066, T-0067.01, T-0067.02, T-0067.03, T-0067.04, T-0067.05, T-0068, T-0069, T-0070, T-0071, T-0072, T-0073, T-0074, T-0075, T-0076, T-0079, T-0078.01, T-0078.02, T-0078.03, T-0078.04, T-0078.05, T-0078.06, T-0080, T-0081, T-0082, T-0083, T-0084, T-0085.14, T-0085.15, T-0085.01, T-0085.05, T-0085.11, T-0085.17, T-0085.04, T-0085.07, T-0085.18, T-0085.02, T-0085.06, T-0085.08, T-0085.13, T-0085.12, T-0085.03, T-0085.09, T-0085.22, T-0085.20, T-0085.21, T-0085.16, T-0085.10, T-0085.19, T-0085.23, T-0088.03, T-0088.04, T-0088.05, T-0088.02, T-0088.06, T-0088.01, T-0088.07, T-0088.08, T-0089, T-0091, T-0090.01, T-0090.02
 
 ### feat
-- feat: plan de reorganizacion de tickets (T-0078.01)
-- feat: aplicar reorganizacion y referencias (T-0078.02)
-- feat: CLI de reorganizacion de tickets (T-0078.03)
-- feat: purge de tickets con backup y guardrails (T-0078.04)
+- feat: servers --reload espera a la huella nueva por PID (T-0088.08)
+- feat: cerrar sin force con lease caducado o steps_exhausted (T-0088.06)
+- feat: contrato del ticket en los perfiles worker (T-0088.02)
+- feat: iterations y attempts en --json-summary (T-0088.05)
+- feat: evidencia en transition y tool reject_delivery (T-0085.23)
+- feat: delivery_rejected, evidencia estructurada y contadores unificados (T-0085.10)
+- feat: --allow-root en renumber CLI (T-0085.16)
+- feat: perms honesto y aviso de perfil sin reglas (T-0085.21)
+- feat: servers --reload y recarga en mcp install (T-0085.20)
+- feat: re-exec del MCP por SIGHUP y selección de procesos (T-0085.20)
+- feat: epic_check en MCP y catálogo (T-0085.09)
+- feat: epic_check deriva el cierre de las hijas (T-0085.09)
+- feat: allowlist project-aware en perfiles worker (T-0085.03)
+- feat: taiki perms/config show y deny explicativo (T-0085.12)
+- feat: presupuesto medium a 32 pasos y política de auto-extensión (T-0085.08)
+- feat: unlink y links_repair para enlaces colgantes (T-0085.06)
+- feat: gate_run ejecuta gates declarados (T-0085.02)
+- feat: heartbeat expone abandon y steps_exhausted (T-0085.07)
+- feat: abandon y steps_exhausted en el store (T-0085.07)
+- feat: alias de códigos renumerados en esquema y reorg (T-0085.04)
+- feat: patch de evidence, validación y merge de memorias (T-0085.11)
+- feat: retirar también refs bare muertas (T-0084)
+- feat: repos adicionales y retirada de refs muertas (T-0083)
+- feat: reparar evidencia con prefijo embebido (T-0082)
 - feat: tools MCP de reorganizacion (T-0078.05)
+- feat: purge de tickets con backup y guardrails (T-0078.04)
+- feat: CLI de reorganizacion de tickets (T-0078.03)
+- feat: aplicar reorganizacion y referencias (T-0078.02)
+- feat: plan de reorganizacion de tickets (T-0078.01)
+- feat: allowlist read-only de verificación e inspección (T-0076)
+- feat: tags en memoria, índice y capa 0 (T-0072)
+- feat: brief agrupado por dominio y stats índice/almacenamiento (T-0071)
+- feat: brief índice con key, ticket_kinds y paths (T-0070)
+- feat: merger fuera de los workspaces live (T-0068)
+- feat: verificar vigencia de la evidencia al consultar memoria (T-0067.04)
+- feat: búsqueda de memoria por CLI (T-0067.03)
+- feat: auto-aprobar memorias con evidencia validada (T-0067.02)
+- feat: brief índice y presupuesto que solo avisa (T-0067.01)
+
+### fix
+- fix: el trailer Release-Bump no degrada el nivel de la release (T-0090.01)
+- fix: prune lee el PID activo de la DB del proyecto (T-0091)
+- fix: prune --duplicates conserva el servidor activo identificado (T-0091)
+- fix: allows de lectura git (merge-base, rev-list, cat-file, branch --contains, for-each-ref) y deny git merge afinado (T-0088.01)
+- fix: renumber con allow_root actualiza el contador (T-0085.16)
+- fix: alternativas del guard ejecutables por cualquier worker (T-0085.21)
+- fix: mensaje de staging masivo dentro del límite (T-0085.12)
+- fix: confirmar conserva completed_at y las métricas de cierre (T-0085.13)
+- fix: gate_run solo ejecuta gates del ticket para su sesión (T-0085.02)
+- fix: el hook resuelve alias sin romper la rama del ticket (T-0085.04)
+- fix: worktree merge lista los ficheros que bloquean y conserva untracked (T-0085.05)
+- fix: release usa verify.command del workspace (T-0085.01)
+- fix: aceptar directorios como evidencia de fichero (T-0082)
+- fix: normalizar también las refs inválidas (T-0082)
+- fix: clic en AGENTE solo enfoca, no abre sesion (T-0079)
+- fix: cerrar bypass de 2> en la allowlist (T-0075)
+- fix: cerrar redirecciones y find/sort destructivos en workers (T-0075)
+- fix: mostrar índice y almacenamiento por separado en memory stats (T-0073)
+- fix: recortar título en el índice del brief (T-0070)
+- fix: sync de perfiles no destructivo y --force-agents (T-0069)
+- fix: permitir la rama live en tickets none/scope (T-0066)
+- fix: instalar hooks en mcp install y verificación por tipo (T-0065.05)
+- fix: avisar de rutas ignoradas y usar project del workspace (T-0065.04)
+- fix: modo live en perfiles worker y git -C status/add (T-0065.03)
+- fix: alinear permisos del conductor con el flujo live (T-0065.02)
+- fix: aceptar config raíz sin bloque memory (T-0065.01)
+- fix: enlazar commits de sys al ticket (T-0064)
+- fix: traducir paths del ticket al repo live (T-0063)
+
+### refactor
+- refactor: catálogo MCP bajo 32 KiB (T-0088.04)
+- refactor: recortar descripciones del catálogo MCP (T-0088.04)
 
 ### docs
-- docs: reorganizacion de tickets y E2E T-0023 (T-0078.06)
+- docs: notas de migración de v0.5.0 (T-0090.02)
+- docs: política de subida del techo de checks (T-0088.07)
+- docs: plantilla de delegación sin repetir el perfil (T-0088.02)
+- docs: ayuda de perms sin prometer exactitud que no da (T-0088.03)
+- docs: allowlist de workers para proyectos no-Python (T-0085.03)
+- docs: política de presupuesto de pasos en perfiles worker (T-0085.08)
+- docs: reorganizacion de tickets (T-0078.06)
+- docs: memoria autónoma en la referencia MCP (T-0067.05)
+- docs: memoria autónoma; el usuario solo confirma tickets (T-0067.05)
 
-La reorganización cubre move/promote/demote/renumber/purge con dry-run por
-defecto, un solo nivel, backup y repair-gaps. El E2E reproduce el caso real de
-taiki-sys: T-0024..T-0027 bajo T-0023 pasan a T-0023.01..04 y se reapuntan
-enlaces y FTS.
+### test
+- test: cubrir el bump que no degrada y documentar la semántica (T-0090.01)
+- test: duplicados conservan al activo por evidencia y --force explicita (T-0091)
+- test: regresion de la etiqueta tiempo/fallo en la evidencia (T-0089)
+- test: espera de recarga con reloj inyectado y doc de estados (T-0088.08)
+- test: comprobar un comando real de merge, no el patrón (T-0088.01)
+- test: allowlist worker valida lecturas git nuevas y denies intactos; docs de operacion con tabla por perfil (T-0088.01)
+- test: leer el evento del cierre, no el del reclamo (T-0088.06)
+- test: contrato de iterations/attempts en resumen CLI y MCP (T-0088.05)
+- test: contrato de evidence y reject_delivery (T-0085.23)
+- test: bajar baseline_checks a 1567 tras la poda (T-0085.19)
+- test: podar la suite sin perder cobertura (T-0085.19)
+- test: consolidar aserciones de auditoría bajo el techo (T-0085.10)
+- test: rechazos y steps_exhausted sin doble conteo (T-0085.10)
+- test: consolidar aserciones de re-exec bajo el techo (T-0085.20)
+- test: re-exec y selección de procesos (T-0085.20)
+- test: contrato de perms, deny explicativo y config show (T-0085.12)
+- test: máquina de estados con abandon (T-0085.07)
+- test: aserciones de esquema sin versión fija (T-0085.04)
+- test: alias de renumber en hook y raíces libres (T-0085.04)
+- test: tiempo y re-baseline de la suite (T-0062.05)
+- test: poda de MCP, skills y agentes (T-0062.03)
+- test: poda de TUI y CLI (T-0062.02)
+- test: poda de tests de memoria (T-0062.01)
+
+### chore
+- chore: margen de 10 checks para integrar .20 y .21 (T-0085.22)
+- chore: techo de checks a 1705 para la tanda final (T-0085.18)
+- chore: techo de checks a 1660 por el esquema v9 (T-0085.17)
+- chore: re-basar checks y techo de módulo de la suite (T-0085.15)
+- chore: re-basar el presupuesto de tiempo de la suite (T-0085.14)
+- chore: bloque Unreleased para la release (T-0081)
+- chore: techo de checks para la integracion (T-0080)
+- chore: calibrar benchmark export 20k (T-0074)
+
+### bug
+- bug: suite=tiempo para fallos solo de reloj y techo 14.0s medido (T-0089)
 
 ## v0.4.1 — 2026-11-03
 
