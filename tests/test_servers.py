@@ -479,6 +479,129 @@ def run(h: Harness) -> None:
         finally:
             reload_db.close()
 
+        # ── La espera de la recarga: reloj, huella y sueño inyectados ──
+        wait_db = db.connect(":memory:")
+        try:
+            wait_procs = {
+                50: {
+                    "pid": 50,
+                    "ppid": 1,
+                    "cmdline": "opencode serve --service",
+                },
+                100: {
+                    "pid": 100,
+                    "ppid": 50,
+                    "cmdline": "python3 /x/taiki/server.py",
+                },
+            }
+
+            def wait_process(pid):
+                return wait_procs.get(pid)
+
+            wait_db.execute(
+                "INSERT INTO mcp_servers(pid, ppid, name, fingerprint, "
+                "started_at, heartbeat_at, workspace) VALUES "
+                "(100, 50, 'taiki', 'viejo', '2026-10-31T10:00:00-05:00', "
+                "'2026-10-31T10:00:00-05:00', 'taiki')"
+            )
+            ticks = {"t": 0.0}
+            reads = {"n": 0}
+            sleeps = {"n": 0}
+
+            def fake_clock():
+                return ticks["t"]
+
+            def fake_sleep(_seconds):
+                sleeps["n"] += 1
+                ticks["t"] += 0.1
+
+            disk = runtime.disk_fingerprint()
+
+            def reader_late(_conn, _pid):
+                reads["n"] += 1
+                return disk if reads["n"] > 1 else "viejo"
+
+            reloaded = servers.reload_processes(
+                wait_db,
+                workspace="taiki",
+                apply=True,
+                process=wait_process,
+                signaller=lambda _pid, _sig: None,
+                current="viejo",
+                live={100: wait_procs[100]},
+                wait=True,
+                timeout=5.0,
+                fingerprint_reader=reader_late,
+                clock=fake_clock,
+                sleep=fake_sleep,
+            )
+            h.ok(
+                reloaded["statuses"] == {100: "recargado"} and sleeps["n"] == 1,
+                "un proceso que registra la huella nueva durante la espera "
+                "queda recargado",
+            )
+
+            lazy = servers.reload_processes(
+                wait_db,
+                workspace="taiki",
+                apply=True,
+                process=wait_process,
+                signaller=lambda _pid, _sig: None,
+                current="viejo",
+                live={100: wait_procs[100]},
+                wait=False,
+                fingerprint_reader=reader_late,
+                clock=fake_clock,
+                sleep=fake_sleep,
+            )
+            h.ok(
+                lazy["statuses"] == {}
+                and reads["n"] == 2
+                and sleeps["n"] == 1,
+                "con wait=False no se sondea ni se espera",
+            )
+
+            slow = servers.reload_processes(
+                wait_db,
+                workspace="taiki",
+                apply=True,
+                process=wait_process,
+                signaller=lambda _pid, _sig: None,
+                current="viejo",
+                live={100: wait_procs[100]},
+                wait=True,
+                timeout=0.3,
+                fingerprint_reader=lambda _conn, _pid: "viejo",
+                clock=fake_clock,
+                sleep=fake_sleep,
+            )
+            h.ok(
+                slow["statuses"] == {100: "pendiente"} and sleeps["n"] == 4,
+                "sin huella nueva al vencer el timeout queda pendiente "
+                "(reloj inyectado, sin dormir)",
+            )
+
+            silent = servers.reload_processes(
+                wait_db,
+                workspace="taiki",
+                apply=True,
+                process=wait_process,
+                signaller=lambda _pid, _sig: None,
+                current="viejo",
+                live={100: wait_procs[100]},
+                wait=True,
+                fingerprint_reader=lambda _conn, _pid: None,
+                clock=fake_clock,
+                sleep=fake_sleep,
+            )
+            h.ok(
+                silent["statuses"] == {100: "sin respuesta"}
+                and sleeps["n"] == 4,
+                "sin huella registrada no hay con qué comparar: sin respuesta",
+            )
+        finally:
+            wait_db.close()
+
         servers.register(fleet, "taiki", "test")
         row = fleet.execute(
             "SELECT * FROM mcp_servers WHERE pid = ?", (os.getpid(),)

@@ -687,9 +687,20 @@ para no corromper datos. La recarga no pasa por reiniciar OpenCode:
   workspace** (registrados, con padre vivo; los de otros proyectos no se
   tocan y los huérfanos siguen siendo cosa de `--prune`). `--dry-run` lista a
   quién se señalaría sin enviar la señal.
-- `taiki mcp install` termina invocando esa misma recarga salvo
-  `--no-reload`: es el momento en que el flujo de trabajo sabe que acaba de
-  aterrizar código.
+- Por defecto `--reload` **espera** a que cada servidor confirme su nuevo
+  código: sondea su huella registrada hasta que coincide con la del disco o
+  hasta `--wait-timeout` segundos (defecto 5, tope 60). Así la primera llamada
+  MCP posterior no falla con `StaleServerError`. El resumen reporta por PID:
+  - `recargado` — la huella ya coincide: el servidor ejecuta el código nuevo.
+  - `pendiente` — venció el timeout sin coincidencia; el re-exec puede seguir
+    en camino, pero la siguiente petición puede fallar con `StaleServerError`.
+  - `sin respuesta` — el proceso no tiene huella registrada con la que
+    comparar (no se puede confirmar la recarga).
+- `--no-wait` señala y vuelve sin sondear (comportamiento anterior). Úsalo en
+  scripts y CI, donde un retraso de hasta 5 s importa más que la garantía.
+- `taiki mcp install` termina invocando esa misma recarga —con espera— salvo
+  `--no-reload` (sin señal) o `--no-wait` (señal sin esperar): es el momento
+  en que el flujo de trabajo sabe que acaba de aterrizar código.
 
 En el servidor, el manejador de `SIGHUP` solo marca una bandera. El re-exec
 ocurre en el punto seguro —entre peticiones, con la respuesta ya escrita,
