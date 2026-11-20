@@ -7,7 +7,7 @@ from typing import Any
 
 from ..domain import ValidationError
 from ..workspace import load_config
-from .models import MEMORY_SCOPES, WRITE_POLICIES
+from .models import MEMORY_SCOPES, TAG_RE, WRITE_POLICIES
 
 DEFAULT_AUTO_CURATE: dict[str, Any] = {
     "enabled": False,
@@ -21,6 +21,9 @@ DEFAULT_MEMORY_CONFIG: dict[str, Any] = {
     "project_budget_chars": 3000,
     "user_budget_chars": 1200,
     "brief_budget_chars": 4500,
+    "brief_mode": "full",
+    "layer0_tags": ["security", "seguridad", "scope", "sudo", "confirm"],
+    "enforce_budget": False,
     "max_entry_chars": 600,
     "max_playbook_chars": 12000,
     "playbook_index_chars": 400,
@@ -33,6 +36,7 @@ DEFAULT_MEMORY_CONFIG: dict[str, Any] = {
     "candidate_similarity": 0.8,
     "instructions_sync": True,
     "skills_sync": True,
+    "auto_approve_evidence": True,
     "user_scope": "project",
     "auto_curate": dict(DEFAULT_AUTO_CURATE),
     "review_command": None,
@@ -41,9 +45,12 @@ DEFAULT_MEMORY_CONFIG: dict[str, Any] = {
 
 _BOOL_KEYS = (
     "enabled",
+    "enforce_budget",
     "instructions_sync",
     "skills_sync",
+    "auto_approve_evidence",
 )
+_BRIEF_MODES = ("full", "index", "grouped")
 _POSITIVE_KEYS = (
     "project_budget_chars",
     "user_budget_chars",
@@ -168,6 +175,28 @@ def validate_memory_config(raw: Any) -> dict[str, Any]:
     if result["user_scope"] not in MEMORY_SCOPES:
         _fail("user_scope", f"uno de {', '.join(MEMORY_SCOPES)}", result["user_scope"])
 
+    if result["brief_mode"] not in _BRIEF_MODES:
+        _fail("brief_mode", f"uno de {', '.join(_BRIEF_MODES)}", result["brief_mode"])
+
+    layer0 = result["layer0_tags"]
+    if not isinstance(layer0, list) or not all(
+        isinstance(item, str) for item in layer0
+    ):
+        _fail("layer0_tags", "una lista de textos", layer0)
+    normalized: list[str] = []
+    for item in layer0:
+        value = item.strip().lower()
+        if not value:
+            continue
+        if not TAG_RE.fullmatch(value):
+            _fail(
+                "layer0_tags",
+                "tags en minúsculas (1-33 caracteres: a-z 0-9 . _ / -)",
+                item,
+            )
+        normalized.append(value)
+    result["layer0_tags"] = normalized
+
     return result
 
 
@@ -182,9 +211,32 @@ def load_memory_config(
     return validate_memory_config(data.get("memory"))
 
 
+def resolve_memory_config(value: dict[str, Any] | None) -> dict[str, Any]:
+    """Acepta None, el bloque ``memory`` o el config raíz completo.
+
+    Regla única para todos los flujos de memoria: un dict con ``memory`` usa
+    ese bloque; un dict cuyas claves son todas del bloque ``memory`` se valida
+    tal cual (estricto); cualquier otro dict es un config raíz y se lee su
+    ``memory`` (ausente → defaults del workspace). Así ``schedule`` o
+    ``agents`` pueden pasar el config raíz sin bloque ``memory`` sin que las
+    claves ajenas (``project``, ``guard``, ``scope``…) se confundan con
+    claves desconocidas de ``memory.*``.
+    """
+    if value is None:
+        return load_memory_config()
+    if not isinstance(value, dict):
+        return validate_memory_config(value)
+    if "memory" in value:
+        return validate_memory_config(value.get("memory"))
+    if set(value) <= set(DEFAULT_MEMORY_CONFIG):
+        return validate_memory_config(value)
+    return load_memory_config(config=value)
+
+
 __all__ = [
     "DEFAULT_AUTO_CURATE",
     "DEFAULT_MEMORY_CONFIG",
     "load_memory_config",
+    "resolve_memory_config",
     "validate_memory_config",
 ]

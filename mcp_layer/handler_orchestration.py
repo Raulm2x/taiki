@@ -19,7 +19,7 @@ from ticketlib import (
 from ticketlib.guard.context import find_active, session_chain
 from ticketlib.memory.advice import routing_advice
 
-from .handler_common import _project_root, _summary
+from .handler_common import _project_root, _receipt, _summary
 from .handler_tickets import _attach_worktree
 
 
@@ -134,6 +134,30 @@ def _handle_reassign(
     )
 
 
+def _handle_reject_delivery(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    session: str | None = None,
+    actor: str = "agente",
+) -> dict[str, Any]:
+    code = args.get("code")
+    if not code:
+        raise domain.ValidationError("El parámetro 'code' es obligatorio")
+    reason = args.get("reason")
+    if not reason:
+        raise domain.ValidationError("El parámetro 'reason' es obligatorio")
+    ticket = repo.reject_delivery(
+        conn,
+        code,
+        reason,
+        actor=actor,
+        actor_type="agente",
+        session_id=session,
+        reopen=bool(args.get("reopen")),
+    )
+    return _receipt(ticket, detail=bool(args.get("detail", False)))
+
+
 def _handle_schedule(
     conn: sqlite3.Connection,
     args: dict[str, Any],
@@ -170,6 +194,7 @@ def _handle_heartbeat(
     actor: str = "agente",
 ) -> dict[str, Any]:
     code = args.get("code")
+    action = args.get("action") or "heartbeat"
     if not code:
         active = find_active(conn, session_chain(session), actor)
         if active is None:
@@ -177,6 +202,36 @@ def _handle_heartbeat(
                 "No hay ticket activo; indica code o reclama uno con claim."
             )
         code = active["code"]
+    if action in ("abandon", "steps_exhausted"):
+        # Validaciones de dueño, force y reason en el store: el handler solo
+        # despacha. Ninguna de las dos acciones cambia la fase del ticket.
+        if action == "abandon":
+            ticket = repo.abandon_ticket(
+                conn,
+                code,
+                actor=actor,
+                actor_type="agente",
+                session_id=session,
+                force=bool(args.get("force")),
+                reason=args.get("reason"),
+            )
+        else:
+            ticket = repo.steps_exhausted(
+                conn,
+                code,
+                phase=args.get("phase"),
+                note=args.get("reason"),
+                actor=actor,
+                actor_type="agente",
+                session_id=session,
+            )
+        return {
+            "code": code,
+            "action": action,
+            "status": ticket["status"],
+            "owner_session": ticket["owner_session"],
+            "lease_until": ticket["lease_until"],
+        }
     ticket = repo.get_ticket(conn, code)
     owner = ticket["owner_session"]
     if owner and not (

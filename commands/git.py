@@ -89,6 +89,13 @@ def cmd_hook_check_msg(args: argparse.Namespace) -> int:
         print(f"Aviso: {warning}", file=sys.stderr)
     if result["ok"]:
         return 0
+    if result.get("message"):
+        print(
+            f"{result['message']}\n"
+            f"Si el commit no corresponde a un ticket, escribe {BYPASS_TOKEN}.",
+            file=sys.stderr,
+        )
+        return 1
     if result["missing"]:
         detail = f"Tickets inexistentes en el asunto: {', '.join(result['missing'])}."
     elif result.get("unconfirmed"):

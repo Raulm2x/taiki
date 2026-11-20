@@ -9,6 +9,7 @@ tiene su propio índice y árbol de trabajo, así que dos sesiones no se pisan.
 from __future__ import annotations
 
 
+import fnmatch
 import re
 import shutil
 import subprocess
@@ -253,6 +254,105 @@ def status(path: str | Path) -> dict[str, Any]:
     }
 
 
+def changes(path: str | Path) -> dict[str, list[str]]:
+    """Cambios del árbol separados en rastreados y sin rastrear.
+
+    ``--porcelain -z`` conserva rutas con espacios; en un rename, el segundo
+    registro es la ruta de origen y no un fichero aparte.
+    """
+    root = Path(path).expanduser()
+    result = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain", "-z"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or f"git status falló en {root}"
+        raise TicketError(detail)
+    tracked: list[str] = []
+    untracked: list[str] = []
+    records = result.stdout.split("\0")
+    index = 0
+    while index < len(records):
+        record = records[index]
+        index += 1
+        if len(record) < 4:
+            continue
+        kind, name = record[:2], record[3:]
+        if kind == "??":
+            untracked.append(name)
+            continue
+        tracked.append(name)
+        if "R" in kind or "C" in kind:
+            index += 1  # la ruta de origen del rename/copia
+    return {"tracked": tracked, "untracked": untracked}
+
+
+def _blocking_message(path: Path, diff: dict[str, list[str]]) -> str:
+    """Error con las rutas que bloquean, por tipo, y una acción concreta."""
+    lines = [f"{path} tiene cambios sin commitear:"]
+    if diff["tracked"]:
+        lines.append(f"  modificadas rastreadas: {', '.join(sorted(diff['tracked']))}")
+    if diff["untracked"]:
+        lines.append(f"  sin rastrear: {', '.join(sorted(diff['untracked']))}")
+    if diff["tracked"] and diff["untracked"]:
+        action = (
+            "Commitéa las modificadas y usa --keep-untracked para las sin "
+            "rastrear; luego reintenta el merge."
+        )
+    elif diff["tracked"]:
+        action = "Commitéalas en la rama del worktree y reintenta el merge."
+    else:
+        action = (
+            "Commitéalas o usa --keep-untracked para conservarlas sin commitear; "
+            "luego reintenta el merge."
+        )
+    lines.append(action)
+    return "\n".join(lines)
+
+
+def _matches_scope(path: str, scope: list[str]) -> bool:
+    """¿La ruta cae dentro de los paths (o globs) del ticket?"""
+    candidate = path.rstrip("/")
+    for raw in scope:
+        pattern = raw.strip().rstrip("/")
+        if not pattern:
+            continue
+        if pattern == ".":
+            return True
+        if any(char in pattern for char in "*?["):
+            if fnmatch.fnmatch(candidate, pattern):
+                return True
+            continue
+        if candidate == pattern or candidate.startswith(f"{pattern}/"):
+            return True
+    return False
+
+
+def _inside_scope(paths: list[str], scope: list[str] | None) -> list[str]:
+    if not scope:
+        return []
+    return [path for path in paths if _matches_scope(path, scope)]
+
+
+def _preserve_untracked(path: Path, files: list[str]) -> Path:
+    """Mueve los sin rastrear a un hermano del worktree antes de retirarlo."""
+    base = path.parent / f"{path.name}.untracked"
+    backup = base
+    suffix = 1
+    while backup.exists():
+        backup = path.parent / f"{base.name}-{suffix}"
+        suffix += 1
+    for name in files:
+        source = path / name
+        if not source.exists():
+            continue
+        destination = backup / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(source), str(destination))
+    return backup
+
+
 def merged(main: Path, branch: str, *, integration: str | None = None) -> bool:
     """¿La rama del worktree ya está contenida en la rama de integración?"""
     main = Path(main).expanduser().resolve()
@@ -427,27 +527,45 @@ def merge(
     test_cmd: list[str] | None = None,
     test_env: dict[str, str] | None = None,
     delete: bool = False,
+    keep_untracked: bool = False,
+    scope_paths: list[str] | None = None,
 ) -> dict[str, Any]:
     """Rebase + tests + merge ff-only en la rama de integración.
 
     La rama del worktree se rebasa sobre ``orchestrator.integration_branch``
     (``develop`` por defecto) y se integra ahí, no en la rama actual. Si la
     rama configurada no existe se usa la actual con un aviso. Exige el
-    worktree y el checkout principal limpios; si el rebase o los tests fallan,
-    no se mergea nada. ``test_cmd`` lo construye el CLI con el gate estricto
-    de la suite (``--strict-budget``), de modo que un merge que rompa el
-    presupuesto global de comprobaciones o de tiempo falla aquí. ``test_env``
-    permite ejecutar ese gate con el perfil de CI (``CI=true``): el merge es
-    una integración y no una pasada de desarrollo, así que no debe fallar por
-    el ruido del reloj local.
+    worktree sin modificaciones rastreadas y el checkout principal limpio; si
+    el rebase o los tests fallan, no se mergea nada. El error de cambios
+    pendientes lista las rutas por tipo (modificadas rastreadas y sin
+    rastrear), no solo un recuento. ``keep_untracked`` permite integrar con
+    ficheros sin rastrear: si caen dentro de ``scope_paths`` (los paths del
+    ticket) aborta, porque son trabajo real sin commitear; si no, los conserva
+    en un hermano ``<worktree>.untracked`` antes de retirar el worktree.
+    ``test_cmd`` lo construye el CLI con el gate estricto de la suite
+    (``--strict-budget``), de modo que un merge que rompa el presupuesto global
+    de comprobaciones o de tiempo falla aquí. ``test_env`` permite ejecutar ese
+    gate con el perfil de CI (``CI=true``): el merge es una integración y no
+    una pasada de desarrollo, así que no debe fallar por el ruido del reloj
+    local.
     """
     main = Path(main).expanduser().resolve()
     path = Path(target).expanduser().resolve()
     tree = status(path)
     if not tree["exists"]:
         raise TicketError(f"No existe el worktree {path}")
-    if tree["dirty"]:
-        raise TicketError(f"{path} tiene cambios sin commitear")
+    diff = changes(path)
+    if diff["tracked"] or (diff["untracked"] and not keep_untracked):
+        raise TicketError(_blocking_message(path, diff))
+    if diff["untracked"]:
+        inside = _inside_scope(diff["untracked"], scope_paths)
+        if inside:
+            raise TicketError(
+                f"{path} tiene sin rastrear dentro de los paths del ticket:\n"
+                f"  sin rastrear: {', '.join(sorted(inside))}\n"
+                "Es trabajo real sin commitear: commitéalo en la rama y "
+                "reintenta; --keep-untracked no lo descarta."
+            )
     branch = tree.get("branch")
     if not branch or not branch.startswith("agent/"):
         raise TicketError(f"{path} no está en una rama agent/…")
@@ -502,6 +620,11 @@ def merge(
         "tests": tested,
     }
     if delete:
+        preserved: Path | None = None
+        remaining = changes(path)["untracked"] if keep_untracked else []
+        if remaining:
+            preserved = _preserve_untracked(path, remaining)
+            summary["untracked_preserved"] = str(preserved)
         try:
             removal = remove(main, path, delete_branch=True)
         except TicketError as exc:

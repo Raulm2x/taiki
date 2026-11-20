@@ -12,15 +12,18 @@ import sqlite3
 from datetime import datetime, timedelta
 from typing import Any
 
+from ..store.workflow import rejection_count, steps_exhausted_signal
 from ..util import now, parse_datetime
 from . import core
 from . import budget as budget_lib
+from .brief import render_brief
 from .models import (
     MEMORY_KINDS,
     MEMORY_SCOPES,
     MEMORY_STATUSES,
     USAGE_ACTIONS,
 )
+from .render import percentage
 
 CLOSED_STATUSES = ("completado", "verificado", "confirmado", "cancelado")
 GENERIC_PROFILES = ("", "agente", "usuario", "conductor")
@@ -135,6 +138,23 @@ def _routing(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+def _storage(budget: dict[str, Any]) -> dict[str, Any]:
+    """Almacenamiento advisory: project+user de ``budget``."""
+    used = sum(int(item["used"]) for item in budget.values())
+    cap = sum(int(item["limit"]) for item in budget.values())
+    return {"used": used, "cap": cap, "percent": percentage(used, cap)}
+
+
+def _index(conn: sqlite3.Connection, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Presión del brief: lo que ocupa el índice generado frente a su techo."""
+    usage = render_brief(conn, cfg)["usage"]
+    return {
+        "used": int(usage["used"]),
+        "cap": int(usage["limit"]),
+        "percent": int(usage["percent"]),
+    }
+
+
 def stats(
     conn: sqlite3.Connection,
     config: dict[str, Any] | None = None,
@@ -142,13 +162,16 @@ def stats(
     """Foto estable de la memoria: conteos, presupuesto, uso y routing."""
     cfg = core.config(config)
     total, by_status, by_scope, by_kind = _counts(conn)
+    budget = _budget(conn, cfg)
     return {
         "generated_at": now(),
         "total": total,
         "by_status": by_status,
         "by_scope": by_scope,
         "by_kind": by_kind,
-        "budget": _budget(conn, cfg),
+        "budget": budget,
+        "index": _index(conn, cfg),
+        "storage": _storage(budget),
         "proposals": _proposals(conn),
         "usage": _usage(conn),
         "routing": _routing(conn),
@@ -191,9 +214,14 @@ def impact(
         raise RuntimeError("No se pudo resolver la hora actual")
     cutoff = (base - timedelta(days=window)).isoformat(timespec="seconds")
 
+    # ``closed`` cuenta por fecha de entrega (``completed_at``); el histórico
+    # confirmado antes de conservarla usa ``confirmed_at`` como fallback.
     rows = conn.execute(
-        "SELECT status, iterations, started_at, completed_at FROM tickets "
-        "WHERE archived = 0 AND completed_at IS NOT NULL AND completed_at >= ? "
+        "SELECT status, iterations, started_at, "
+        "COALESCE(completed_at, confirmed_at) AS completed_at FROM tickets "
+        "WHERE archived = 0 "
+        "AND COALESCE(completed_at, confirmed_at) IS NOT NULL "
+        "AND COALESCE(completed_at, confirmed_at) >= ? "
         "ORDER BY completed_at",
         (cutoff,),
     ).fetchall()
@@ -221,6 +249,7 @@ def impact(
                 "lead_samples": 0,
                 "verified": 0,
                 "verification_failures": 0,
+                "steps_exhausted": 0,
             },
         )
         bucket["closed"] += 1
@@ -230,7 +259,7 @@ def impact(
             bucket["lead_samples"] += 1
 
     verified = 0
-    failures = 0
+    failures = rejection_count(conn, cutoff)
     for row in conn.execute(
         "SELECT ts, from_status, to_status FROM events WHERE ts >= ? "
         "AND (to_status = 'verificado' OR "
@@ -241,9 +270,7 @@ def impact(
         is_failure = (
             row["from_status"] == "verificado" and row["to_status"] == "en_progreso"
         )
-        if is_failure:
-            failures += 1
-        else:
+        if not is_failure:
             verified += 1
         if period is None:
             continue
@@ -257,10 +284,37 @@ def impact(
                 "lead_samples": 0,
                 "verified": 0,
                 "verification_failures": 0,
+                "steps_exhausted": 0,
             },
         )
         bucket["verified"] += 0 if is_failure else 1
         bucket["verification_failures"] += 1 if is_failure else 0
+
+    # Señal steps_exhausted por periodo y perfil, deduplicada contra los
+    # rechazos: un ticket agotado y luego rechazado cuenta una vez.
+    exhausted_profiles: dict[str, int] = {}
+    exhausted_total = 0
+    for item in steps_exhausted_signal(conn, cutoff):
+        profile = item["actor"]
+        exhausted_profiles[profile] = exhausted_profiles.get(profile, 0) + 1
+        exhausted_total += 1
+        period = _period(item["ts"])
+        if period is None:
+            continue
+        bucket = buckets.setdefault(
+            period,
+            {
+                "period": period,
+                "closed": 0,
+                "attempts_total": 0,
+                "lead_total": 0.0,
+                "lead_samples": 0,
+                "verified": 0,
+                "verification_failures": 0,
+                "steps_exhausted": 0,
+            },
+        )
+        bucket["steps_exhausted"] += 1
 
     trend = []
     for period in sorted(buckets):
@@ -294,7 +348,12 @@ def impact(
             "samples": lead_samples,
             "avg": round(lead_total / lead_samples, 2) if lead_samples else None,
         },
-        "verification": {"verified": verified, "failures": failures},
+        "verification": {
+            "verified": verified,
+            "failures": failures,
+            "steps_exhausted": exhausted_total,
+            "steps_exhausted_by_profile": exhausted_profiles,
+        },
         "trend": trend,
         "notes": ["Datos descriptivos; no implican causalidad."],
     }

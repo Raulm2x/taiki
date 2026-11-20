@@ -109,6 +109,16 @@ def _covers(candidates, rule, code):
     )
 
 
+def _rejects(h: Harness, cases: list, message: str) -> None:
+    rejected = 0
+    for case in cases:
+        try:
+            case()
+        except ValidationError:
+            rejected += 1
+    h.eq(rejected, len(cases), message)
+
+
 def _rules(h: Harness) -> None:
     conn = db.connect(h.tmp / "candidates.db")
     try:
@@ -183,28 +193,37 @@ def _rules(h: Harness) -> None:
         after = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
 
         rules = {candidate["rule"] for candidate in candidates}
-        for rule in ("rework", "rejection", "blocked", "expensive_close", "hotspot", "directive"):
-            h.ok(rule in rules, f"la regla {rule} genera candidato")
-        h.ok(rules <= _RULES, "ninguna regla desconocida")
-        h.eq(before, 0, "el motor no escribe memorias")
-        h.eq(after, 0, "el motor sigue sin escribir memorias")
-
-        for ticket in (normal, transient):
-            h.ok(
+        h.ok(
+            all(
+                rule in rules
+                for rule in (
+                    "rework",
+                    "rejection",
+                    "blocked",
+                    "expensive_close",
+                    "hotspot",
+                    "directive",
+                )
+            )
+            and rules <= _RULES,
+            "cada regla conocida genera candidato y no hay reglas desconocidas",
+        )
+        h.ok(before == 0 and after == 0, "el motor no escribe memorias")
+        h.ok(
+            all(
                 not any(
                     candidate["rule"] in ("rework", "rejection", "blocked")
                     and _covers([candidate], candidate["rule"], ticket["code"])
                     for candidate in candidates
-                ),
-                f"{ticket['code']} no genera candidato de incidencia",
-            )
-        h.ok(
-            not _covers(candidates, "rework", rejection["code"]),
-            "un rechazo no se duplica como rework",
+                )
+                for ticket in (normal, transient)
+            ),
+            "los tickets normales o transitorios no generan candidato de incidencia",
         )
         h.ok(
-            _covers(candidates, "rework", rework["code"]),
-            "el rework real tiene evidencia del ticket",
+            not _covers(candidates, "rework", rejection["code"])
+            and _covers(candidates, "rework", rework["code"]),
+            "un rechazo no se duplica como rework y el rework real lleva evidencia",
         )
         expensive_candidate = next(
             candidate
@@ -223,11 +242,11 @@ def _rules(h: Harness) -> None:
             if candidate["rule"] == "hotspot"
             and candidate["details"]["path_prefix"] == "ticketlib/"
         )
-        h.ok(hotspot["sample_size"] >= 3, "el hotspot agrupa varios tickets")
         h.ok(
-            {rework["code"], rejection["code"], blocked["code"]}
+            hotspot["sample_size"] >= 3
+            and {rework["code"], rejection["code"], blocked["code"]}
             <= _evidence(hotspot),
-            "el hotspot incluye los tickets con incidencia",
+            "el hotspot agrupa varios tickets con incidencia",
         )
         h.ok(
             not any(
@@ -243,23 +262,18 @@ def _rules(h: Harness) -> None:
             if candidate["rule"] == "directive"
             and normal["code"] in _evidence(candidate)
         )
-        h.ok(
-            directive["title"].startswith("Directiva de usuario:"),
-            "la directiva se titula como tal",
-        )
         prohibition = next(
             candidate
             for candidate in candidates
             if candidate["rule"] == "directive"
             and "git stash" in candidate["details"]["motivo"]
         )
-        h.eq(prohibition["sample_size"], 2, "la prohibición exige dos evidencias")
-        h.eq(
-            _evidence(prohibition),
-            {first["code"], second["code"]},
-            "la prohibición agrupa ambos tickets",
+        h.ok(
+            directive["title"].startswith("Directiva de usuario:")
+            and prohibition["sample_size"] == 2
+            and _evidence(prohibition) == {first["code"], second["code"]},
+            "la directiva se titula como tal y la prohibición agrupa dos evidencias",
         )
-
         h.eq(
             [candidate["id"] for candidate in candidates],
             [candidate["id"] for candidate in generate_candidates(conn)],
@@ -279,20 +293,14 @@ def _rules(h: Harness) -> None:
             "details",
         }
         h.ok(
-            all(set(candidate) == expected_keys for candidate in candidates),
-            "todos los candidatos exponen el contrato completo",
-        )
-        h.ok(
-            all(0.0 <= candidate["confidence"] <= 1.0 for candidate in candidates),
-            "todas las confianzas están en rango",
-        )
-        h.ok(
-            all(len(candidate["id"]) == 16 for candidate in candidates),
-            "todos los ids son estables y de 16 caracteres",
-        )
-        h.ok(
-            all(candidate["suggested_key"] for candidate in candidates),
-            "todas las claves sugeridas son no vacías",
+            all(set(candidate) == expected_keys for candidate in candidates)
+            and all(
+                0.0 <= candidate["confidence"] <= 1.0
+                for candidate in candidates
+            )
+            and all(len(candidate["id"]) == 16 for candidate in candidates)
+            and all(candidate["suggested_key"] for candidate in candidates),
+            "todos los candidatos exponen el contrato con confianza, id y clave",
         )
     finally:
         conn.close()
@@ -322,12 +330,15 @@ def _routing(h: Harness) -> None:
             for candidate in generate_candidates(conn)
             if candidate["rule"] == "routing"
         ]
-        h.eq(len(routing), 1, "solo el perfil con ventaja genera routing")
         best = routing[0]
-        h.eq(best["details"]["agent"], "worker-a", "el routing elige al perfil bueno")
-        h.eq(best["sample_size"], 5, "el routing usa la muestra disponible")
-        h.eq(best["details"]["successes"], 5, "todos los éxitos cuentan")
-        h.ok(best["confidence"] >= 0.5, "el Wilson lower bound supera el umbral")
+        h.ok(
+            len(routing) == 1
+            and best["details"]["agent"] == "worker-a"
+            and best["sample_size"] == 5
+            and best["details"]["successes"] == 5
+            and best["confidence"] >= 0.5,
+            "solo el perfil con ventaja genera routing con muestra y Wilson",
+        )
 
         for index in range(4):
             ticket = _ticket(
@@ -380,25 +391,20 @@ def _grouping_and_limit(h: Harness) -> None:
 
         candidates = generate_candidates(conn)
         blocked = [item for item in candidates if item["rule"] == "blocked"]
-        h.eq(len(blocked), 1, "el mismo motivo se agrupa en un candidato")
-        h.eq(blocked[0]["sample_size"], 3, "la muestra suma los tickets")
-        h.eq(len(blocked[0]["evidence"]), 3, "la evidencia no se duplica")
+        h.ok(
+            len(blocked) == 1
+            and blocked[0]["sample_size"] == 3
+            and len(blocked[0]["evidence"]) == 3,
+            "el mismo motivo se agrupa con muestra y evidencia sin duplicar",
+        )
 
         limited = generate_candidates(conn, {"candidate_max": 2})
-        h.eq(len(limited), 2, "candidate_max recorta la lista")
         h.ok(
-            limited[0]["confidence"] >= limited[1]["confidence"],
-            "los candidatos salen por confianza",
-        )
-        h.eq(
-            len({item["id"] for item in limited}),
-            2,
-            "no se repiten ids tras recortar",
-        )
-        h.eq(
-            len(generate_candidates(conn, {"candidate_max": 20}, limit=1)),
-            1,
-            "limit explícito manda sobre la configuración",
+            len(limited) == 2
+            and limited[0]["confidence"] >= limited[1]["confidence"]
+            and len({item["id"] for item in limited}) == 2
+            and len(generate_candidates(conn, {"candidate_max": 20}, limit=1)) == 1,
+            "candidate_max y limit recortan por confianza sin repetir ids",
         )
         h.raises(
             ValidationError,
@@ -411,9 +417,12 @@ def _grouping_and_limit(h: Harness) -> None:
 
 def _thresholds(h: Harness) -> None:
     defaults = validate_memory_config({})
-    h.eq(defaults["candidate_routing_min_samples"], 5, "muestras de routing por defecto")
-    h.eq(defaults["candidate_max"], 20, "máximo de candidatos por defecto")
-    h.eq(defaults["candidate_similarity"], 0.8, "similitud por defecto")
+    h.ok(
+        defaults["candidate_routing_min_samples"] == 5
+        and defaults["candidate_max"] == 20
+        and defaults["candidate_similarity"] == 0.8,
+        "los umbrales de candidatos tienen sus defaults",
+    )
     custom = validate_memory_config(
         {
             "candidate_routing_min_samples": 2,
@@ -421,35 +430,40 @@ def _thresholds(h: Harness) -> None:
             "candidate_similarity": 0.5,
         }
     )
-    h.eq(custom["candidate_routing_min_samples"], 2, "routing admite otro umbral")
-    h.eq(custom["candidate_max"], 3, "máximo admite otro umbral")
-    h.eq(custom["candidate_similarity"], 0.5, "similitud admite otro umbral")
-    for key, value in (
-        ("candidate_routing_min_samples", 0),
-        ("candidate_routing_min_samples", "5"),
-        ("candidate_max", -1),
-        ("candidate_max", True),
-        ("candidate_similarity", 0),
-        ("candidate_similarity", 1.5),
-        ("candidate_similarity", "0.5"),
-        ("candidate_similarity", True),
-    ):
-        h.raises(
-            ValidationError,
-            lambda key=key, value=value: validate_memory_config({key: value}),
-            f"memory.{key}={value!r} se rechaza",
-        )
-    h.eq(wilson_lower(0, 0), 0.0, "Wilson sin muestra es cero")
     h.ok(
-        wilson_lower(5, 5) < 1.0 < 2.0 and wilson_lower(5, 5) > 0.5,
-        "Wilson penaliza la muestra pequeña",
+        custom["candidate_routing_min_samples"] == 2
+        and custom["candidate_max"] == 3
+        and custom["candidate_similarity"] == 0.5,
+        "los umbrales de candidatos admiten override",
     )
-    h.eq(
-        rejection_reason("Rechazado en revisión: falta probar"),
-        "falta probar",
-        "el motivo del rechazo se extrae",
+    _rejects(
+        h,
+        [
+            lambda key=key, value=value: validate_memory_config({key: value})
+            for key, value in (
+                ("candidate_routing_min_samples", 0),
+                ("candidate_routing_min_samples", "5"),
+                ("candidate_max", -1),
+                ("candidate_max", True),
+                ("candidate_similarity", 0),
+                ("candidate_similarity", 1.5),
+                ("candidate_similarity", "0.5"),
+                ("candidate_similarity", True),
+            )
+        ],
+        "los umbrales de candidatos rechazan tipos y rangos inválidos",
     )
-    h.eq(rejection_reason("otro comentario"), None, "un comentario normal no es rechazo")
+    h.ok(
+        wilson_lower(0, 0) == 0.0
+        and wilson_lower(5, 5) < 1.0
+        and wilson_lower(5, 5) > 0.5,
+        "Wilson es cero sin muestra y penaliza muestras pequeñas",
+    )
+    h.ok(
+        rejection_reason("Rechazado en revisión: falta probar") == "falta probar"
+        and rejection_reason("otro comentario") is None,
+        "el motivo del rechazo se extrae solo de comentarios de rechazo",
+    )
     json.dumps(defaults)
 
 

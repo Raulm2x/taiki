@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import cli
+from commands.guard import _print_perms as print_perms
 from ticketlib import audit as audit_lib, db, guard, repo, scratch
+from ticketlib.guard import commands as shell_rules
 from tests.support import Harness
 
 
@@ -659,3 +662,259 @@ def run(h: Harness) -> None:
         == "la ruta '/etc/x'",
         "dd valida solo el destino of=",
     )
+
+    # ── Allowlist documentada: perms, deny explicativo ───────────
+    agents_dir = Path(__file__).resolve().parent.parent / ".opencode" / "agents"
+    profiles = shell_rules.profile_rules(agents_dir)
+    h.ok(
+        bool(profiles)
+        and all(item["name"].startswith("worker") for item in profiles),
+        "profile_rules lee los perfiles worker de .opencode/agents",
+    )
+    worker = next(
+        (item for item in profiles if item["name"] == "worker"), None
+    )
+    rules = worker["rules"] if worker else []
+    h.ok(
+        any(
+            rule.get("action") == "shell"
+            and rule.get("resource") == "git add -A*"
+            and rule.get("effect") == "deny"
+            for rule in rules
+        ),
+        "perms encuentra el deny conocido de git add -A en worker",
+    )
+    dup = shell_rules.parse_permissions(
+        "permissions:\n"
+        "  - action: shell\n"
+        '    resource: "git add *"\n'
+        "    effect: allow\n"
+        "  - action: shell\n"
+        '    resource: "git add *"\n'
+        "    effect: deny\n"
+        "---\n"
+    )
+    h.ok(
+        len(dup) == 2
+        and not shell_rules.rule_wins(dup, 0)
+        and shell_rules.rule_wins(dup, 1),
+        "la última regla que casa es la que gana",
+    )
+    verdict = shell_rules.command_verdict("git add src/a.py && cat nota", rules)
+    h.ok(
+        verdict["allowed"]
+        and all(seg["effect"] == "allow" for seg in verdict["segments"]),
+        "el veredicto permite el staging por rutas del perfil worker",
+    )
+    denied_verdict = shell_rules.command_verdict("git add .", rules)
+    h.ok(
+        not denied_verdict["allowed"]
+        and denied_verdict["segments"][0]["effect"] == "deny",
+        "el perfil worker deniega git add .",
+    )
+    # T-0088.01: lecturas de git que faltaban en la allowlist, en los cuatro
+    # perfiles worker. El deny de merge quedó afinado a `git merge *` para que
+    # no tape `git merge-base`: sin ese afinado, la última regla que casa
+    # vuelve a denegar la lectura.
+    git_reads = (
+        "git merge-base --is-ancestor fb5bf71 HEAD",
+        "git -C .worktrees/T-0001 merge-base --is-ancestor fb5bf71 HEAD",
+        "git rev-list --count fb5bf71..HEAD",
+        "git cat-file -t v0.4.1",
+        "git branch --contains fb5bf71",
+        "git for-each-ref refs/heads/agent",
+    )
+    denied_reads = sorted(
+        f"{profile['name']}: {cmd}"
+        for cmd in git_reads
+        for profile in profiles
+        if not shell_rules.command_verdict(cmd, profile["rules"])[
+            "allowed"
+        ]
+    )
+    h.ok(
+        not denied_reads,
+        "los cuatro perfiles worker permiten las lecturas de git "
+        "nuevas (merge-base, rev-list, cat-file, branch --contains, "
+        f"for-each-ref): {'; '.join(denied_reads) if denied_reads else 'ok'}",
+    )
+    h.ok(
+        all(
+            not shell_rules.command_verdict(cmd, profile["rules"])[
+                "allowed"
+            ]
+            for profile in profiles
+            for cmd in (
+                "git merge develop",
+                "git merge --no-ff develop",
+                "git push origin develop",
+                "rm -rf /tmp/x",
+                "sudo id",
+            )
+        ),
+        "ninguna regla nueva abre escritura: merge, push, rm -rf y sudo "
+        "siguen denegados en todos los perfiles worker",
+    )
+    merge_rule = next(
+        (
+            index
+            for index, rule in enumerate(rules)
+            if rule.get("action") == "shell"
+            and rule.get("resource") == "git merge-base *"
+            and rule.get("effect") == "allow"
+        ),
+        None,
+    )
+    h.ok(
+        merge_rule is not None
+        and shell_rules.rule_wins(rules, merge_rule)
+        and not shell_rules.command_is_mutating(
+            "git rev-list --count fb5bf71..HEAD"
+        )
+        and not shell_rules.command_is_mutating("git cat-file -t v0.4.1")
+        and not shell_rules.command_is_mutating(
+            "git for-each-ref refs/heads/agent"
+        )
+        and shell_rules.risky_git("git merge-base --is-ancestor a HEAD")
+        is None,
+        "el allow de merge-base no queda tapado y el guard trata las "
+        "lecturas nuevas como lecturas",
+    )
+    h.ok(
+        "git add --" in (shell_rules.deny_alternative("git add -A") or "")
+        and "commitea el WIP"
+        in (shell_rules.deny_alternative("git stash") or "")
+        and shell_rules.deny_alternative("desconocido") is None,
+        "deny_alternative sugiere la alternativa conocida y calla lo demás",
+    )
+    # Test adverso: recorre el mapa completo y evalúa cada muestra con la
+    # allowlist real de cada perfil worker. Ninguna alternativa puede estar
+    # denegada (la trampa original: sugerir `git checkout -- <ruta>` cuando
+    # el perfil deniega `git checkout -- *`).
+    for label in shell_rules.deny_alternative_labels():
+        text = shell_rules.deny_alternative(label) or ""
+        samples = shell_rules.deny_alternative_samples(label)
+        denied = sorted(
+            f"{profile['name']}: {sample}"
+            for sample in samples
+            for profile in profiles
+            if not shell_rules.command_verdict(sample, profile["rules"])[
+                "allowed"
+            ]
+        )
+        h.ok(
+            (bool(samples) or "conductor" in text) and not denied,
+            f"la alternativa de {label} es ejecutable por todo worker: "
+            f"{'; '.join(denied) if denied else text}",
+        )
+    h.ok(
+        shell_rules.high_risk_command("sudo id") == "sudo"
+        and shell_rules.high_risk_command("rm -f /etc/x") == "sistema"
+        and shell_rules.command_is_mutating("rm -rf /x")
+        and shell_rules.risky_git("git add .") == "git add -A",
+        "los denies destructivos (sudo, /etc, rm -rf, staging masivo) siguen",
+    )
+    h.ok(
+        shell_rules.command_is_mutating("find . -name x -delete")
+        and shell_rules.command_is_mutating("find -delete .")
+        and shell_rules.command_is_mutating("echo hi 2> log")
+        and shell_rules.command_is_mutating("echo hi >log"),
+        "flags y redirecciones se deniegan en ambas posiciones",
+    )
+
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = cli.main(["perms", "--json"])
+    payload = json.loads(out.getvalue())
+    h.ok(
+        code == 0
+        and any(
+            rule.get("resource") == "git add -A*"
+            and rule.get("effect") == "deny"
+            for profile in payload["profiles"]
+            for rule in profile["rules"]
+        )
+        and "git add -A" in payload["guard"]["git_global"],
+        "taiki perms --json lista una regla conocida por CLI",
+    )
+    h.ok(
+        shell_rules.parse_permissions("permissions: {}") == [],
+        "parse_permissions no inventa reglas de un permissions: {} inline",
+    )
+    empty_summary = {
+        "sin_ticket": [],
+        "git_sin_ticket": [],
+        "git_global": [],
+        "alto_riesgo": [],
+    }
+    out_perm = io.StringIO()
+    with contextlib.redirect_stdout(out_perm):
+        print_perms(
+            [
+                {
+                    "name": "worker-fantasma",
+                    "origin": "inline",
+                    "rules": [],
+                },
+                {"name": "worker-dup", "origin": "inline", "rules": dup},
+            ],
+            empty_summary,
+        )
+    perm_text = out_perm.getvalue()
+    h.ok(
+        "sin reglas shell" in perm_text
+        and "tapada" in perm_text
+        and "gana" not in perm_text,
+        "perms avisa del perfil sin reglas y marca la solapada como tapada",
+    )
+    h.ok(
+        all(
+            "covered" in rule and "wins" not in rule
+            for profile in payload["profiles"]
+            for rule in profile["rules"]
+        )
+        and all("shell_rules" in profile for profile in payload["profiles"]),
+        "perms --json expone covered y shell_rules por perfil",
+    )
+    out_cmd = io.StringIO()
+    with contextlib.redirect_stdout(out_cmd):
+        code_cmd = cli.main(["perms", "--command", "git add .", "--json"])
+    payload_cmd = json.loads(out_cmd.getvalue())
+    h.ok(
+        code_cmd == 3
+        and not payload_cmd["allowed"]
+        and "git add --" in json.dumps(payload_cmd["guard"]),
+        "taiki perms --command deniega git add . con su alternativa",
+    )
+    out_cfg = io.StringIO()
+    with contextlib.redirect_stdout(out_cfg):
+        code_cfg = cli.main(["config", "show"])
+    h.ok(
+        code_cfg == 0 and isinstance(json.loads(out_cfg.getvalue()), dict),
+        "taiki config show imprime el config.json resuelto",
+    )
+
+    with h.env(TAIKI_DB=str(Path(tmp) / "perms-deny.db")):
+        dconn = db.connect()
+        try:
+            other = repo.create_ticket(
+                dconn, title="Otra sesión viva", project=".config"
+            )
+            repo.claim_ticket(
+                dconn, other["code"], agent="opencode", session_id="ses_otra"
+            )
+            denied = guard.evaluate(
+                tool="bash",
+                session="ses_mia",
+                agent="opencode",
+                command="git add .",
+                cwd=str(Path.home() / "proyecto-deny"),
+            )
+            h.ok(
+                not denied["allow"]
+                and denied["action"] == "parallel"
+                and "git add --" in denied["message"],
+                "el deny de git add . sugiere git add -- <ruta>",
+            )
+        finally:
+            dconn.close()

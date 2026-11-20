@@ -61,6 +61,10 @@ LINK_KINDS = (
 DEPENDENCY_KIND = "depende"
 ACTOR_TYPES = ("agente", "usuario")
 
+# Aristas de estado. La liberación del claim (``abandon``/``release``) y el
+# evento ``steps_exhausted`` son ortogonales a esta máquina: no añaden aristas
+# ni cambian ``status``/``iterations``. Cualquier cambio de fase sigue pasando
+# por ``transition``.
 TRANSITIONS: dict[str, set[str]] = {
     "nuevo": {"pendiente", "en_progreso", "cancelado"},
     "pendiente": {"en_progreso", "bloqueado", "cancelado"},
@@ -76,7 +80,7 @@ TRANSITIONS: dict[str, set[str]] = {
 
 REOPEN_FROM = {"completado", "verificado", "confirmado", "cancelado"}
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 9
 
 # Aislamiento del trabajo por ticket. ``worktree`` es el default
 # retrocompatible; ``none`` trabaja en el árbol vivo de forma serial y ``scope``

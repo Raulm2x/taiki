@@ -200,6 +200,7 @@ def run(h: Harness) -> None:
         agent="opencode",
         session_id="ses_otra",
         force=True,
+        reason="lease huérfano del worker",
     )
     h.eq(
         forced["owner_session"],
@@ -229,6 +230,7 @@ def run(h: Harness) -> None:
         agent="opencode",
         session_id="ses_b",
         force=True,
+        reason="sesión dueña retoma el trabajo",
     )
 
     # ── Heartbeat renueva el lease ──────────────────────────────────────
@@ -309,6 +311,210 @@ def run(h: Harness) -> None:
     h.ok(
         closed["owner_session"] is None and closed["lease_until"] is None,
         "completar libera owner_session y lease",
+    )
+    own_ev = conn.execute(
+        "SELECT note FROM events WHERE action = 'transicion' AND "
+        "to_status = 'completado' AND "
+        "ticket_id = (SELECT id FROM tickets WHERE code = ?)",
+        (second["code"],),
+    ).fetchone()
+    h.ok(
+        own_ev is not None and "forced:" not in (own_ev["note"] or ""),
+        "el dueño cierra sin force y sin aviso de toma de control",
+    )
+
+    # ── Lease caducado: otra sesión cierra sin force (T-0088.06) ────────
+    orphan = repo.create_ticket(conn, title="Claim huérfano")
+    repo.claim_ticket(conn, orphan["code"], agent="worker", session_id="ses_dead")
+    conn.execute(
+        "UPDATE tickets SET lease_until = ? WHERE code = ?",
+        (_past(10), orphan["code"]),
+    )
+    expired_close = repo.complete_ticket(
+        conn,
+        orphan["code"],
+        resolution="recogido tras lease caducado",
+        actor="conductor",
+        session_id="ses_otra",
+    )
+    h.eq(
+        expired_close["status"],
+        "completado",
+        "otra sesión cierra sin force un lease caducado",
+    )
+    oev = conn.execute(
+        "SELECT note FROM events WHERE action = 'transicion' AND "
+        "to_status = 'completado' AND "
+        "ticket_id = (SELECT id FROM tickets WHERE code = ?)",
+        (orphan["code"],),
+    ).fetchone()
+    h.ok(
+        oev is not None
+        and "forced: false" in oev["note"]
+        and "lease caducado" in oev["note"],
+        "el evento registra la toma de control por caducidad, no por fuerza",
+    )
+
+    # ── Lease vivo: sin force se rechaza; con force+reason queda forzado ──
+    alive = repo.create_ticket(conn, title="Claim vivo")
+    repo.claim_ticket(conn, alive["code"], agent="worker", session_id="ses_alive")
+    h.raises(
+        domain.PermissionDenied,
+        lambda: repo.complete_ticket(
+            conn,
+            alive["code"],
+            resolution="cierre sin permiso",
+            actor="conductor",
+            session_id="ses_otra",
+        ),
+        "otra sesión no cierra sin force un lease vigente",
+    )
+    alive_close = repo.complete_ticket(
+        conn,
+        alive["code"],
+        resolution="cierre forzado",
+        actor="conductor",
+        session_id="ses_otra",
+        force=True,
+        reason="worker desaparecido con lease vivo",
+    )
+    h.eq(
+        alive_close["status"],
+        "completado",
+        "force con reason cierra el lease vivo",
+    )
+    aev = conn.execute(
+        "SELECT note FROM events WHERE action = 'transicion' AND "
+        "to_status = 'completado' AND "
+        "ticket_id = (SELECT id FROM tickets WHERE code = ?)",
+        (alive["code"],),
+    ).fetchone()
+    h.ok(
+        aev is not None
+        and "forced: true" in aev["note"]
+        and "worker desaparecido" in aev["note"],
+        "el evento guarda el motivo y forced: true del bypass consciente",
+    )
+
+    # ── abandon libera el claim sin cambiar de fase ─────────────────────
+    rel = repo.create_ticket(conn, title="Claim a liberar")
+    repo.claim_ticket(conn, rel["code"], agent="opencode", session_id="ses_rel")
+    before = repo.get_ticket(conn, rel["code"])
+    h.raises(
+        domain.PermissionDenied,
+        lambda: repo.abandon_ticket(
+            conn, rel["code"], actor="intruso", session_id="ses_otra"
+        ),
+        "otra sesión no libera un claim ajeno sin force",
+    )
+    h.raises(
+        domain.ValidationError,
+        lambda: repo.abandon_ticket(
+            conn, rel["code"], actor="intruso", session_id="ses_otra", force=True
+        ),
+        "abandon con force exige reason",
+    )
+    freed = repo.abandon_ticket(
+        conn,
+        rel["code"],
+        actor="intruso",
+        session_id="ses_otra",
+        force=True,
+        reason="worker caído",
+    )
+    h.ok(
+        freed["status"] == "en_progreso"
+        and freed["iterations"] == before["iterations"],
+        "abandon no cambia la fase ni las iteraciones",
+    )
+    h.ok(
+        freed["owner_session"] is None and freed["lease_until"] is None,
+        "abandon libera owner_session y lease",
+    )
+    ev = conn.execute(
+        "SELECT actor, session_id, note FROM events WHERE action = 'abandon' "
+        "AND ticket_id = (SELECT id FROM tickets WHERE code = ?)",
+        (rel["code"],),
+    ).fetchone()
+    h.ok(
+        ev is not None
+        and ev["session_id"] == "ses_otra"
+        and "worker caído" in ev["note"],
+        "el evento abandon guarda actor, sesión y motivo",
+    )
+    h.raises(
+        domain.TransitionError,
+        lambda: repo.abandon_ticket(
+            conn, rel["code"], actor="opencode", session_id="ses_rel"
+        ),
+        "abandon sin claim falla con mensaje claro",
+    )
+    repo.claim_ticket(conn, rel["code"], agent="opencode", session_id="ses_rel")
+    h.raises(
+        domain.ValidationError,
+        lambda: repo.claim_ticket(
+            conn, rel["code"], agent="otro", session_id="ses_otra", force=True
+        ),
+        "claim con force sin reason se rechaza",
+    )
+    owned = repo.abandon_ticket(
+        conn, rel["code"], actor="opencode", session_id="ses_rel"
+    )
+    h.ok(
+        owned["owner_session"] is None,
+        "la sesión dueña libera su claim sin force",
+    )
+
+    # ── steps_exhausted deja constancia y libera el claim ───────────────
+    repo.claim_ticket(conn, rel["code"], agent="opencode", session_id="ses_rel")
+    h.raises(
+        domain.ValidationError,
+        lambda: repo.transition(
+            conn, rel["code"], "bloqueado", session_id="ses_otra", force=True
+        ),
+        "transition con force sin nota ni reason se rechaza",
+    )
+    steps = repo.steps_exhausted(
+        conn,
+        rel["code"],
+        phase="implementación",
+        note="16 pasos",
+        actor="opencode",
+        session_id="ses_rel",
+    )
+    h.eq(
+        steps["status"],
+        "en_progreso",
+        "steps_exhausted no cambia el estado",
+    )
+    h.ok(
+        steps["owner_session"] is None and steps["lease_until"] is None,
+        "steps_exhausted libera el claim en el mismo paso (T-0088.06)",
+    )
+    sev = conn.execute(
+        "SELECT actor, session_id, note FROM events "
+        "WHERE action = 'steps_exhausted' "
+        "AND ticket_id = (SELECT id FROM tickets WHERE code = ?)",
+        (rel["code"],),
+    ).fetchone()
+    h.ok(
+        sev is not None
+        and sev["actor"] == "opencode"
+        and "implementación" in sev["note"]
+        and "claim liberado" in sev["note"],
+        "steps_exhausted registra fase, actor, sesión y liberación",
+    )
+    exhausted_close = repo.complete_ticket(
+        conn,
+        rel["code"],
+        resolution="recogido tras agotar pasos",
+        actor="conductor",
+        session_id="ses_otra",
+    )
+    h.eq(
+        exhausted_close["status"],
+        "completado",
+        "tras steps_exhausted otra sesión cierra sin force",
     )
 
     # ── Parser de claim con --steal ─────────────────────────────────────

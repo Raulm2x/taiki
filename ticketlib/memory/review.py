@@ -17,7 +17,7 @@ from .. import db
 from ..domain import ValidationError
 from ..util import now
 from .candidates import CANDIDATE_RULES, generate_candidates, rejection_reason
-from .config import load_memory_config, validate_memory_config
+from .config import resolve_memory_config
 from .models import default_key
 from .security import SECRET_PATTERNS
 from .store import add_memory, list_memories
@@ -46,13 +46,7 @@ _TITLE_LIMIT = 120
 
 
 def _config(value: dict[str, Any] | None) -> dict[str, Any]:
-    if value is None:
-        return load_memory_config()
-    if "memory" in value:
-        return validate_memory_config(value.get("memory"))
-    if "candidate_max" in value or "candidate_min_evidence" in value:
-        return validate_memory_config(value)
-    return load_memory_config(config=value)
+    return resolve_memory_config(value)
 
 
 def _scrub(text: object, limit: int = _SUMMARY_LIMIT) -> str:

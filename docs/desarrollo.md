@@ -144,8 +144,15 @@ El orden es fijo y cada paso aparece en texto y en `--json` (`pushed`):
    (`git push origin develop`). Si va por detrás o ha divergido, aborta antes
    de escribir y da el comando exacto (`git pull --ff-only` o
    `git pull --rebase`); nunca hace `pull` automático.
-2. **Gates**: los mismos de siempre (`tests/run.py --verify`, inyectables con
-   `--verify-cmd`/`TAIKI_RELEASE_VERIFY`).
+2. **Gates**: el orden es `--verify-cmd` > `TAIKI_RELEASE_VERIFY` >
+   `verify.command` de `.taiki/config.json` > `tests/run.py --verify`.
+   `verify.command` acepta una cadena o un array de cadenas; un array se
+   ejecuta tal cual, sin `shlex`. Una cadena con metacaracteres de shell
+   (`&&`, `|`, `;`, `$(`, backticks o redirecciones) se ejecuta con
+   `shell=True` de forma explícita, para que `pnpm test && pnpm lint` no
+   interprete `&&` como un paquete. En un proyecto ajeno al repo de Taiki,
+   declara el comando en `verify.command`: si no hay ninguna fuente y el gate
+   por defecto no existe, la release indica dónde configurarlo.
 3. **Squash y tag**: aplana `develop` en un único commit sobre `main` y crea el
    tag anotado `vX.Y.Z`.
 4. **Publicación**: `git push --atomic origin main vX.Y.Z` publica el commit de
@@ -269,16 +276,19 @@ pequeño (un flag, un ajuste de salida) puede declarar su nivel en el cuerpo del
 commit con el trailer `Release-Bump`:
 
 ```text
-feat: añade --push a release (T-0040)
+fix: endurece la validación de gates (T-0040)
 
-Release-Bump: patch
+Release-Bump: minor
 ```
 
-La release usa el **mayor** de los trailers declarados en el rango; si no hay
-ninguno, mantiene la convención anterior, y un `BREAKING CHANGE` (o `!`) siempre
-sube **major** aunque un commit pida `patch`. `--bump` prevalece sobre el
-trailer. El resumen (también con `--json`) lista esos commits en
-`explicit_bumps`, y el texto avisa de qué commits declararon el nivel.
+La release calcula el nivel en dos pasos: el que dictan los tipos (`!` o
+`BREAKING CHANGE` → major, `feat` → minor, resto → patch) y el **máximo** de los
+trailers declarados en el rango. El nivel final es el mayor de ambos, así que un
+trailer puede **subir** el resultado pero nunca degradarlo, y un `BREAKING
+CHANGE` (o `!`) siempre gana aunque un commit pida `patch`. `--bump` prevalece
+sobre ambos. El resumen (también con `--json`) lista esos commits en
+`explicit_bumps`, explica en `bump_reason` qué fijó el nivel (BREAKING, trailer
+o `feat`) y el texto lo imprime en el plan.
 
 El `CHANGELOG.md` se genera durante la release agrupando los tickets y commits
 desde el `released_sha` de `.taiki/releases.json` (o desde el tag anterior si
@@ -402,11 +412,26 @@ el total real de comprobaciones, que cubre filtros de tags, subtareas, concurren
   **aviso accionable**; con `--strict-budget` (lo que usa la CI) el tiempo es un
   **gate duro** y la suite termina con código 1. Bajar comprobaciones no avisa:
   el contador es un techo, no un objetivo.
+- **Subida del techo derivada de una integración:** cuando integrar el tip
+  verificado empuja el recuento o el tiempo por encima del presupuesto, el
+  ajuste —pequeño y medido en frío, sin la instrumentación de coverage— se
+  commitea **en el propio ticket de integración**, en un commit separado y con
+  la medición adjunta; no abre ticket nuevo. Umbral: ajustes de hasta ~3% del
+  recuento de `baseline_checks` o del tiempo pueden ir así; por encima, o
+  cualquier **poda**, exigen ticket propio con justificación. Un `force` para
+  cerrar un ticket de gobernanza de una línea de TOML es señal de que el
+  ticket no debía existir (T-0085 abrió cinco tickets solo para subir el
+  techo, cuatro cerrados con `force`; solo la poda real, -8,4%, merecía
+  ticket).
 - Presupuestos **runner-aware**: con `CI=true` (o `TAIKI_CI=true`) se aplica el
   perfil `[ci.suite]`/`[ci.module]` de `budget.toml` (8 s de suite y 1,5 s por
   módulo). `TAIKI_SUITE_BUDGET` y `TAIKI_MODULE_BUDGET` sobrescriben cualquier
-  valor. Los benchmarks usan 10 ms/500 ms en local y 25 ms/1.500 ms en CI, con
-  `TAIKI_BENCH_CONNECT_MS` / `TAIKI_BENCH_EXPORT_MS` como override.
+  valor. Los benchmarks usan 10 ms/800 ms en local y 25 ms/1.500 ms en CI, con
+  `TAIKI_BENCH_CONNECT_MS` / `TAIKI_BENCH_EXPORT_MS` como override para un
+  runner concreto. El export se mide como **best-of-3** (el mínimo de tres
+  pasadas sobre la misma conexión): así un pico de carga puntual de la máquina
+  no tumba el gate, mientras que el límite local de 800 ms sigue detectando
+  regresiones reales y CI conserva el margen de 1.500 ms.
 - Política de tests: un comportamiento, un test en la capa más baja; un bug,
   una regresión en la capa que falló; MCP/CLI solo contrato y TUI solo lógica
   pura. Borrar tests es válido si la cobertura no baja; añadir por encima del

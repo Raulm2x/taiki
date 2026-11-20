@@ -65,6 +65,17 @@ nuevo → pendiente → en_progreso → completado → verificado → confirmado
   exige un motivo e incrementa el contador de intentos.
 - Cada cambio queda registrado en el historial con actor, sesión y nota.
 
+### Verificación por tipo
+
+El gate de `verificado` depende del cambio: en **código**, la suite y los gates
+deterministas (`python3 tests/run.py --verify`); en **documentación o
+dotfiles**, el contenido y el alcance del commit (`git show --stat` /
+`git show --name-only`) y que el fichero live coincida con lo commiteado; en
+**sistema**, `verify.command` del workspace cuando aplique. Un workspace sin
+suite (`tests/run.py`) usa `verify.command` como gate; si el comando no existe
+o no aplica (por ejemplo, un glob de unidades vacío), se deja constancia y no
+cuenta como fallo.
+
 
 ## Orquestación
 
@@ -83,6 +94,40 @@ hija está en el worktree y que el commit vive en `agent/T-XXXX-*`, no en
 `main`. Cualquier write de estado va por MCP y `uvx` queda limitado a `ruff` y
 `mypy`: `python3 tests/run.py --verify` los ejecuta internamente.
 
+### Gates desde MCP (`gate_run`)
+
+`gate_run` ejecuta solo comandos **declarados**; no es un shell y no acepta
+texto libre en la llamada. Fuentes permitidas:
+
+- `verify.command` de `.taiki/config.json` (nombre `verify`). Una cadena con
+  metacaracteres (`&&`, `|`, `;`, `$(`, backticks, `>`) se ejecuta con shell de
+  forma deliberada; un array se ejecuta tal cual, sin `shlex.split`.
+- Un bloque `gates` en el body del ticket con JSON `{nombre: comando}` o una
+  lista de `{"name", "command"}`:
+
+  ````
+  ```gates
+  {"test": ["pnpm", "test"], "lint": "pnpm run lint"}
+  ```
+  ````
+
+Los gates del ticket solo se ejecutan para la sesión que lo tiene reclamado
+(`owner_session`); `verify.command` vale para todos porque el guard protege el
+config. Si la sesión no coincide, el bloque `gates` del body se ignora.
+
+El worker llama `gate_run` con `ticket` (y opcionalmente `name` y `timeout` en
+segundos). Sin `name` ejecuta todos y devuelve `{"gates": [...], "ok": bool}`;
+cada gate trae `{name, command, cwd, exit, stdout, stderr, durationMs,
+truncated, timedOut}`. Se ejecuta en el worktree de la sesión del ticket si
+existe y, si no, en el árbol vivo; la salida se trunca a 8000 caracteres por
+flujo con la marca `…[truncado]` y el timeout por defecto es 120 s. Es
+read-only respecto a tickets.
+
+Al cerrar, cita el resultado en la resolución de `complete` como texto
+estructurado, por ejemplo `gate_run name=test ticket=T-XXXX: exit=0
+durationMs=1234`. Adjuntar la evidencia de forma automática llega con
+T-0085.10.
+
 ### Permisos de shell
 
 Cada perfil declara sus reglas en `.opencode/agents/*.md`. La cadena de escalado
@@ -92,8 +137,12 @@ y los workers piden.
 - **Conductor**: fallback `allow`, los mismos privilegios que el agente `build`
   de OpenCode. No pregunta por comandos comunes ni desconocidos no
   destructivos; ejecuta lo que los workers le escalan, los gates y el merge de
-  worktrees ya confirmados. El guardrail es una lista de denies explícitos que
-  se evalúa después de los allows.
+  worktrees ya confirmados. En el flujo live también ejecuta `taiki sys`,
+  `taiki commit`, `taiki mcp install` y `taiki hook-install`, con `taiki brief`
+  como lectura. `taiki authorize`, `taiki review`, `taiki confirm` y
+  `taiki memory approve|reject` siguen siendo exclusivos del usuario y
+  conservan su deny explícito al final de la lista. El guardrail es una lista
+  de denies explícitos que se evalúa después de los allows.
 - **Workers**: fallback `deny`. Lo que no está en su lista blanca no se ejecuta
   ni genera un prompt al usuario. Si necesitan un comando denegado, publican un
   `checkpoint` o `comment` con el comando exacto, el motivo y el resultado
@@ -106,8 +155,10 @@ Dentro de la lista blanca de los workers:
 
 - **Permitido sin preguntar**: `pwd`, `ls`, `cat`, `head`, `tail`, `sed -n`,
   `sed`, `echo`, `printf`, `md5sum`, `sha256sum`, `grep`, `rg`, `find`, `wc`,
-  `diff`, `file`, `stat`, `mkdir -p docs`, `git show`, `git rev-parse` y las
-  lecturas con `git -C <worktree>` (`show`, `diff`, `log`, `rev-parse`);
+  `diff`, `file`, `stat`, `mkdir -p docs`, `git show`, `git rev-parse`,
+  `git merge-base`, `git rev-list`, `git cat-file`, `git branch --contains`,
+  `git for-each-ref` y las lecturas con `git -C <worktree>` (`show`, `diff`,
+  `log`, `rev-parse`, `merge-base`);
   además de `python3 tests/*`, `timeout * python3 tests/*`,
   `python3 -m tests.*`, `git status/diff/log/add/commit`, `git rebase <rama>`
   (`--continue`, `--abort`, `--skip`), `git add .opencode/*`,
@@ -125,9 +176,45 @@ Dentro de la lista blanca de los workers:
   staging masivo (`git add -A`, `git add .`, `git commit -a`). El conductor
   conserva la excepción consciente de `git add .opencode/*`.
 
+La allowlist se evalúa **por segmento** y no es un sandbox: toda redirección
+queda denegada, incluida `2>` (`2>/dev/null`, `2>&1`), junto con
+`find -exec/-delete/-ok/-fprintf/-fls`, `sort -o` y `uniq IN OUT` (se escribe sin
+redirección, con entrada por stdin). No hay atajos para `2>`: cualquier allow
+que lo contenga reabre la escritura, porque `echo x > fichero 2>&1` casa con el
+patrón y la última regla gana. Se mantienen las tuberías y los `&&` entre
+comandos permitidos. Los workers no silencian stderr con redirección: si lo
+necesitan, lo pide el conductor. La frontera real es el guard de tickets y la
+revisión del conductor. Los workers pueden verificar e inspeccionar en
+read-only (`python3 tests/run.py`, validadores como `bash -n`, `fish -n`,
+`desktop-file-validate` y `systemd-analyze verify`, utilidades de texto como
+`sort`, `cut`, `tr`, `column` y `jq`, además de `ss`, `pacman -Q` y
+`systemctl --user status/list-timers/is-*`); sigue prohibido lo mutante y la
+allowlist no es un sandbox.
+
 El límite de confianza es explícito: estas reglas evitan prompts repetidos y
 reducen el daño accidental, **no son un sandbox de seguridad**. La garantía
 sigue siendo el guard de tickets, la revisión del conductor y los gates.
+
+#### Allowlist por perfil
+
+Criterio único: **lectura sí, mutación no**. Un subcomando entra en la lista
+solo porque consulta sin tocar el árbol de trabajo ni publicar; lo que no
+esté, no se adivina: se pide al conductor con `checkpoint`/`comment` (comando
+exacto, motivo y resultado esperado) y él lo ejecuta o autoriza.
+
+| perfil | fallback | lecturas git | escrituras acotadas |
+|---|---|---|---|
+| worker / -low / -medium / -high | deny | `status`, `diff`, `log`, `show`, `rev-parse`, `merge-base`, `rev-list`, `cat-file`, `branch --contains`, `for-each-ref` (más `git -C <ruta>` en las mismas) | `git add <ruta>`, `git commit`, `git rebase`, `taiki commit`, `rm -f <ruta>` solo tras autorización |
+| conductor | allow | las mismas, sin deny que las tape | gates, `taiki commit`, `taiki sys`, `taiki worktree merge` de tickets confirmados |
+| reviewer | deny | `status`, `diff`, `log`, `show`, `rev-parse` | `python3 tests/*` |
+| merger | deny | añade `merge-base`, `branch`, `worktree list` | `taiki worktree merge <T-XXXX>` |
+
+`git merge` directo sigue denegado en todos los perfiles (patrón `git merge *`);
+`git merge-base` es lectura y pasa sin más. Los scripts de un solo uso
+(`python3 /tmp/opencode/dbg_*.py` y similares) **no** se permiten ni se añaden
+a ninguna lista: ejecutar un script arbitrario es un shell disfrazado. La vía
+correcta es pedir el comando al conductor en el ticket o declararlo como gate
+del mismo.
 
 ### Borrado seguro
 
@@ -244,6 +331,11 @@ El `commit-msg` instalado por `taiki hook-install` exige un `T-XXXX` existente
 explicar renumeraciones o historia. Para commits que no son trabajo de un
 ticket, escribe `[sin-ticket]` o usa `TAIKI_HOOK=off`.
 
+La rama `isolation.live_branch` del workspace (normalmente `main`) se permite
+cuando todos los tickets del asunto usan aislamiento `none` o `scope`; un
+ticket `worktree` sigue bloqueado con `protected-branch` y su trabajo va en
+`agent/T-XXXX-*`.
+
 
 ## Aislamiento configurable
 
@@ -272,9 +364,23 @@ El aislamiento es por ticket (`--isolation`) y el defecto sale de
   escribir dentro de su alcance. `worktree` exige el worktree. `none` permite
   el árbol vivo pero no se paraleliza.
 - **Commit live**: `taiki commit` en `none`/`scope` valida el índice contra
-  `paths` y commitea en la rama viva. `taiki commit --repo <ruta> --ticket
+  `paths` y commitea en la rama viva. `taiki commit --repo ~/.config --ticket
   T-XXXX` commitea el árbol vivo de otro repositorio (dotfiles) y enlaza
-  `external <repo>@<sha>`: la DB y el ticket no cambian de workspace.
+  `external <repo>@<sha>`: la DB y el ticket no cambian de workspace. Los
+  `paths` absolutos del ticket (`~/.config/hypr/`) se traducen al root del
+  repo live antes de validar el índice; no dupliques la ruta del `--repo`.
+  Si un path declarado cae en `.gitignore`, el comando avisa con la ruta y
+  sugiere `git add -f <ruta>` o una excepción `!ruta/`: taiki no stagea por ti
+  y, sin el aviso, el commit acababa en «Nada en el índice».
+- **Merger**: el subagente `merger` solo existe en workspaces `worktree`: el
+  registro de agentes y `taiki mcp install` lo omiten en `none`/`scope` (y
+  retiran un `merger.md` de Taiki que hubiera quedado, solo si su contenido es
+  idéntico al de origen; uno personalizado se conserva). Un workspace live no
+  integra worktrees; el conductor no debe lanzarlo.
+- **Perfiles**: `mcp install` es no destructivo: copia los perfiles que faltan y
+  conserva los que difieren del paquete (los lista como personalizados y avisa
+  por stderr). `--force-agents` los sobrescribe a propósito. Si el paquete no
+  trae `.opencode/agents/`, avisa y deja los existentes.
 - **Reversión**: `taiki update --reversal '{"kind","ref","command"}'`.
   `reject --revert` (usuario) ejecuta `git revert` solo para `git-revert`; en
   `copy`/sistema imprime el comando y cancela el ticket. `worktree` no aplica.
@@ -396,6 +502,46 @@ push se rechaza, publica con `taiki release` o deshaz la release con
 `git revert` en `main`.
 
 
+## Reorganización y purga
+
+`move`, `promote`, `demote`, `renumber` y `purge` comparten un contrato de plan
+y aplicación. El CLI simula por defecto y solo escribe con `--apply`; `purge`
+exige además `--force`. `move` requiere `--parent` y decide el código con
+`--renumber` o `--keep-code` (defecto, equivalente a `attach`); `demote` exige
+`--children-to` (código de épica o `root`) y admite `--parent` y `--renumber`;
+`renumber` acepta códigos concretos y `--adopted` para incluir los tickets
+adoptados con `attach`; `--allow-root` permite renumerar raíces publicadas
+(con commits enlazados), nunca épicas con tareas ni códigos ocupados.
+
+Por MCP el mismo contrato se expone como `reorg_plan` (solo lectura, nunca
+escribe) y `reorg_apply` (mutante, requiere `apply=true`; para `purge`,
+`force=true`). `action` es `move`, `renumber`, `promote`, `demote` o `purge`.
+Ambas reciben `codes`, `parent`, `children_to`, `include_adopted`, `renumber`
+y `allow_root` (renumber de raíces publicadas).
+`reorg_apply` aplica el plan en una transacción atómica: si algo falla, no deja
+cambios.
+
+Solo se admiten dos niveles (épica → tarea): un ticket con tareas no puede ser
+hijo y un padre no puede ser su propia descendencia. La aplicación actualiza:
+
+- `links.ref` con `kind` `depende` o `relacionado`.
+- `memory_evidence.ref` con `kind = 'ticket'`.
+- `memories.ticket_id`.
+- `tickets_fts` mediante el trigger `AFTER UPDATE OF title, body, code`.
+
+No se reescriben los eventos ni los comentarios históricos, los marcadores
+`links` con `kind='otro'` (`renumerado:OLD->NEW`) ni los mensajes de commit.
+
+`purge` solo borra tickets `cancelado` sin hijos, enlaces, memorias ni
+evidencias que los referencien. Antes de borrar copia la base a
+`.taiki/backups/taiki-<timestamp>.db`; si el backup falla, no purga. Borra el
+ticket y sus eventos, comentarios, enlaces y etiquetas en una transacción y
+comprueba la integridad de FTS. El contador `next_ticket_number` solo baja si se
+libera un sufijo final de raíces; si quedan raíces por encima, avisa y
+`repair-gaps` cubre los huecos con tickets cancelados para no reutilizar
+números.
+
+
 ## Tickets temporales (scratch)
 
 Para pruebas o exploración sin ensuciar la tabla:
@@ -452,20 +598,29 @@ ledger de snapshots y registros.
   ficheros fuera de esas raíces.
 - **`taiki sys snapshot T-XXXX --path FILE`**: copia a
   `snapshots/T-XXXX/<timestamp>/<ruta>` con `shutil.copy2`, calcula SHA-256,
-  commitea y anota en el ticket la reversión `copy` con el comando `cp -a`.
+  commitea, **enlaza el commit al ticket** (`commit`, actor `agente`, sin
+  resolver en el repo del proyecto: el sha vive en el repo de sistema) y anota
+  la reversión `copy` con el comando `cp -a`. Ese enlace es la evidencia que
+  `complete` exige en `none`/`scope`: no hace falta `taiki link` a mano.
   Solo para tickets `none`/`scope` y ficheros existentes.
 - **`--packages`**: guarda `pacman -Qqe` en
   `snapshots/T-XXXX/pacman-Qqe.txt`; `--from FILE` permite leer una lista sin
-  ejecutar `pacman`. El rollback es **manual**:
-  `pacman -S --needed $(cat …)`.
+  ejecutar `pacman`. También enlaza su commit al ticket. El rollback es
+  **manual**: `pacman -S --needed $(cat …)`.
 - **Dotfiles**: si el fichero vive en el repo de dotfiles detectado, no se
   copia. Se registra una reversión `git-revert` en ese repo y se imprime el
-  comando `taiki commit --repo <dotfiles> --ticket T-XXXX`. El commit de
-  dotfiles se enlaza como `external <repo>@<sha>`.
+  comando `taiki commit --repo ~/.config --ticket T-XXXX`, con los `paths`
+  absolutos del ticket (`~/.config/hypr/`) traducidos al repo live. El commit
+  de dotfiles se enlaza como `external <repo>@<sha>`.
 - **`taiki sys export [T-XXXX]`**: exporta los tickets y escribe
   `records/tickets.json`, `records/tickets.md` y `records/manifest.json` con
-  snapshots, hashes y enlaces (`commit` y `external`), y lo commitea. La DB
-  nunca se versiona.
+  snapshots, hashes y enlaces (`commit` y `external`), y lo commitea. Con
+  código, enlaza el commit de `records/` al ticket, así que tampoco necesita
+  `taiki link` manual. La DB nunca se versiona.
+- **Enlace manual**: solo para cambios **sin commit** propio del ledger, por
+  ejemplo un fichero nuevo sin snapshot o trabajo hecho a mano en el árbol
+  vivo: `taiki link T-XXXX commit <sha>` o `external repo@sha`. Snapshot y
+  export ya enlazan solos.
 - **`taiki sys audit`**: compara los hashes del manifiesto con los ficheros
   actuales. Marca `changed`/`missing` y si el cambio está cubierto por un
   ticket abierto (`snapshots/<T-XXXX>/…`). **Límite**: no escanea ficheros
@@ -521,6 +676,48 @@ borra registros muertos: espera la muerte tras `SIGTERM`, escala a `SIGKILL` y
 solo borra la fila cuando consta muerto. Los duplicados no se tocan salvo con
 `--duplicates`, que conserva el proceso más reciente.
 
+### Recargar el MCP tras un merge
+
+Un merge que toca `ticketlib/` o `mcp_layer/` deja obsoleto al proceso MCP
+vivo: sigue sirviendo con el código con el que arrancó y `runtime.is_stale()`
+(compara la huella cargada con la del disco) bloquea las herramientas mutantes
+para no corromper datos. La recarga no pasa por reiniciar OpenCode:
+
+- `taiki servers --reload` envía `SIGHUP` a los MCP **vivos de este
+  workspace** (registrados, con padre vivo; los de otros proyectos no se
+  tocan y los huérfanos siguen siendo cosa de `--prune`). `--dry-run` lista a
+  quién se señalaría sin enviar la señal.
+- Por defecto `--reload` **espera** a que cada servidor confirme su nuevo
+  código: sondea su huella registrada hasta que coincide con la del disco o
+  hasta `--wait-timeout` segundos (defecto 5, tope 60). Así la primera llamada
+  MCP posterior no falla con `StaleServerError`. El resumen reporta por PID:
+  - `recargado` — la huella ya coincide: el servidor ejecuta el código nuevo.
+  - `pendiente` — venció el timeout sin coincidencia; el re-exec puede seguir
+    en camino, pero la siguiente petición puede fallar con `StaleServerError`.
+  - `sin respuesta` — el proceso no tiene huella registrada con la que
+    comparar (no se puede confirmar la recarga).
+- `--no-wait` señala y vuelve sin sondear (comportamiento anterior). Úsalo en
+  scripts y CI, donde un retraso de hasta 5 s importa más que la garantía.
+- `taiki mcp install` termina invocando esa misma recarga —con espera— salvo
+  `--no-reload` (sin señal) o `--no-wait` (señal sin esperar): es el momento
+  en que el flujo de trabajo sabe que acaba de aterrizar código.
+
+En el servidor, el manejador de `SIGHUP` solo marca una bandera. El re-exec
+ocurre en el punto seguro —entre peticiones, con la respuesta ya escrita,
+nunca a mitad de una— mediante `os.execv` del propio intérprete: los fds de
+stdio se heredan y el cliente no ve la sustitución. El proceso nuevo
+re-registra su huella (`runtime.register`) sin esperar un nuevo handshake.
+Hay guarda contra bucles: una señal para un código que no cambió no re-ejecuta,
+y el testigo `TAIKI_MCP_REEXEC` cuenta las re-execuciones encadenadas (máximo
+3 sin converger); si se agota, el aviso pide reiniciar OpenCode.
+
+La recarga no se hace «solo en el cliente» porque el plugin de OpenCode solo
+puede pedir una recarga cuando la sesión queda idle —depende del cliente y de
+su timing—, mientras que la señal la decide quien mergea o instala, que es
+quien sabe que hay código nuevo. Limitación conocida: la bandera se atiende en
+el límite entre peticiones, así que una sesión idle recarga en cuanto llegue su
+siguiente petición o latido, no antes.
+
 El inventario no se limita a tickets: descubre cualquier MCP hijo del proceso
 `opencode serve` (heurística por "mcp"/`server.py`), le deduce el nombre y lo
 marca igual. Así un segundo servidor entra solo en `taiki servers`. **Nunca** se toca un proceso con padre vivo: una
@@ -573,7 +770,8 @@ echo '{"tool_name":"write_file","tool_input":{"path":"/ruta"},"session_id":"ses_
 - El registro de procesos (`~/.local/share/taiki/registry.db`) es global y solo
   guarda PID, padre, huella, versión y workspace. No contiene tickets.
 - `taiki servers` muestra la columna `ESPACIO` para saber qué instancia sirve a
-  qué proyecto; `--prune` limpia huérfanos sin tocar procesos con padre vivo.
+  qué proyecto; `--prune` limpia huérfanos sin tocar procesos con padre vivo y
+  `--reload` pide por señal a los de este workspace que recarguen su código.
 - No hay MCP global ni base de datos global. Un directorio sin `.taiki/` no
   arranca una instancia útil: el servidor responde con el error de
   `taiki init --workspace`.
@@ -591,7 +789,7 @@ detectar saltos, no como valor absoluto.
 
 | Métrica | Valor | Objetivo | Comando |
 | --- | --- | --- | --- |
-| `tools/list`: tools / bytes | 32 tools / 30.734 bytes (30,0 KiB) | ≤ 32 KiB | `python3 -m tests.benchmarks` |
+| `tools/list`: tools / bytes | 35 tools / 35.851 bytes (35,0 KiB) | ≤ 32 KiB | `python3 -m tests.benchmarks` |
 | Arranque del CLI (`list`) | 201 ms (mediana de 3) | ≤ 300 ms | `python3 -m tests.benchmarks` |
 | Suite `--strict-budget` | 1.968 comprobaciones / 10,86 s | ≤ 11 s (presupuesto 11,6 s) | `python3 tests/run.py --strict-budget` |
 | Brief | 2.443 chars (54 % de 4.500) | ≤ `brief_budget_chars` | `wc -c .taiki/generated/brief.md` |
@@ -610,7 +808,9 @@ detectar saltos, no como valor absoluto.
   T-0058 con la métrica y la fecha, y se decide con datos; no se optimiza a
   ciegas. El benchmark avisa pero no falla por tiempo: es dependiente de la
   máquina y no debe bloquear el gate.
-- No se tocó código de producción: las tres métricas están dentro de objetivo.
+- La tabla conserva la línea base. Con las tools de reorganización,
+  `tools/list` supera el objetivo de 32 KiB y el benchmark avisa; se decide con
+  datos en una tarea aparte, sin optimizar a ciegas.
 
 
 ## Notas de diseño

@@ -43,6 +43,7 @@ def _add(conn, args: argparse.Namespace) -> int:
         session_id=_session(),
         evidence=list(args.evidence or []),
         ticket_kinds=args.ticket_kinds,
+        tags=getattr(args, "tags", None),
         pinned=bool(args.pin),
     )
     _print_memory(memory, _as_json(args))
@@ -113,6 +114,8 @@ def _edit(conn, args: argparse.Namespace) -> int:
     }
     if args.paths is not None:
         updates["paths"] = args.paths
+    if getattr(args, "tags", None) is not None:
+        updates["tags"] = args.tags
     if not updates:
         raise ValidationError("Indica al menos un campo para editar")
     memory = patch_memory(

@@ -60,6 +60,9 @@ def run(h: Harness) -> None:
     conductor, conductor_body = _frontmatter("conductor.md")
     worker, worker_body = _frontmatter("worker.md")
     reviewer, reviewer_body = _frontmatter("reviewer.md")
+    worker_shell = [
+        item for item in worker["permissions"] if item.get("action") == "shell"
+    ]
 
     h.ok(
         conductor["mode"] == "primary"
@@ -74,8 +77,19 @@ def run(h: Harness) -> None:
         and _rule(conductor, "subagent", "reviewer") == "allow"
         and _rule(conductor, "subagent", "merger") == "allow"
         and _rule(conductor, "shell", "taiki confirm*") == "deny"
-        and _rule(conductor, "shell", "git merge*") == "deny"
+        and _rule(conductor, "shell", "git merge *") == "deny"
         and _rule(conductor, "shell", "taiki worktree merge*") == "allow"
+        and _rule(conductor, "shell", "taiki sys *") == "allow"
+        and _rule(conductor, "shell", "taiki commit *") == "allow"
+        and _rule(conductor, "shell", "taiki mcp install*") == "allow"
+        and _rule(conductor, "shell", "taiki hook-install*") == "allow"
+        and _rule(conductor, "shell", "taiki brief*") == "allow"
+        and _rule(conductor, "shell", "taiki authorize*") == "deny"
+        and _rule(conductor, "shell", "taiki review*") == "deny"
+        and _rule(conductor, "shell", "taiki reject*") == "deny"
+        and _rule(conductor, "shell", "taiki memory approve*") == "deny"
+        and _rule(conductor, "shell", "taiki memory reject*") == "deny"
+        and _rule(conductor, "shell", "taiki transition*") == "deny"
         and _rule(conductor, "shell", "git push*") == "deny"
         and "verificado" in conductor_body
         and "Nunca" in conductor_body
@@ -90,9 +104,22 @@ def run(h: Harness) -> None:
         and _rule(worker, "edit", "*") == "allow"
         and _rule(worker, "subagent", "*") == "deny"
         and _rule(worker, "shell", "git push*") == "deny"
-        and _rule(worker, "shell", "git merge*") == "deny"
+        and _rule(worker, "shell", "git merge *") == "deny"
         and _rule(worker, "shell", "taiki confirm*") == "deny"
         and _rule(worker, "shell", "taiki worktree merge*") == "deny"
+        and _rule(worker, "shell", "*2>/dev/null*") is None
+        and worker_shell[-1].get("resource") == "*>*"
+        and worker_shell[-1].get("effect") == "deny"
+        and not any("2>" in item["resource"] for item in worker_shell)
+        and _rule(worker, "shell", "python3 tests/run.py*") == "allow"
+        and _rule(worker, "shell", "bash -n *") == "allow"
+        and _rule(worker, "shell", "sort *") == "allow"
+        and _rule(worker, "shell", "systemctl --user status*") == "allow"
+        and all(
+            _rule(_frontmatter(f"{name}.md")[0], "shell", rule) == "deny"
+            for name in ("worker", "worker-low", "worker-medium", "worker-high")
+            for rule in ("find * -exec*", "find * -delete*", "sort * -o*")
+        )
         and "Borrado seguro" in worker_body
         and "OK al conductor" in worker_body,
         "el worker edita sin lanzar subagentes y pide OK para borrar",
@@ -363,6 +390,77 @@ def run(h: Harness) -> None:
         and bad_gates[0]["output"] == "E501 línea larga",
         "un gate rojo conserva la salida para la nota",
     )
+    time_gates = suite_run.run_verification(
+        runner=lambda *args, **kwargs: _Done(
+            1,
+            "\n".join(
+                [
+                    "OK: 1579 comprobaciones (66 módulos, 12.56s)",
+                    "",
+                    "Presupuesto incumplido:",
+                    "  - suite en 12.56s supera el presupuesto de 12.50s",
+                    "  - test_release tarda 2.11s (máximo 1.90s)",
+                ]
+            ),
+        ),
+        steps=(("suite", ["x"]),),
+    )
+    h.ok(
+        not suite_run.verification_ok(time_gates)
+        and suite_run.verification_evidence(time_gates) == "suite=tiempo",
+        "un fallo solo de tiempo (suite o módulo) se etiqueta tiempo",
+    )
+    checks_gates = suite_run.run_verification(
+        runner=lambda *args, **kwargs: _Done(
+            1,
+            "\n".join(
+                [
+                    "Presupuesto incumplido:",
+                    "  - 1622 comprobaciones superan el techo de 1567 "
+                    "(+40); poda o justifica el aumento",
+                ]
+            ),
+        ),
+        steps=(("suite", ["x"]),),
+    )
+    h.ok(
+        suite_run.verification_evidence(checks_gates) == "suite=fallo",
+        "el techo de comprobaciones no se disfraza de tiempo",
+    )
+    mixed_gates = suite_run.run_verification(
+        runner=lambda *args, **kwargs: _Done(
+            1,
+            "\n".join(
+                [
+                    "Presupuesto incumplido:",
+                    "  - suite en 12.60s supera el presupuesto de 12.50s",
+                    "  - 1622 comprobaciones superan el techo de 1567 (+40)",
+                ]
+            ),
+        ),
+        steps=(("suite", ["x"]),),
+    )
+    h.ok(
+        suite_run.verification_evidence(mixed_gates) == "suite=fallo",
+        "tiempo mezclado con techo de comprobaciones sigue siendo fallo",
+    )
+    broken_gates = suite_run.run_verification(
+        runner=lambda *args, **kwargs: _Done(
+            1,
+            "\n".join(
+                [
+                    "FALLO test_parser: suma mal",
+                    "1 incidencia(s) en 0.50s",
+                    "  - test_parser: suma mal",
+                ]
+            ),
+        ),
+        steps=(("suite", ["x"]),),
+    )
+    h.ok(
+        suite_run.verification_evidence(broken_gates) == "suite=fallo",
+        "una aserción rota sigue siendo suite=fallo",
+    )
     h.ok(
         len(coverage_gate.COVERAGE_STEPS) == 2
         and "coverage" in coverage_gate.COVERAGE_STEPS[0],
@@ -486,11 +584,16 @@ def run(h: Harness) -> None:
         docs["agent"] == "worker-medium"
         and docs["level"] == "medium"
         and docs["steps"] == agents_lib.STEPS_BY_LEVEL["medium"]
+        and docs["steps"] >= 32
         and "documentacion" in short["strengths"]
         and short["steps"] >= 16
+        and short["steps"] < docs["steps"]
+        and agents_lib.STEPS_BY_LEVEL["high"] >= agents_lib.STEPS_BY_LEVEL["medium"]
         and bug["level"] == "high"
-        and bug["variant"] == "high",
-        "docs grandes va a worker-medium; worker-low (16 pasos) es para cortas",
+        and bug["variant"] == "high"
+        and "merger" not in agents_lib.registry({"isolation": {"default": "scope"}})
+        and "merger" in agents_lib.registry({"isolation": {"default": "worktree"}}),
+        "docs grandes va a worker-medium (32; high >= medium); worker-low sigue corto",
     )
     limited = agents_lib.capability("worker-medium")
     unsupported = agents_lib.route("bug", limited, level="xhigh")
@@ -526,6 +629,90 @@ def run(h: Harness) -> None:
             {"orchestrator": {"max_parallel": 0}}
         ),
         "el presupuesto de concurrencia se valida",
+    )
+    from commands import mcp as mcp_cmd
+    from commands.mcp import sync_agent_profiles
+
+    live_root = Path(h.tmp) / "live"
+    wt_root = Path(h.tmp) / "wt"
+    live_sync = sync_agent_profiles(live_root, {"isolation": {"default": "scope"}})
+    wt_sync = sync_agent_profiles(wt_root, {"isolation": {"default": "worktree"}})
+    live_dir = live_root / ".opencode" / "agents"
+    source_dir = Path(mcp_cmd.__file__).resolve().parent.parent / ".opencode" / "agents"
+    custom = live_dir / "conductor.md"
+    custom.write_text("# perfil propio\n", encoding="utf-8")
+    (live_dir / "merger.md").write_text(
+        (source_dir / "merger.md").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    keep_sync = sync_agent_profiles(live_root, {"isolation": {"default": "scope"}})
+    kept = custom.read_text(encoding="utf-8")
+    forced_sync = sync_agent_profiles(
+        live_root, {"isolation": {"default": "scope"}}, force=True
+    )
+    h.ok(
+        (live_dir / "conductor.md").exists()
+        and (live_dir / "worker.md").exists()
+        and not (live_dir / "merger.md").exists()
+        and "merger.md" in live_sync["skipped"]
+        and (wt_root / ".opencode" / "agents" / "merger.md").exists()
+        and "merger.md" in wt_sync["copied"]
+        and "conductor.md" in keep_sync["customized"]
+        and kept == "# perfil propio\n"
+        and "merger.md" in keep_sync["removed"]
+        and "conductor.md" in forced_sync["copied"]
+        and custom.read_text(encoding="utf-8")
+        == (source_dir / "conductor.md").read_text(encoding="utf-8"),
+        "mcp install no pisa perfiles propios, retira merger prístino en live "
+        "y --force-agents sobrescribe",
+    )
+    node_root = Path(h.tmp) / "nodeproj"
+    node_sync = sync_agent_profiles(
+        node_root,
+        {
+            "isolation": {"default": "worktree"},
+            "verify": {"command": ["pnpm", "test"]},
+            "commands": {"allow": ["node *", "npx *"]},
+        },
+    )
+    node_worker = (
+        node_root / ".opencode" / "agents" / "worker.md"
+    ).read_text(encoding="utf-8")
+    bad_root = Path(h.tmp) / "badproj"
+    sync_agent_profiles(
+        bad_root,
+        {
+            "isolation": {"default": "worktree"},
+            "verify": {"command": "rm -rf / && pnpm test"},
+            "commands": {"allow": ["git push *"]},
+        },
+    )
+    node_medium = (
+        node_root / ".opencode" / "agents" / "worker-medium.md"
+    ).read_text(encoding="utf-8")
+    bad_worker = (
+        bad_root / ".opencode" / "agents" / "worker.md"
+    ).read_text(encoding="utf-8")
+    h.ok(
+        "worker.md" in node_sync["copied"]
+        and 'resource: "pnpm *"' in node_worker
+        and 'resource: "node *"' in node_worker
+        and 'resource: "npx *"' in node_worker
+        and node_worker.index('resource: "pnpm *"')
+        < node_worker.index('resource: "find * -exec*"')
+        and 'resource: "rm -rf*"\n    effect: deny' in node_worker
+        and 'resource: "git push*"\n    effect: deny' in node_worker
+        and 'resource: "which *"' in node_worker
+        and 'resource: "command -v *"' in node_worker
+        and 'resource: "readlink *"' in node_worker
+        and 'resource: "find *"' in node_worker
+        and 'resource: "pnpm *"' in node_medium
+        and "## Presupuesto de pasos" in node_medium
+        and 'resource: "pnpm *"' in bad_worker
+        and 'resource: "rm *"' not in bad_worker
+        and 'resource: "git push*"\n    effect: allow' not in bad_worker,
+        "verify.command y commands.allow hacen worker project-aware: pnpm/node "
+        "permitidos antes del bloque final de denies, allows universales y "
+        "Presupuesto de pasos intactos, rm -rf/git push siguen denegados",
     )
     mcp_agents = handlers.call_tool("agents", {"kind": "documentacion"})
     h.ok(
@@ -841,6 +1028,22 @@ def run(h: Harness) -> None:
         "los tipos y perfiles son lanzables; worker-medium va sin variante medium",
     )
     h.ok(
+        all(
+            (
+                "## Contrato del ticket" in body
+                and "## Presupuesto de pasos" in body
+                and "herramienta MCP `update`" in body
+                and body.index("## Contrato del ticket")
+                < body.index("## Presupuesto de pasos")
+            )
+            for body in (
+                _frontmatter(f"{profile}.md")[1]
+                for profile in ("worker-low", "worker-medium", "worker-high")
+            )
+        ),
+        "los perfiles worker llevan el contrato del ticket antes del presupuesto",
+    )
+    h.ok(
         _rule(worker, "shell", "git add -A*") == "deny"
         and _rule(worker, "shell", "git add .*") == "deny"
         and _rule(worker, "shell", "git commit -a*") == "deny"
@@ -1089,7 +1292,18 @@ def run(h: Harness) -> None:
         and "pwd" in worker_body
         and "directory == worktree" in conductor_body
         and "agent/T-XXXX-*" in conductor_body
-        and "merge-base --is-ancestor" in conductor_body,
+        and "merge-base --is-ancestor" in conductor_body
+        and "Modo live" in worker_body
+        and all(
+            "Modo live" in _frontmatter(name)[1]
+            for name in ("worker-low.md", "worker-medium.md", "worker-high.md")
+        )
+        and _rule(worker, "shell", "git -C * status*") == "allow"
+        and _rule(worker, "shell", "git -C * add *") == "allow"
+        and _rule(worker, "shell", "git -C * add -A*") == "deny"
+        and _rule(worker, "shell", "git -C * add .*") == "deny"
+        and _rule(worker, "shell", "git -C * add -u*") == "deny"
+        and _rule(worker, "shell", "git -C * add --all*") == "deny",
         "el worker mueve la sesión al worktree y verifica directorio/rama/commit",
     )
     h.ok(
@@ -1097,7 +1311,7 @@ def run(h: Harness) -> None:
         and _rule(worker, "shell", "taiki commit *") == "allow"
         and _rule(worker, "shell", "taiki complete*") is None
         and _rule(conductor, "shell", "taiki *") == "deny"
-        and _rule(conductor, "shell", "taiki commit *") is None
+        and _rule(conductor, "shell", "taiki commit *") == "allow"
         and "--agent worker" in worker_body,
         "los writes de taiki solo van por MCP; el commit se atribuye",
     )
@@ -1167,7 +1381,7 @@ def run(h: Harness) -> None:
             for meta in profiles.values()
             for pattern in (
                 "git push*",
-                "git merge*",
+                "git merge *",
                 "taiki confirm*",
                 "rm -rf*",
                 "rm -fr*",
@@ -1300,8 +1514,18 @@ def run(h: Harness) -> None:
                     "worker-high.md",
                 )
             )
+        )
+        and all(
+            "## Presupuesto de pasos" in body
+            and "~20% de pasos" in body
+            and "Pasos finales reservados" in body
+            and "grep -n" in body
+            for body in (
+                _frontmatter(name)[1]
+                for name in ("worker-low.md", "worker-medium.md", "worker-high.md")
+            )
         ),
-        "los workers escalan al conductor en vez de pedir permiso al usuario",
+        "los workers escalan al conductor y cierran por bloques antes de agotar pasos",
     )
     problems = orchestrator.isolation_problems(
         "T-0001",

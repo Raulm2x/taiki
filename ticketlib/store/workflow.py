@@ -40,6 +40,123 @@ from .queries import get_ticket
 
 DEFAULT_LEASE_MINUTES = 30
 
+# Evidencia estructurada opcional al marcar ``verificado``: además del texto
+# libre en ``note`` se acepta un objeto con gates/commits/commands. Se valida
+# al escribir y se renderiza en la nota para que ``show``/``list`` la muestren
+# sin cambios.
+EVIDENCE_KEYS = ("gates", "commits", "commands")
+EVIDENCE_MAX_ITEMS = 20
+EVIDENCE_MAX_CHARS = 200
+
+# Señales de fallo de cierre: ``delivery_rejected`` es el rechazo previo a la
+# verificación (p. ej. al reabrir un ``completado`` con un gate roto); la
+# reapertura ``verificado → en_progreso`` es el rechazo posterior.
+REJECTION_EVENT = "delivery_rejected"
+EXHAUSTED_EVENT = "steps_exhausted"
+
+
+def clean_evidence(evidence: Any) -> dict[str, list[str]]:
+    """Valida la evidencia estructurada de un ``verificado``.
+
+    Solo se admiten las claves ``gates``/``commits``/``commands`` como listas
+    de cadenas no vacías, con tope de items y de longitud por entrada.
+    """
+    if not isinstance(evidence, dict):
+        raise ValidationError(
+            "evidence debe ser un objeto {gates, commits, commands}"
+        )
+    unknown = sorted(str(key) for key in evidence if key not in EVIDENCE_KEYS)
+    if unknown:
+        raise ValidationError(
+            f"evidence solo admite {', '.join(EVIDENCE_KEYS)}; "
+            f"claves desconocidas: {', '.join(unknown)}"
+        )
+    clean: dict[str, list[str]] = {}
+    for key in EVIDENCE_KEYS:
+        value = evidence.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, list):
+            raise ValidationError(f"evidence.{key} debe ser una lista de cadenas")
+        items: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ValidationError(f"evidence.{key} solo admite cadenas")
+            text = item.strip()
+            if not text:
+                raise ValidationError(f"evidence.{key} no admite cadenas vacías")
+            if len(text) > EVIDENCE_MAX_CHARS:
+                raise ValidationError(
+                    f"evidence.{key}: cada entrada cabe en "
+                    f"{EVIDENCE_MAX_CHARS} caracteres"
+                )
+            items.append(text)
+        if len(items) > EVIDENCE_MAX_ITEMS:
+            raise ValidationError(
+                f"evidence.{key}: máximo {EVIDENCE_MAX_ITEMS} entradas"
+            )
+        if items:
+            clean[key] = items
+    return clean
+
+
+def render_evidence(clean: dict[str, list[str]]) -> str:
+    """Render legible de la evidencia, integrable en la nota del evento."""
+    lines = [
+        f"{key}: {' · '.join(clean[key])}"
+        for key in EVIDENCE_KEYS
+        if clean.get(key)
+    ]
+    return "\n".join(lines)
+
+
+def rejection_count(conn: sqlite3.Connection, cutoff: str) -> int:
+    """Rechazos de entrega en la ventana: pre y post verificación.
+
+    Pre: eventos ``delivery_rejected`` sobre entregas aún no verificadas
+    (desde ``completado``). Post: reaperturas ``verificado → en_progreso``.
+    Un ``delivery_rejected`` desde ``verificado`` no suma: esa reapertura ya
+    cuenta como rechazo posterior. ``abandon`` nunca es un fallo.
+    """
+    return int(
+        conn.execute(
+            "SELECT COUNT(*) FROM events WHERE ts >= ? AND ("
+            "(action = ? AND from_status = 'completado') OR "
+            "(from_status = 'verificado' AND to_status = 'en_progreso'))",
+            (cutoff, REJECTION_EVENT),
+        ).fetchone()[0]
+    )
+
+
+def steps_exhausted_signal(
+    conn: sqlite3.Connection, cutoff: str
+) -> list[dict[str, str]]:
+    """Eventos ``steps_exhausted`` deduplicados contra los rechazos.
+
+    Un ticket agotado y luego rechazado cuenta UNA vez como fallo de cierre:
+    el rechazo ya lo cubre, así que su ``steps_exhausted`` no se duplica.
+    Devuelve una lista de ``{ts, actor}`` por evento para agregar por periodo
+    y perfil.
+    """
+    rejected = {
+        row[0]
+        for row in conn.execute(
+            "SELECT DISTINCT ticket_id FROM events WHERE ts >= ? AND ("
+            "(action = ? AND from_status = 'completado') OR "
+            "(from_status = 'verificado' AND to_status = 'en_progreso'))",
+            (cutoff, REJECTION_EVENT),
+        )
+    }
+    return [
+        {"ts": row["ts"], "actor": row["actor"] or "desconocido"}
+        for row in conn.execute(
+            "SELECT ticket_id, ts, actor FROM events "
+            "WHERE action = ? AND ts >= ? ORDER BY ts, id",
+            (EXHAUSTED_EVENT, cutoff),
+        )
+        if row["ticket_id"] not in rejected
+    ]
+
 
 def _lease_minutes() -> int:
     try:
@@ -58,6 +175,31 @@ def _expired(value: str | None, at: str | None = None) -> bool:
     return lease_expired(value, at)
 
 
+def _force_reason(
+    force: bool,
+    reason: str | None,
+    fallback: str | None = None,
+    actor_type: str = "agente",
+    session_id: str | None = None,
+) -> str | None:
+    """Valida que un bypass ``force`` quede justificado en el histórico.
+
+    Los agentes que fuerzan desde una sesión (el camino MCP) deben aportar un
+    motivo en ``reason`` o en la nota/resolución equivalente. El CLI del
+    usuario y el API interno sin sesión conservan el bypass histórico; el MCP
+    siempre envía sesión, así que el caso real queda cubierto.
+    """
+    if not force:
+        return None
+    text = (reason or fallback or "").strip() or None
+    if text is None and actor_type != "usuario" and session_id is not None:
+        raise ValidationError(
+            "force=true requiere un motivo en 'reason' (o 'note'/'resolution'); "
+            "el bypass queda en el histórico con actor, sesión y motivo."
+        )
+    return text
+
+
 def transition(
     conn: sqlite3.Connection,
     code: Any,
@@ -69,25 +211,59 @@ def transition(
     assigned_to: Any = UNSET,
     resolution: str | None = None,
     force: bool = False,
+    reason: str | None = None,
+    evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     row = row_by_code(conn, code)
     current = row["status"]
     actor = normalize_agent(actor)
     resolution = (resolution or "").strip() or None
+    note = (note or "").strip() or None
+    force_reason = _force_reason(
+        force, reason, note or resolution, actor_type, session_id
+    )
 
     check_enum(status, STATUSES, "estado")
     check_enum(actor_type, ACTOR_TYPES, "actor_type")
 
+    if evidence is not None:
+        if status != "verificado":
+            raise ValidationError(
+                "La evidencia estructurada solo se admite al marcar "
+                "'verificado'; para el resto de estados usa 'note'."
+            )
+        evidence_note = render_evidence(clean_evidence(evidence))
+        note = f"{note}\n{evidence_note}" if note else evidence_note
+
+    # T-0088.06: quien no es el dueño del claim distingue caducidad rutinaria
+    # de bypass consciente. Un lease caducado es un claim muerto: se procede
+    # sin ``force`` y el evento registra la toma de control con ``forced:
+    # false``. Un lease vivo sigue exigiendo ``force`` con ``reason``
+    # (T-0085.07): ese camino no se relaja.
     owner = row["owner_session"]
-    if current == "en_progreso" and owner and not force and actor_type != "usuario":
+    takeover: str | None = None
+    if current == "en_progreso" and owner and actor_type != "usuario":
         same = session_id == owner or (
             session_id is None and owner == f"agent:{actor}"
         )
         if not same:
-            raise PermissionDenied(
-                f"{row['code']} está reclamado por otra sesión ({owner}); "
-                "usa force=true si de verdad debes cambiarlo."
-            )
+            if force:
+                takeover = (
+                    f"toma de control forzada · forced: true · "
+                    f"lease vigente de {owner}"
+                )
+            elif _expired(row["lease_until"], now()):
+                takeover = (
+                    f"toma de control sin force · forced: false · "
+                    f"lease caducado de {owner} "
+                    f"({row['lease_until'] or 'sin fecha'})"
+                )
+            else:
+                raise PermissionDenied(
+                    f"{row['code']} está reclamado por otra sesión ({owner}) "
+                    "con lease vigente; usa force=true con reason si de "
+                    "verdad debes cambiarlo."
+                )
 
     if resolution is not None and status == current:
         # Documentar un cierre ya hecho: solo se escribe la resolución. No se
@@ -138,7 +314,6 @@ def transition(
             f"Desde '{current}' se permite: {', '.join(sorted(allowed)) or 'ninguna'}"
         )
 
-    note = (note or "").strip() or None
     if status in ("en_progreso", "pendiente") and current in REOPEN_FROM and not note:
         raise ValidationError("Reabrir un ticket requiere un motivo en 'note'")
 
@@ -171,6 +346,17 @@ def transition(
                 f"cerrar: {detail}"
             )
 
+    # Punto 3 del diseño: el evento de toma de control guarda actor y sesión
+    # (columnas del evento) más el motivo y ``forced: true|false`` en la
+    # nota, para que el histórico distinga caducidad de bypass consciente.
+    event_note = note
+    if force_reason and event_note != force_reason:
+        event_note = (
+            f"{event_note} · {force_reason}" if event_note else force_reason
+        )
+    if takeover:
+        event_note = f"{event_note}\n{takeover}" if event_note else takeover
+
     ts = now()
     changes: list[tuple[str, Any]] = [("status", status), ("updated_at", ts)]
 
@@ -184,9 +370,9 @@ def transition(
         changes.append(("iterations", int(row["iterations"] or 0) + 1))
     if status == "completado":
         changes.append(("completed_at", ts))
-    elif status != "verificado":
-        # Confirmar o reabrir cierra la entrega: ``confirmed_at`` o el nuevo
-        # intento mandan. ``verificado`` conserva la fecha de completado.
+    elif status not in ("verificado", "confirmado"):
+        # Reabrir cierra la entrega: el nuevo intento manda. ``verificado`` y
+        # ``confirmado`` conservan la fecha de completado (métricas de cierre).
         changes.append(("completed_at", None))
     if status == "confirmado":
         changes.append(("confirmed_at", ts))
@@ -216,9 +402,181 @@ def transition(
             session_id,
             current,
             status,
-            note,
+            event_note,
         )
 
+    return get_ticket(conn, code)
+
+
+def abandon_ticket(
+    conn: sqlite3.Connection,
+    code: Any,
+    actor: str = "agente",
+    actor_type: str = "agente",
+    session_id: str | None = None,
+    force: bool = False,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    """Libera el claim sin cambiar de fase.
+
+    ``abandon`` (alias conceptual ``release``) es ortogonal a ``TRANSITIONS``:
+    limpia ``owner_session``, ``lease_until`` y ``heartbeat_at`` y deja un
+    evento ``abandon``; no toca ``status`` ni ``iterations``. El dueño de la
+    sesión puede liberar su claim. Otra sesión necesita ``force=true`` con
+    ``reason`` obligatorio, que queda registrado con actor y sesión.
+    """
+    actor = normalize_agent(actor)
+    check_enum(actor_type, ACTOR_TYPES, "actor_type")
+    row = row_by_code(conn, code)
+    reason = (reason or "").strip() or None
+    if force and not reason:
+        raise ValidationError(
+            "abandon con force=true exige un motivo en 'reason'; "
+            "queda en el histórico con actor y sesión."
+        )
+    owner = row["owner_session"]
+    if not owner and not row["lease_until"]:
+        raise TransitionError(
+            f"{row['code']} no tiene un claim que liberar"
+        )
+    if owner and not force and actor_type != "usuario":
+        same = session_id == owner or (
+            session_id is None and owner == f"agent:{actor}"
+        )
+        if not same:
+            raise PermissionDenied(
+                f"{row['code']} está reclamado por otra sesión ({owner}); "
+                "libera con la sesión dueña o usa force=true con reason."
+            )
+    ts = now()
+    with db.tx(conn):
+        conn.execute(
+            "UPDATE tickets SET owner_session = NULL, lease_until = NULL, "
+            "heartbeat_at = NULL, updated_at = ? WHERE id = ?",
+            (ts, row["id"]),
+        )
+        event(
+            conn,
+            row["id"],
+            "abandon",
+            actor,
+            actor_type,
+            session_id,
+            row["status"],
+            row["status"],
+            reason or "claim liberado",
+        )
+    return get_ticket(conn, code)
+
+
+def steps_exhausted(
+    conn: sqlite3.Connection,
+    code: Any,
+    phase: str | None = None,
+    note: str | None = None,
+    actor: str = "agente",
+    actor_type: str = "agente",
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """Registra que el cliente cortó la sesión por agotar pasos.
+
+    No cambia el estado: deja un evento ``steps_exhausted`` con la fase en la
+    que ocurrió y el actor, y libera el claim en el mismo paso. T-0088.06
+    eligió esta alternativa (y no comprobar el evento en cada transición):
+    es más simple y deja el cierre por otra sesión sin ``force``, porque el
+    lease muerto ya no existe. Solo una de las dos; no se comprueba además
+    el evento en las transiciones.
+    """
+    actor = normalize_agent(actor)
+    check_enum(actor_type, ACTOR_TYPES, "actor_type")
+    row = row_by_code(conn, code)
+    current = row["status"]
+    phase = (phase or current).strip() or current
+    text = f"pasos agotados en fase {phase}"
+    extra = (note or "").strip()
+    if extra:
+        text = f"{text}: {extra}"
+    claimed = bool(row["owner_session"] or row["lease_until"])
+    if claimed:
+        text = f"{text} · claim liberado"
+    ts = now()
+    with db.tx(conn):
+        if claimed:
+            conn.execute(
+                "UPDATE tickets SET owner_session = NULL, lease_until = NULL, "
+                "heartbeat_at = NULL, updated_at = ? WHERE id = ?",
+                (ts, row["id"]),
+            )
+        event(
+            conn,
+            row["id"],
+            "steps_exhausted",
+            actor,
+            actor_type,
+            session_id,
+            current,
+            current,
+            text,
+        )
+    return get_ticket(conn, code)
+
+
+def reject_delivery(
+    conn: sqlite3.Connection,
+    code: Any,
+    reason: str,
+    *,
+    actor: str = "conductor",
+    actor_type: str = "agente",
+    session_id: str | None = None,
+    reopen: bool = False,
+) -> dict[str, Any]:
+    """Rechaza una entrega antes de verificarla.
+
+    Deja un evento ``delivery_rejected`` con motivo obligatorio, actor y
+    sesión. No cambia el estado salvo con ``reopen=True``, que además reabre
+    el ticket a ``en_progreso`` en la misma acción (p. ej. un gate roto): la
+    reapertura desde ``verificado`` ya cuenta como rechazo posterior, así que
+    el evento no se suma dos veces en las métricas.
+    """
+    actor = normalize_agent(actor)
+    check_enum(actor_type, ACTOR_TYPES, "actor_type")
+    reason = (reason or "").strip()
+    if not reason:
+        raise ValidationError(
+            "Rechazar una entrega requiere un motivo en 'reason'; "
+            "queda en el histórico con actor y sesión."
+        )
+    row = row_by_code(conn, code)
+    current = row["status"]
+    if current not in ("completado", "verificado"):
+        raise ValidationError(
+            f"{row['code']} está en '{current}': solo se rechaza una entrega "
+            "en 'completado' (pre verificación) o 'verificado'."
+        )
+    target = "en_progreso" if reopen else current
+    with db.tx(conn):
+        event(
+            conn,
+            row["id"],
+            REJECTION_EVENT,
+            actor,
+            actor_type,
+            session_id,
+            current,
+            target,
+            reason,
+        )
+    if reopen:
+        transition(
+            conn,
+            code,
+            "en_progreso",
+            note=reason,
+            actor=actor,
+            actor_type=actor_type,
+            session_id=session_id,
+        )
     return get_ticket(conn, code)
 
 
@@ -376,8 +734,10 @@ def claim_ticket(
     steal: bool = False,
     anonymous_owner: bool = False,
     lease_minutes: int | None = None,
+    reason: str | None = None,
 ) -> dict[str, Any]:
     agent = normalize_agent(agent)
+    force_reason = _force_reason(force, reason, None, actor_type, session_id)
     with db.tx(conn):
         row = row_by_code(conn, code)
         if row["status"] in ("completado", "verificado", "confirmado", "cancelado"):
@@ -476,7 +836,8 @@ def claim_ticket(
                 session_id,
                 "en_progreso",
                 "en_progreso",
-                f"Asignado a {agent}",
+                f"Asignado a {agent}"
+                + (f" · force: {force_reason}" if force_reason else ""),
             )
             ticket = get_ticket(conn, code)
         else:
@@ -674,10 +1035,12 @@ def complete_ticket(
     actor_type: str = "agente",
     session_id: str | None = None,
     force: bool = False,
+    reason: str | None = None,
 ) -> dict[str, Any]:
     resolution = (resolution or "").strip()
     if not resolution:
         raise ValidationError("La resolución es obligatoria al completar un ticket")
+    force_reason = _force_reason(force, reason, resolution, actor_type, session_id)
 
     # En los modos live (none/scope) el trabajo no vive en un worktree con
     # rama por ticket: la evidencia es un commit enlazado o un enlace
@@ -718,6 +1081,7 @@ def complete_ticket(
             session_id=session_id,
             resolution=resolution,
             force=force,
+            reason=force_reason,
         )
         if commit:
             link_ticket(

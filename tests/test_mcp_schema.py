@@ -15,12 +15,15 @@ def run(h: Harness) -> None:
     # Catálogo MCP: nombres estables y anotaciones solo donde aportan.
     expected_catalog = {
         "create", "list", "get", "claim", "update", "transition", "complete",
+        "reject_delivery",
         "comment", "link", "stats", "next", "agents", "status", "whoami",
         "heartbeat", "checkpoint", "retry", "reassign", "schedule",
         "worktree_create", "worktree_list", "promote", "scratch_drop",
+        "reorg_plan", "reorg_apply", "epic_check",
+        "unlink", "links_repair",
         "health", "brief", "memory_search", "memory_write",
         "memory_playbook", "memory_checklist", "memory_candidates",
-        "memory_stats", "skills_suggest",
+        "memory_stats", "skills_suggest", "gate_run",
     }
     catalog_names = {tool["name"] for tool in schemas.TOOLS}
     h.eq(
@@ -38,8 +41,9 @@ def run(h: Harness) -> None:
         {
             "list", "get", "stats", "next", "agents", "schedule",
             "status", "whoami", "worktree_list", "health", "brief",
+            "reorg_plan", "epic_check",
             "memory_search", "memory_playbook", "memory_checklist",
-            "memory_candidates", "memory_stats", "skills_suggest",
+            "memory_candidates", "memory_stats", "skills_suggest", "gate_run",
         },
         "readOnlyHint solo se anota en las herramientas de lectura",
     )
@@ -51,17 +55,13 @@ def run(h: Harness) -> None:
         ),
         "el catálogo no emite anotaciones ni claves muertas",
     )
-    h.eq(
-        set(handlers.TOOL_DISPATCH),
-        {spec.name for spec in schemas.TOOL_SPECS},
-        "TOOL_DISPATCH se deriva del catálogo",
-    )
-    h.eq(
-        handlers.MUTATING_TOOLS,
-        frozenset(
+    h.ok(
+        set(handlers.TOOL_DISPATCH) == {spec.name for spec in schemas.TOOL_SPECS}
+        and handlers.MUTATING_TOOLS
+        == frozenset(
             spec.name for spec in schemas.TOOL_SPECS if not spec.read_only
         ),
-        "MUTATING_TOOLS se deriva de read_only",
+        "TOOL_DISPATCH y MUTATING_TOOLS se derivan del catálogo",
     )
     module_root = Path(__file__).resolve().parents[1] / "mcp_layer"
     line_counts = {
@@ -89,26 +89,40 @@ def run(h: Harness) -> None:
         and "verificado" in schemas.INSTRUCTIONS,
         "el catálogo MCP expone y documenta el estado verificado",
     )
+    reorg_plan = next(
+        tool for tool in schemas.TOOLS if tool["name"] == "reorg_plan"
+    )
+    reorg_apply = next(
+        tool for tool in schemas.TOOLS if tool["name"] == "reorg_apply"
+    )
+    reorg_actions = {"move", "renumber", "promote", "demote", "purge"}
+    h.ok(
+        set(reorg_plan["inputSchema"]["properties"]["action"]["enum"])
+        == reorg_actions
+        and reorg_plan["inputSchema"]["required"] == ["action"]
+        and reorg_apply["inputSchema"]["required"] == ["action", "apply"]
+        and reorg_plan["inputSchema"]["additionalProperties"] is False
+        and reorg_apply["inputSchema"]["additionalProperties"] is False,
+        "reorg_plan/reorg_apply declaran acción, apply y cierran el esquema",
+    )
 
-    # Precedencia en resolve_session
-    # 1. meta > args > env
+    # Precedencia en resolve_session: meta > args > env y claves alternativas
     sess_meta = handlers.resolve_session(
         meta={"sessionId": "meta-session-uuid"},
         args={"sessionId": "args-session-uuid"},
     )
-    h.ok(sess_meta == "meta-session-uuid", "meta['sessionId'] tiene precedencia sobre args")
-
-    # Claves alternativas en meta
     h.ok(
-        handlers.resolve_session(meta={"session_id": "meta-snake"}) == "meta-snake",
-        "resolve_session admite 'session_id' en meta",
-    )
-    h.ok(
-        handlers.resolve_session(meta={"ai.opencode/sessionID": "legacy-opencode"}) == "legacy-opencode",
-        "resolve_session admite 'ai.opencode/sessionID' en meta",
+        sess_meta == "meta-session-uuid"
+        and handlers.resolve_session(meta={"session_id": "meta-snake"})
+        == "meta-snake"
+        and handlers.resolve_session(
+            meta={"ai.opencode/sessionID": "legacy-opencode"}
+        )
+        == "legacy-opencode",
+        "meta['sessionId'] manda y admite session_id y ai.opencode/sessionID",
     )
 
-    # 2. args > env
+    # args > env; sin args, la cadena de fallback respeta su orden
     isolated = (
         "ANTIGRAVITY_CONVERSATION_ID",
         "AGY_SESSION_ID",
@@ -122,26 +136,21 @@ def run(h: Harness) -> None:
             meta=None,
             args={"session_id": "args-session-override"},
         )
-        h.ok(sess_arg == "args-session-override", "args tiene precedencia sobre variables de entorno")
-
-        # 3. Fallback a entorno (ANTIGRAVITY_CONVERSATION_ID > AGY_SESSION_ID > SESSION_ID)
         os.environ["ANTIGRAVITY_CONVERSATION_ID"] = "env-antigravity-conv"
-        h.ok(
-            handlers.resolve_session() == "env-antigravity-conv",
-            "resolve_session cae a ANTIGRAVITY_CONVERSATION_ID en entorno",
-        )
+        sess_conv = handlers.resolve_session()
         os.environ.pop("ANTIGRAVITY_CONVERSATION_ID", None)
-
         sess_env_agy = handlers.resolve_session()
-        h.ok(sess_env_agy == "env-agy-sess", "resolve_session cae a AGY_SESSION_ID en entorno")
         os.environ.pop("AGY_SESSION_ID", None)
-
         os.environ["SESSION_ID"] = "env-std-sess"
         sess_env_std = handlers.resolve_session()
-        h.ok(sess_env_std == "env-std-sess", "resolve_session cae a SESSION_ID si AGY_SESSION_ID no está")
         os.environ.pop("SESSION_ID", None)
-
-        # 4. Sin meta, args ni env -> None
+        h.ok(
+            sess_arg == "args-session-override"
+            and sess_conv == "env-antigravity-conv"
+            and sess_env_agy == "env-agy-sess"
+            and sess_env_std == "env-std-sess",
+            "args gana al entorno y el fallback usa conv, agy y session_id",
+        )
         h.ok(
             handlers.resolve_session(meta={}, args={}) is None,
             "sin datos de sesión devuelve None",
@@ -151,14 +160,15 @@ def run(h: Harness) -> None:
             if value is not None:
                 os.environ[name] = value
 
-    # 5. Normalización de espacios y fallback ante valores vacíos
+    # Normalización de espacios y fallback ante valores vacíos
     h.ok(
-        handlers.resolve_session(meta={"sessionId": "   trimmed-uuid   "}) == "trimmed-uuid",
-        "resolve_session recorta espacios en blanco en la sesión",
-    )
-    h.ok(
-        handlers.resolve_session(meta={"sessionId": "   "}, args={"session_id": "fallback-arg"}) == "fallback-arg",
-        "meta vacío cae al identificador provisto en args",
+        handlers.resolve_session(meta={"sessionId": "   trimmed-uuid   "})
+        == "trimmed-uuid"
+        and handlers.resolve_session(
+            meta={"sessionId": "   "}, args={"session_id": "fallback-arg"}
+        )
+        == "fallback-arg",
+        "resolve_session recorta espacios y un meta vacío cae a args",
     )
 
     # ── Dependencias y capacidades por MCP ──────────────────────────────
@@ -205,19 +215,17 @@ def run(h: Harness) -> None:
             "reversal": {"kind": "manual", "ref": "T-0060.01"},
         },
     )
-    h.eq(
-        (created["isolation"], created["resources"], created["reversal"]["kind"]),
-        ("scope", ["package:git"], "manual"),
-        "create acepta isolation, resources y reversal",
-    )
     claimed = handlers.call_tool(
         "claim", {"code": created["code"], "agent": "mcp-iso"}
     )
     h.ok(
-        claimed["isolation"] == "scope"
+        created["isolation"] == "scope"
+        and created["resources"] == ["package:git"]
+        and created["reversal"]["kind"] == "manual"
+        and claimed["isolation"] == "scope"
         and isinstance(claimed.get("scope"), list)
         and claimed["scope"],
-        "claim devuelve isolation y scope",
+        "create acepta isolation/resources/reversal y claim devuelve scope",
     )
     updated = handlers.call_tool(
         "update",
@@ -228,26 +236,21 @@ def run(h: Harness) -> None:
             "reversal": {"kind": "command", "command": "true"},
         },
     )
-    h.eq(
-        (updated["isolation"], updated["resources"], updated["reversal"]["kind"]),
-        ("none", ["service:sshd"], "command"),
-        "update acepta isolation, resources y reversal",
-    )
     shown = handlers.call_tool("get", {"code": created["code"]})
-    h.ok(
-        shown["isolation"] == "none"
-        and shown["resources"] == ["service:sshd"]
-        and isinstance(shown.get("scope"), list),
-        "get incluye isolation, recursos y scope",
-    )
     listed = handlers.call_tool(
         "list", {"query": "Ticket MCP aislado", "limit": 5}
     )
     h.ok(
-        listed.get("scope_roots")
+        updated["isolation"] == "none"
+        and updated["resources"] == ["service:sshd"]
+        and updated["reversal"]["kind"] == "command"
+        and shown["isolation"] == "none"
+        and shown["resources"] == ["service:sshd"]
+        and isinstance(shown.get("scope"), list)
+        and listed.get("scope_roots")
         and any(
             item.get("isolation") == "none"
             for item in listed["tickets"]
         ),
-        "list incluye isolation y scope_roots",
+        "update, get y list conservan isolation, recursos y scope",
     )

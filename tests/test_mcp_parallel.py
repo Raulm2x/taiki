@@ -21,6 +21,15 @@ def _git(root: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def _deniega(func) -> bool:
+    """True si la llamada se rechaza con PermissionDenied."""
+    try:
+        func()
+    except domain.PermissionDenied:
+        return True
+    return False
+
+
 def run(h: Harness) -> None:
     tmp = Path(h.tmp)
     root = git_repo(tmp / "proyecto")
@@ -62,19 +71,15 @@ def run(h: Harness) -> None:
         h.eq(claimed["owner_session"], "ses_par", "claim MCP fija la sesión")
 
         snap = handlers.call_tool("status", {"servers": False}, meta=meta)
+        me = handlers.call_tool("whoami", {}, meta=meta)
         h.ok(
             any(
                 item["code"] == ticket["code"] and item["session"] == "ses_par"
                 for item in snap["sessions"]
-            ),
-            "status lista la sesión y su ticket",
-        )
-        me = handlers.call_tool("whoami", {}, meta=meta)
-        h.eq(me["session"], "ses_par", "whoami devuelve la sesión")
-        h.eq(
-            me["active"]["code"],
-            ticket["code"],
-            "whoami devuelve el ticket activo",
+            )
+            and me["session"] == "ses_par"
+            and me["active"]["code"] == ticket["code"],
+            "status y whoami devuelven la sesión y su ticket activo",
         )
 
         reader = db.connect()
@@ -92,17 +97,16 @@ def run(h: Harness) -> None:
             reader.close()
         hb = handlers.call_tool("heartbeat", {}, meta=meta)
         h.ok(
-            hb["renewed"] and hb["lease_until"],
-            "heartbeat renueva el lease del ticket activo",
-        )
-        h.raises(
-            domain.PermissionDenied,
-            lambda: handlers.call_tool(
-                "heartbeat",
-                {"code": ticket["code"]},
-                meta={"sessionId": "ses_otra"},
+            hb["renewed"]
+            and hb["lease_until"]
+            and _deniega(
+                lambda: handlers.call_tool(
+                    "heartbeat",
+                    {"code": ticket["code"]},
+                    meta={"sessionId": "ses_otra"},
+                )
             ),
-            "otra sesión no renueva el lease",
+            "heartbeat renueva el lease propio y otra sesión no puede",
         )
 
         tree = handlers.call_tool(
@@ -110,13 +114,10 @@ def run(h: Harness) -> None:
         )
         h.ok(
             Path(tree["path"]).is_dir()
-            and str(tree["branch"]).startswith("agent/"),
-            "worktree_create crea el worktree y la rama",
-        )
-        h.eq(
-            Path(tree["path"]),
-            (root / ".worktrees" / ticket["code"]).resolve(),
-            "worktree_create usa la raíz del proyecto de TAIKI_DB",
+            and str(tree["branch"]).startswith("agent/")
+            and Path(tree["path"])
+            == (root / ".worktrees" / ticket["code"]).resolve(),
+            "worktree_create crea el worktree y la rama en la raíz de TAIKI_DB",
         )
         listed = handlers.call_tool(
             "worktree_list", {"code": ticket["code"]}, meta=meta
@@ -244,7 +245,7 @@ def run(h: Harness) -> None:
 
         health = handlers.call_tool("health", {"servers": False}, meta=meta)
         h.ok(
-            {"mcp", "hooks", "stale_claims", "overlaps", "ok"} <= set(health),
-            "health devuelve el estado del MCP y del proyecto",
+            {"mcp", "hooks", "stale_claims", "overlaps", "ok"} <= set(health)
+            and len(health["hooks"]) == 4,
+            "health devuelve el estado del MCP y sus cuatro hooks",
         )
-        h.eq(len(health["hooks"]), 4, "health informa de los cuatro hooks")

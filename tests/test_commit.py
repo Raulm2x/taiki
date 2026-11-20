@@ -345,6 +345,91 @@ def run(h: Harness) -> None:
                 "taiki commit --repo commitea en el repo live y enlaza external repo@sha",
             )
 
+            # ── --repo traduce paths absolutos del ticket al repo live ──
+            dots = git_repo(tmp / "dots")
+            (dots / "hypr").mkdir()
+            (dots / "hypr" / "a.py").write_text("a\n", encoding="utf-8")
+            (dots / "other").mkdir()
+            (dots / "other" / "b.py").write_text("b\n", encoding="utf-8")
+            _git(dots, "add", "-A")
+            _git(dots, "commit", "-m", "inicio")
+            dots_ticket = repo.create_ticket(
+                conn,
+                title="Dotfiles con path absoluto",
+                project="dots",
+                isolation="scope",
+                paths=[str(dots / "hypr")],
+            )
+            repo.claim_ticket(
+                conn,
+                dots_ticket["code"],
+                agent="worker",
+                session_id="ses_dots",
+            )
+            (dots / "hypr" / "a.py").write_text("a2\n", encoding="utf-8")
+            _git(dots, "add", "hypr/a.py")
+            translated = commits.check(
+                dots,
+                repo.get_ticket(conn, dots_ticket["code"]),
+                repo_root=dots,
+            )
+            (dots / "other" / "b.py").write_text("b2\n", encoding="utf-8")
+            _git(dots, "add", "other/b.py")
+            away = commits.check(
+                dots,
+                repo.get_ticket(conn, dots_ticket["code"]),
+                repo_root=dots,
+            )
+            _git(dots, "reset", "-q", "other/b.py")
+            with h.env(TAIKI_DB=str(info["db"])), contextlib.redirect_stdout(
+                io.StringIO()
+            ), contextlib.redirect_stderr(io.StringIO()):
+                dots_code = cmd_commit(
+                    argparse.Namespace(
+                        message="hypr",
+                        ticket=dots_ticket["code"],
+                        repo=str(dots),
+                        agent="worker",
+                        session="ses_dots",
+                        dry_run=True,
+                        json=False,
+                    )
+                )
+            # ── --repo avisa de rutas declaradas pero ignoradas ─────────
+            ignored_repo = git_repo(tmp / "ignored")
+            (ignored_repo / ".gitignore").write_text("*\n!keep/\n", encoding="utf-8")
+            (ignored_repo / "keep").mkdir()
+            (ignored_repo / "keep" / "k.py").write_text("k\n", encoding="utf-8")
+            _git(ignored_repo, "add", "-f", ".gitignore", "keep/k.py")
+            _git(ignored_repo, "commit", "-m", "base")
+            ignored_ticket = repo.create_ticket(
+                conn,
+                title="Ruta ignorada por gitignore",
+                project="ignored",
+                isolation="scope",
+                paths=[str(ignored_repo / "drop")],
+            )
+            ignored_live = commits.check(
+                ignored_repo,
+                repo.get_ticket(conn, ignored_ticket["code"]),
+                repo_root=ignored_repo,
+            )
+            ignored_plain = commits.check(
+                ignored_repo, repo.get_ticket(conn, ignored_ticket["code"])
+            )
+            h.ok(
+                translated["ok"]
+                and translated["scope"] == [str(dots / "hypr")]
+                and translated["commit_scope"] == ["hypr"]
+                and away["outside"] == ["other/b.py"]
+                and not away["ok"]
+                and dots_code == 0
+                and ignored_live["ignored"] == ["drop"]
+                and not ignored_plain["ignored"],
+                "repo_root traduce el path absoluto: dentro pasa, fuera no, "
+                "y taiki commit --repo lo acepta",
+            )
+
             # ── Solapamientos en audit ──────────────────────────────────
             repo.update_ticket(conn, other["code"], paths=["src/a.py"])
             pairs = audit_lib.overlaps(conn)

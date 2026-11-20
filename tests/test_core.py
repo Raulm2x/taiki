@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 import cli
 from mcp_layer import handlers
-from ticketlib import audit as audit_lib, domain, githook, gitutil, render, repo, util
+from ticketlib import audit as audit_lib, db, domain, githook, gitutil, render, repo, util
 from ticketlib.store import workflow
 from tui import detail as tui_detail
 from tests.seeds import completed, git_repo
@@ -535,10 +535,16 @@ def run(h: Harness) -> None:
         actor="conductor",
     )
     report = repo.confirm_tickets(conn, [review["code"]])
+    confirmed = repo.get_ticket(conn, review["code"])
     h.ok(
         report["confirmed"] == [review["code"]]
-        and repo.get_ticket(conn, review["code"])["status"] == "confirmado",
+        and confirmed["status"] == "confirmado",
         "el usuario confirma desde verificado",
+    )
+    h.ok(
+        confirmed["completed_at"] is not None
+        and confirmed["iterations"] == 2,
+        "confirmar conserva completed_at y no abre un intento nuevo",
     )
 
     # Confirmar una épica expande y confirma sus tareas verificadas.
@@ -600,4 +606,63 @@ def run(h: Harness) -> None:
             conn, late_epic["code"], "verificado", note="gates", actor="conductor"
         ),
         "una épica con tareas abiertas no se verifica",
+    )
+
+    # ── Alias de renumber y raíces libres ─────────────────────────────
+    alias_target = repo.create_ticket(conn, title="Destino de alias")
+    conn.execute(
+        "UPDATE tickets SET code = 'T-9003' WHERE id = ?",
+        (alias_target["id"],),
+    )
+    conn.commit()
+    db.record_renamed(conn, "T-9001", "T-9002", "2026-11-19T00:00:00")
+    db.record_renamed(conn, "T-9002", "T-9003", "2026-11-19T00:00:00")
+    conn.commit()
+    h.eq(
+        db.renamed_chain(conn, "T-9001"),
+        ("T-9003", True),
+        "record_renamed aplana la cadena hasta el código actual",
+    )
+
+    free_root = repo.create_ticket(conn, title="Raíz sin publicar")
+    free_plan = repo.reorg_plan(conn, "renumber", [free_root["code"]])
+    h.ok(
+        free_plan["items"] and free_plan["aliases"],
+        "renumber de una raíz libre calcula el alias sin flag",
+    )
+    conn.execute(
+        "INSERT INTO links(ticket_id, kind, ref, created_at) "
+        "VALUES (?, 'commit', 'deadbeef', '2026-11-19T00:00:00')",
+        (free_root["id"],),
+    )
+    conn.commit()
+    h.raises(
+        domain.ValidationError,
+        lambda: repo.reorg_plan(conn, "renumber", [free_root["code"]]),
+        "una raíz publicada se rechaza sin allow_root",
+    )
+    allowed = repo.reorg_plan(
+        conn, "renumber", [free_root["code"]], allow_root=True
+    )
+    h.ok(
+        allowed["items"],
+        "allow_root permite renumerar una raíz publicada",
+    )
+    repo.reorg_apply(conn, "renumber", [free_root["code"]], allow_root=True)
+    second_root = repo.create_ticket(conn, title="Segunda raíz publicada")
+    conn.execute(
+        "INSERT INTO links(ticket_id, kind, ref, created_at) "
+        "VALUES (?, 'commit', 'deadbeef', '2026-11-19T00:00:00')",
+        (second_root["id"],),
+    )
+    conn.commit()
+    second = repo.reorg_apply(
+        conn, "renumber", [second_root["code"]], allow_root=True
+    )
+    second_new = second["items"][0]["new_code"]
+    after = repo.create_ticket(conn, title="Alta tras renumerar raíz")
+    h.ok(
+        after["code"] != second_new,
+        "renumber con allow_root proyecta el contador: el alta siguiente "
+        "no colisiona",
     )

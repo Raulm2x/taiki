@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from ticketlib import agents, runtime, workspace
+from ticketlib.guard import commands as shell_rules
 from tests.support import Harness
 
 AGENTS_DIR = runtime.ROOT / ".opencode" / "agents"
@@ -120,11 +121,16 @@ def run(h: Harness) -> None:
                 "taiki claim*",
                 "taiki complete*",
                 "git push*",
-                "git merge*",
                 "git rebase*",
                 "git add*",
             )
-        ),
+        )
+        # El merge se comprueba con un comando real, no con la forma del
+        # patrón: el deny puede afinarse (p. ej. `git merge *` para no tapar
+        # `git merge-base`) sin romper esta garantía.
+        and not shell_rules.command_verdict(
+            "git merge develop", _rules(front)
+        )["allowed"],
         "el merger no confirma, no escribe estado, no commitea ni publica",
     )
     h.ok(

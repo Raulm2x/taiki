@@ -12,7 +12,7 @@ from ..domain import ValidationError
 from ..util import now
 from . import budget as budget_lib
 from . import security
-from .config import load_memory_config, validate_memory_config
+from .config import resolve_memory_config
 from .models import BUDGET_STATUSES
 
 ACTOR_TYPE = "agente"
@@ -178,18 +178,14 @@ def _restore(conn: sqlite3.Connection, target: dict[str, Any]) -> None:
 
 
 def _budget_config(value: dict[str, Any] | None) -> dict[str, Any]:
-    if value is None:
-        return load_memory_config()
-    if "memory" in value:
-        return validate_memory_config(value.get("memory"))
-    return validate_memory_config(value)
+    return resolve_memory_config(value)
 
 
 def _check_budget(
     conn: sqlite3.Connection,
     scope: str,
     cfg: dict[str, Any],
-) -> None:
+) -> dict[str, Any]:
     rows = conn.execute(
         "SELECT * FROM memories WHERE scope = ? AND status IN (?, ?, ?)",
         (scope, *BUDGET_STATUSES),
@@ -197,7 +193,10 @@ def _check_budget(
     limit = int(
         cfg["user_budget_chars"] if scope == "user" else cfg["project_budget_chars"]
     )
-    budget_lib.enforce([dict(row) for row in rows], limit, scope)
+    entries = [dict(row) for row in rows]
+    if not cfg["enforce_budget"]:
+        return budget_lib.summary(entries, limit, scope)
+    return budget_lib.enforce(entries, limit, scope)
 
 
 def _snapshot_scopes(snapshot: dict[str, Any] | None) -> set[str]:

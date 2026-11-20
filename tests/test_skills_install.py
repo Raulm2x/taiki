@@ -93,21 +93,18 @@ def _install(h: Harness) -> None:
             ticket_id="T-0049.01",
             config={},
         )
-        h.eq(result["kind"], "playbook", "la skill se guarda como playbook")
-        h.eq(result["status"], "proposed", "la skill nace propuesta, no activa")
-        h.eq(result["source"], "import", "la procedencia es import")
-        h.eq(result["code"].startswith("M-"), True, "el playbook recibe código M-####")
         h.ok(
-            "Demo skill curada" in result["description"],
-            "usa la description del frontmatter",
+            result["kind"] == "playbook"
+            and result["status"] == "proposed"
+            and result["source"] == "import"
+            and result["code"].startswith("M-"),
+            "la skill se guarda como playbook propuesto con código M-",
         )
         h.ok(
-            result["content"].startswith("# Demo"),
-            "el contenido es el cuerpo de SKILL.md sin frontmatter",
-        )
-        h.ok(
-            "metadata:" not in result["content"],
-            "el frontmatter no se guarda como contenido",
+            "Demo skill curada" in result["description"]
+            and result["content"].startswith("# Demo")
+            and "metadata:" not in result["content"],
+            "usa la description del frontmatter y guarda el cuerpo sin él",
         )
         paths = {item["path"] for item in result["files"]}
         h.eq(
@@ -126,22 +123,20 @@ def _install(h: Harness) -> None:
 
         stored = get_playbook(conn, result["code"])
         evidence = {(item["kind"], item["ref"]) for item in stored["evidence"]}
-        h.ok(
-            ("url", f"{RAW_BASE_URL}/{NAME}/SKILL.md") in evidence,
-            "la evidencia conserva la URL de origen",
-        )
-        h.ok(
-            ("commit", "0123456789abcdef0123456789abcdef01234567") in evidence,
-            "la evidencia conserva el commit del registro",
-        )
         reason = conn.execute(
             "SELECT reason FROM memory_ledger WHERE memory_id = ? AND action = 'create'",
             (result["id"],),
         ).fetchone()["reason"]
-        h.ok("midudev/autoskills" in reason, "el reason registra la fuente")
         h.ok(
-            _entry(FILES)["bundleHash"][:12] in reason,
-            "el reason registra el bundleHash",
+            ("url", f"{RAW_BASE_URL}/{NAME}/SKILL.md") in evidence
+            and ("commit", "0123456789abcdef0123456789abcdef01234567")
+            in evidence,
+            "la evidencia conserva la URL y el commit del registro",
+        )
+        h.ok(
+            "midudev/autoskills" in reason
+            and _entry(FILES)["bundleHash"][:12] in reason,
+            "el reason registra la fuente y el bundleHash",
         )
         h.eq(
             result["skill"]["files"],
@@ -155,9 +150,12 @@ def _install(h: Harness) -> None:
         )
 
         listed = list_skills(conn)
-        h.eq(len(listed), 1, "list_skills muestra la skill instalada")
-        h.eq(listed[0]["origin"], "autoskills", "list_skills marca la procedencia")
-        h.eq(listed[0]["status"], "proposed", "list_skills conserva el estado")
+        h.ok(
+            len(listed) == 1
+            and listed[0]["origin"] == "autoskills"
+            and listed[0]["status"] == "proposed",
+            "list_skills muestra la skill instalada, su origen y estado",
+        )
     finally:
         conn.close()
 

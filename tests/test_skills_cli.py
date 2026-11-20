@@ -158,13 +158,13 @@ def run(h: Harness) -> None:
             _, installed = _json(
                 ["skills", "install", "python-testing-patterns", "--yes", "--json"]
             )
-            h.eq(installed["status"], "proposed", "install deja el playbook propuesto")
-            h.eq(installed["source"], "import", "install registra source=import")
-            h.eq(installed["kind"], "playbook", "install crea un playbook")
             h.ok(
-                installed["skill"]["source"] == "midudev/autoskills"
+                installed["status"] == "proposed"
+                and installed["source"] == "import"
+                and installed["kind"] == "playbook"
+                and installed["skill"]["source"] == "midudev/autoskills"
                 and installed["code"].startswith("M-"),
-                "install devuelve código M-#### y procedencia",
+                "install deja un playbook propuesto con código M- y procedencia",
             )
             plain_install, out, _ = _run(
                 ["skills", "install", "sqlalchemy", "--yes"]
@@ -185,14 +185,13 @@ def run(h: Harness) -> None:
             )
 
             _, listed = _json(["skills", "list", "--json"])
-            h.eq(
-                sorted(item["name"] for item in listed["skills"]),
-                ["python-testing-patterns", "sqlalchemy"],
-                "skills list muestra las skills instaladas",
-            )
             h.ok(
-                all(item["origin"] == "autoskills" for item in listed["skills"]),
-                "skills list marca el origen autoskills",
+                sorted(item["name"] for item in listed["skills"])
+                == ["python-testing-patterns", "sqlalchemy"]
+                and all(
+                    item["origin"] == "autoskills" for item in listed["skills"]
+                ),
+                "skills list muestra las instaladas y marca el origen autoskills",
             )
             plain_list, list_out, _ = _run(["skills", "list"])
             h.ok(

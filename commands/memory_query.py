@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import shutil
+from datetime import datetime
+from pathlib import Path
 
 from ticketlib import render, workspace
 from ticketlib.domain import ValidationError
@@ -16,6 +19,7 @@ from ticketlib.memory import budget as memory_budget
 from ticketlib.memory import core as memory_core
 from ticketlib.memory.curate import auto_curate
 from ticketlib.memory.render import memory_summary
+from ticketlib.memory.repair import apply_repair, plan_repair
 from ticketlib.memory.review import run_review_command
 from ticketlib.memory.stats import impact, stats
 
@@ -150,6 +154,75 @@ def _curate(conn, args: argparse.Namespace) -> int:
     return 0
 
 
+def _database_backup(conn) -> Path:
+    """Copia la DB a ``<dir>/backups`` antes de una reparación destructiva."""
+    db = conn.execute("PRAGMA database_list").fetchone()[2]
+    if not db or not Path(db).is_file():
+        raise ValidationError("La DB no es un fichero; no hay backup posible")
+    dest = Path(db).parent / "backups"
+    dest.mkdir(parents=True, exist_ok=True)
+    target = dest / f"taiki-{datetime.now():%Y%m%d-%H%M%S}.db"
+    shutil.copy2(db, target)
+    return target
+
+
+def _repair_evidence(conn, args: argparse.Namespace) -> int:
+    """Normaliza ``kind:<ref>`` embebido; dry-run por defecto y backup al aplicar."""
+    root = getattr(args, "root", None)
+    repos = getattr(args, "repo", None)
+    retire = bool(getattr(args, "retire_missing", False))
+    plan = plan_repair(conn, root, repos=repos)
+    apply = bool(getattr(args, "apply", False))
+    backup: str | None = None
+    if apply and (plan["valid"] or (retire and plan["retireable"])):
+        backup = str(_database_backup(conn))
+        result = apply_repair(
+            conn, root, repos=repos, retire_missing=retire
+        )
+    else:
+        result = {**plan, "applied": 0, "retired": 0, "ledger": []}
+    payload = {
+        **result,
+        "backup": backup,
+        "dry_run": not apply,
+        "retire_missing": retire,
+    }
+    if _as_json(args):
+        print(render.to_json(payload))
+        return 0
+    if not args.apply:
+        print("Reparación de evidencia (simulación)")
+    else:
+        print("Reparación de evidencia")
+    print(
+        f"Cambios: {result['valid']} válidos · {result['invalid']} inválidos · "
+        f"{result['memories']} memoria(s) · {result['retired']} retirada(s)"
+    )
+    for item in result["changes"][:5]:
+        estado = "ok" if item["valid"] else f"inválida: {item['reason']}"
+        if item.get("retireable"):
+            estado += " (retirable)"
+        print(
+            f"  {item['code']}  {item['kind']}:{item['ref']} → "
+            f"{item['new_kind']}:{item['new_ref']}  ({estado})"
+        )
+    if result["retire"]:
+        print(f"Retirables: {result['retireable']}")
+        for item in result["retire"][:5]:
+            print(f"  {item['code']}  {item['ref']}  ({item['reason']})")
+    if not args.apply:
+        print(f"(simulación; raíz {result['root']}; usa --apply para escribir)")
+        if retire:
+            print("(--retire-missing solo retira con --apply)")
+        return 0
+    if backup is not None:
+        print(f"Backup: {backup}")
+        print(f"Reparadas: {result['applied']} referencia(s)")
+    else:
+        print("Nada que reparar; no se escribe ni se crea backup.")
+    return 0
+
+
 def _stats(conn, args: argparse.Namespace) -> int:
     data = stats(conn, memory_core.config(None))
     if _as_json(args):
@@ -168,13 +241,12 @@ def _stats(conn, args: argparse.Namespace) -> int:
         "  kind: "
         + ", ".join(f"{name}={value}" for name, value in data["by_kind"].items())
     )
-    print("Presupuesto:")
+    index = data["index"]
+    print(f"Índice: {index['used']}/{index['cap']} chars ({index['percent']}%)")
+    print("Almacenamiento (advisory):")
     for scope in ("project", "user"):
         item = data["budget"][scope]
-        print(
-            f"  {scope}: {item['used']}/{item['limit']} chars · "
-            f"quedan {item['remaining']} · {item['entries']} entrada(s)"
-        )
+        print(f"  {scope}: {item['used']}/{item['limit']} chars")
     proposals = data["proposals"]
     print(f"Propuestas: {proposals['count']}")
     if proposals["codes"]:
@@ -284,6 +356,9 @@ def _show(conn, args: argparse.Namespace) -> int:
         print(render.to_json(memory))
         return 0
     _print_memory(memory, False)
+    if not (memory.get("freshness") or {}).get("ok", True):
+        for reason in memory["freshness"]["reasons"]:
+            print(f"⚠ evidencia no vigente: {reason}")
     files = memory.get("files") or []
     if files:
         print("  Ficheros: " + ", ".join(item["path"] for item in files))

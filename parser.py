@@ -19,6 +19,7 @@ from commands import (
     cmd_comment,
     cmd_commit,
     cmd_complete,
+    cmd_demote,
     cmd_detach,
     cmd_confirm,
     cmd_export,
@@ -34,11 +35,13 @@ from commands import (
     cmd_mcp_install,
     cmd_mcp_uninstall,
     cmd_memory,
+    cmd_move,
     cmd_new,
     cmd_next,
     cmd_open,
     cmd_scratch,
     cmd_overview,
+    cmd_promote,
     cmd_renumber,
     cmd_repair_gaps,
     cmd_reject,
@@ -65,6 +68,8 @@ from commands import (
     cmd_worktree_merge,
     cmd_worktree_remove,
 )
+from commands.tickets import cmd_purge
+from commands.guard import cmd_config_show, cmd_perms
 from commands.workflow import cmd_authorize, cmd_review
 from ticketlib import domain
 from ticketlib.domain import (
@@ -141,7 +146,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.set_defaults(func=cmd_list)
 
-    p = sub.add_parser("attach", help="Agrupa tickets bajo una épica")
+    p = sub.add_parser(
+        "attach",
+        help="Agrupa tickets bajo una épica (equivale a move --keep-code)",
+        description="Cuelga los tickets de una épica conservando su código; "
+        "equivale a 'move --keep-code'.",
+    )
     p.add_argument("parent")
     p.add_argument("codes", nargs="+")
     p.add_argument("--agent", default="usuario")
@@ -151,6 +161,62 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("codes", nargs="+")
     p.add_argument("--agent", default="usuario")
     p.set_defaults(func=cmd_detach)
+
+    p = sub.add_parser(
+        "move",
+        help="Mueve tickets a otra épica (dry-run por defecto)",
+        description="Reasigna los tickets a la épica --parent. Sin --renumber "
+        "conserva el código (como attach); simula salvo con --apply.",
+    )
+    p.add_argument("codes", nargs="+")
+    p.add_argument("--parent", required=True, help="Épica destino")
+    modo = p.add_mutually_exclusive_group()
+    modo.add_argument(
+        "--renumber",
+        action="store_true",
+        help="Renombra los códigos a <padre>.NN",
+    )
+    modo.add_argument(
+        "--keep-code",
+        action="store_true",
+        help="Conserva el código plano (defecto; como attach)",
+    )
+    p.add_argument("--apply", action="store_true", help="Aplica el plan")
+    p.add_argument("--json", action="store_true", help="Emite JSON")
+    p.set_defaults(func=cmd_move)
+
+    p = sub.add_parser(
+        "promote",
+        help="Convierte una tarea en épica (dry-run por defecto)",
+        description="Desvincula el ticket de su padre para que pueda tener "
+        "tareas; simula salvo con --apply.",
+    )
+    p.add_argument("code")
+    p.add_argument("--apply", action="store_true", help="Aplica el plan")
+    p.add_argument("--json", action="store_true", help="Emite JSON")
+    p.set_defaults(func=cmd_promote)
+
+    p = sub.add_parser(
+        "demote",
+        help="Convierte una épica en tarea (dry-run por defecto)",
+        description="Reparte sus tareas en --children-to (o root) y mueve la "
+        "épica a --parent si se indica; simula salvo con --apply.",
+    )
+    p.add_argument("code")
+    p.add_argument(
+        "--children-to",
+        required=True,
+        help="Épica destino de las tareas, o 'root' para dejarlas en la raíz",
+    )
+    p.add_argument("--parent", help="Épica destino de la épica degradada")
+    p.add_argument(
+        "--renumber",
+        action="store_true",
+        help="Renumera como <padre>.NN los tickets que ganan padre",
+    )
+    p.add_argument("--apply", action="store_true", help="Aplica el plan")
+    p.add_argument("--json", action="store_true", help="Emite JSON")
+    p.set_defaults(func=cmd_demote)
 
     p = sub.add_parser("show", help="Muestra un ticket")
     p.add_argument("code")
@@ -194,6 +260,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_new)
 
     p = sub.add_parser(
+        "purge",
+        help="Purga tickets cancelados con backup (dry-run por defecto)",
+        description="Borra tickets cancelados sin referencias (hijos, "
+        "enlaces, memorias o evidencias) tras copiar la base de datos. "
+        "Simula por defecto; --apply exige --force.",
+    )
+    p.add_argument("codes", nargs="+", help="Tickets cancelados a purgar")
+    p.add_argument(
+        "--apply", action="store_true", help="Ejecuta la purga si hay --force"
+    )
+    p.add_argument(
+        "--force", action="store_true", help="Confirma el borrado con --apply"
+    )
+    p.add_argument("--agent", help="Agente que ejecuta la purga")
+    p.add_argument("--json", action="store_true", help="Emite JSON")
+    p.set_defaults(func=cmd_purge)
+
+    p = sub.add_parser(
         "repair-gaps",
         help="Cubre huecos de numeración con tickets cancelados",
         description="Crea un ticket genérico cancelado para cada T-XXXX que "
@@ -209,7 +293,23 @@ def build_parser() -> argparse.ArgumentParser:
         "renumber",
         help="Renombra tareas con código plano a T-XXXX.NN",
         description="Detecta hijos creados con el padre pero con código normal "
-        "(procesos antiguos) y los renombra; los adoptados con attach no se tocan.",
+        "(procesos antiguos) y los renombra. Solo toca los adoptados con "
+        "attach si se pasa --adopted; sin códigos usa todos los candidatos. "
+        "Simula salvo con --apply.",
+    )
+    p.add_argument(
+        "codes", nargs="*", help="Tareas concretas (defecto: todas)"
+    )
+    p.add_argument(
+        "--adopted",
+        action="store_true",
+        help="Incluye los tickets adoptados con attach",
+    )
+    p.add_argument(
+        "--allow-root",
+        action="store_true",
+        help="Permite renumerar una raíz publicada (con commits enlazados); "
+        "sigue rechazando épicas con tareas y códigos ocupados",
     )
     p.add_argument("--apply", action="store_true", help="Aplica los cambios")
     p.add_argument("--agent", help="Agente que ejecuta el cambio")
@@ -411,6 +511,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=KINDS,
         help="Tipos de ticket aplicables; sin la opción, la memoria es general",
     )
+    m.add_argument(
+        "--tags",
+        nargs="*",
+        help="Etiquetas de dominio en minúsculas (slug corto)",
+    )
     m.add_argument("--pin", action="store_true")
     m.add_argument("--json", action="store_true")
     m.set_defaults(func=cmd_memory)
@@ -431,6 +536,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     m = memory_sub.add_parser("show", help="Detalle de una memoria")
     m.add_argument("code")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser("search", help="Busca memorias por texto")
+    m.add_argument("query", help="Texto a buscar en título y contenido")
+    m.add_argument("--scope", choices=MEMORY_SCOPES)
+    m.add_argument("--kind", choices=MEMORY_KINDS)
+    m.add_argument("--limit", type=int, default=10)
     m.add_argument("--json", action="store_true")
     m.set_defaults(func=cmd_memory)
 
@@ -488,6 +601,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="Muestra el plan sin escribir estados ni ledger",
     )
     m.add_argument("--json", action="store_true")
+    m.set_defaults(func=cmd_memory)
+
+    m = memory_sub.add_parser(
+        "repair-evidence",
+        help="Normaliza el prefijo embebido en refs de evidencia (dry-run)",
+    )
+    m.add_argument(
+        "--apply",
+        action="store_true",
+        help="Escribe los cambios y deja un backup de la DB",
+    )
+    m.add_argument("--json", action="store_true")
+    m.add_argument("--root", help="Raíz para resolver ficheros y commits")
+    m.add_argument(
+        "--repo",
+        action="append",
+        metavar="PATH",
+        help="Repositorio adicional para resolver commits (repetible)",
+    )
+    m.add_argument(
+        "--retire-missing",
+        action="store_true",
+        help="Con --apply, retira refs file a rutas inexistentes con padre legible",
+    )
     m.set_defaults(func=cmd_memory)
 
     m = memory_sub.add_parser("stats", help="Estadísticas de la memoria")
@@ -569,6 +706,11 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--kind", choices=MEMORY_KINDS)
     m.add_argument("--confidence", type=float)
     m.add_argument("--paths", nargs="+")
+    m.add_argument(
+        "--tags",
+        nargs="*",
+        help="Reemplaza las etiquetas de dominio de la memoria",
+    )
     m.add_argument(
         "--ticket-kinds",
         nargs="+",
@@ -738,6 +880,23 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="también en Antigravity (su configuración es global)",
     )
+    mcp_add.add_argument(
+        "--force-agents",
+        action="store_true",
+        help="sobrescribe los perfiles de .opencode/agents con la versión de Taiki",
+    )
+    mcp_add.add_argument(
+        "--no-reload",
+        action="store_true",
+        help="no pedir a los servidores MCP vivos que recarguen su código "
+        "al terminar",
+    )
+    mcp_add.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="con la recarga: no esperar a que los servidores confirmen "
+        "su nuevo código",
+    )
     mcp_add.set_defaults(func=cmd_mcp_install)
     mcp_rm = mcp_sub.add_parser(
         "uninstall", help="retira el MCP del proyecto actual"
@@ -837,6 +996,11 @@ def build_parser() -> argparse.ArgumentParser:
     wt_merge.add_argument("code", nargs="?")
     wt_merge.add_argument("--path", help="ruta concreta del worktree")
     wt_merge.add_argument("--no-tests", action="store_true")
+    wt_merge.add_argument(
+        "--keep-untracked",
+        action="store_true",
+        help="conservar ficheros sin rastrear al retirar el worktree",
+    )
     wt_merge.add_argument(
         "--delete", action="store_true", help="retira el worktree tras mergear"
     )
@@ -939,6 +1103,31 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_guard)
 
     p = sub.add_parser(
+        "perms",
+        help="Lista la allowlist de shell: perfiles y guard (solo lectura)",
+        description="Muestra qué puede ejecutar cada perfil worker y qué "
+        "deniega el guard, con el origen de cada regla y si queda tapada por "
+        "otra posterior (aproximación por contención de patrones, no el "
+        "evaluador). Para el veredicto exacto de un comando usa --command.",
+    )
+    p.add_argument("--agent", help="Solo un perfil (p. ej. worker o worker-low)")
+    p.add_argument("--command", help="Veredicto para un comando concreto")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_perms)
+
+    p = sub.add_parser(
+        "config",
+        help="Configuración del workspace (solo lectura)",
+    )
+    config_sub = p.add_subparsers(dest="config_command", required=True)
+    cs = config_sub.add_parser(
+        "show",
+        help="Muestra config.json resuelto (sin local.json ni secretos)",
+    )
+    cs.add_argument("--json", action="store_true", help="Sin indentar")
+    cs.set_defaults(func=cmd_config_show)
+
+    p = sub.add_parser(
         "auto-link", help="Enlaza el commit a los tickets mencionados en su mensaje"
     )
     p.add_argument("--commit", help="Commit a enlazar (por defecto HEAD)")
@@ -1018,7 +1207,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Inventario de servidores MCP y limpieza de huérfanos",
         description="Lista los procesos del servidor MCP con su estado (al día, "
         "desactualizado, huérfano). Un proceso con padre vivo nunca se toca, "
-        "aunque la sesión esté idle.",
+        "aunque la sesión esté idle. Con --reload se pide a los vivos de este "
+        "workspace que recarguen su código por señal (SIGHUP).",
     )
     p.add_argument("--prune", action="store_true", help="Prepara la limpieza")
     p.add_argument(
@@ -1027,7 +1217,37 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--duplicates",
         action="store_true",
-        help="Incluye duplicados en la limpieza (conserva el más reciente)",
+        help="Incluye duplicados en la limpieza (conserva el activo del grupo)",
+    )
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="Con --prune --duplicates: termina aunque no se pueda identificar "
+        "al servidor activo (conserva el más reciente)",
+    )
+    p.add_argument(
+        "--reload",
+        action="store_true",
+        help="SIGHUP a los MCP vivos de este workspace: recargan su código "
+        "en el siguiente límite de petición",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Con --reload: lista a quién se señalaría sin enviar la señal",
+    )
+    p.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="Con --reload: señalar y volver sin esperar a la huella nueva "
+        "(para scripts y CI)",
+    )
+    p.add_argument(
+        "--wait-timeout",
+        type=float,
+        default=5.0,
+        help="Con --reload: segundos máximos esperando la huella nueva "
+        "(defecto 5, tope 60)",
     )
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_servers)

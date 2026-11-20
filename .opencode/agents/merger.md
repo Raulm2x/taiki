@@ -167,7 +167,7 @@ permissions:
     resource: "git push*"
     effect: deny
   - action: shell
-    resource: "git merge*"
+    resource: "git merge *"
     effect: deny
   - action: shell
     resource: "git rebase*"

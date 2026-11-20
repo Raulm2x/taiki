@@ -304,9 +304,195 @@ def run(h: Harness) -> None:
                 sleep=lambda _s: None,
             )
             h.ok(
-                pruned["killed"] == [110] and 111 in pruned["kept"],
-                "con --duplicates termina el viejo y conserva el nuevo",
+                pruned["killed"] == []
+                and pruned["duplicates"] == []
+                and 110 in pruned["kept"]
+                and 111 in pruned["kept"]
+                and len(pruned["warnings"]) == 1,
+                "sin evidencia del activo no se termina ningún duplicado "
+                "y se avisa del motivo",
             )
+
+            twins_meta = db.connect(":memory:")
+            try:
+                db.meta_set(twins_meta, "mcp_pid", "110")
+                plain = [
+                    {"pid": 110, "connection": None, "heartbeat_at": None},
+                    {"pid": 111, "connection": None, "heartbeat_at": None},
+                ]
+                h.eq(
+                    [
+                        servers.identify_active(twins_meta, plain),
+                        servers.identify_active(
+                            twins_meta,
+                            [
+                                {
+                                    "pid": 110,
+                                    "connection": None,
+                                    "heartbeat_at": None,
+                                },
+                                {
+                                    "pid": 111,
+                                    "connection": None,
+                                    "heartbeat_at": "nuevo",
+                                },
+                            ],
+                        ),
+                        servers.identify_active(
+                            twins_db,
+                            [
+                                {
+                                    "pid": 110,
+                                    "connection": "ses_a",
+                                    "heartbeat_at": None,
+                                },
+                                {
+                                    "pid": 111,
+                                    "connection": None,
+                                    "heartbeat_at": "nuevo",
+                                },
+                            ],
+                        ),
+                        servers.identify_active(
+                            twins_db,
+                            [
+                                {
+                                    "pid": 110,
+                                    "connection": None,
+                                    "heartbeat_at": "10:05",
+                                },
+                                {
+                                    "pid": 111,
+                                    "connection": None,
+                                    "heartbeat_at": "10:01",
+                                },
+                            ],
+                        ),
+                        servers.identify_active(twins_db, plain),
+                        servers.identify_active(twins_db, plain, 110),
+                        servers.identify_active(twins_db, plain, 999),
+                        servers.identify_active(
+                            twins_db,
+                            [
+                                {
+                                    "pid": 110,
+                                    "connection": None,
+                                    "heartbeat_at": "igual",
+                                },
+                                {
+                                    "pid": 111,
+                                    "connection": None,
+                                    "heartbeat_at": "igual",
+                                },
+                            ],
+                        ),
+                    ],
+                    [
+                        (110, "meta.mcp_pid"),
+                        (110, "meta.mcp_pid"),
+                        (110, "connection"),
+                        (110, "heartbeat_at"),
+                        (None, None),
+                        (110, "meta del proyecto"),
+                        (None, None),
+                        (None, None),
+                    ],
+                    "el activo se identifica por meta, connection o latido, "
+                    "en ese orden",
+                )
+            finally:
+                twins_meta.close()
+
+            forced = servers.prune(
+                twins_db,
+                apply=True,
+                process=fake3,
+                killer=killer3,
+                current="abc",
+                live=forged,
+                duplicates=True,
+                force=True,
+                grace=0,
+                slug=0,
+                sleep=lambda _s: None,
+            )
+            h.ok(
+                forced["killed"] == [110]
+                and 111 in forced["kept"]
+                and forced["warnings"]
+                and "--force conserva el más nuevo (111)"
+                in forced["warnings"][0],
+                "con --force se termina sin evidencia y el aviso lo dice",
+            )
+
+            forged[110] = {
+                "pid": 110,
+                "ppid": 50,
+                "cmdline": "python3 /x/tickets/server.py",
+            }
+            db.meta_set(twins_db, "mcp_pid", "110")
+            guarded = servers.prune(
+                twins_db,
+                apply=True,
+                process=fake3,
+                killer=killer3,
+                current="abc",
+                live=forged,
+                duplicates=True,
+                grace=0,
+                slug=0,
+                sleep=lambda _s: None,
+            )
+            h.ok(
+                guarded["killed"] == [111]
+                and 110 in guarded["kept"]
+                and guarded["active"]
+                == [{"pid": 110, "evidence": "meta.mcp_pid"}]
+                and not guarded["warnings"],
+                "el activo identificado se conserva aunque el más nuevo "
+                "sea otro",
+            )
+
+            forged[111] = {
+                "pid": 111,
+                "ppid": 50,
+                "cmdline": "python3 /x/tickets/server.py",
+            }
+            project_db = db.connect(":memory:")
+            try:
+                for pid, beat in ((110, "10:01"), (111, "10:05")):
+                    project_db.execute(
+                        "INSERT INTO mcp_servers(pid, ppid, name, fingerprint, "
+                        "started_at, heartbeat_at) VALUES (?, 50, 'tickets', "
+                        "'abc', '2026-10-31T10:00:00-05:00', ?)",
+                        (pid, beat),
+                    )
+                by_project = servers.prune(
+                    project_db,
+                    apply=True,
+                    process=fake3,
+                    killer=killer3,
+                    current="abc",
+                    live=forged,
+                    duplicates=True,
+                    active_pid=110,
+                    grace=0,
+                    slug=0,
+                    sleep=lambda _s: None,
+                )
+                h.ok(
+                    by_project["killed"] == [111]
+                    and 110 in by_project["kept"]
+                    and by_project["active"]
+                    == [
+                        {"pid": 110, "evidence": "meta del proyecto"}
+                    ]
+                    and not by_project["warnings"],
+                    "el PID activo de la DB del proyecto se conserva aunque "
+                    "sea el más viejo y su latido el más antiguo",
+                )
+            finally:
+                project_db.close()
         finally:
             twins_db.close()
 
@@ -343,6 +529,264 @@ def run(h: Harness) -> None:
             spaces == {800: "al día", 801: "al día"},
             "instancias de proyectos distintos no se marcan duplicadas",
         )
+
+        # ── Recarga por señal: solo registrados, vivos y del workspace ──
+        reload_db = db.connect(":memory:")
+        try:
+            reload_procs = {
+                50: {
+                    "pid": 50,
+                    "ppid": 1,
+                    "cmdline": "opencode serve --service",
+                },
+                100: {
+                    "pid": 100,
+                    "ppid": 50,
+                    "cmdline": "python3 /x/taiki/server.py",
+                },
+                200: {
+                    "pid": 200,
+                    "ppid": 1,
+                    "cmdline": "python3 /x/taiki/server.py",
+                },
+                300: {
+                    "pid": 300,
+                    "ppid": 50,
+                    "cmdline": "python3 /x/taiki/server.py",
+                },
+                600: {
+                    "pid": 600,
+                    "ppid": 50,
+                    "cmdline": "python3 /x/taiki/server.py",
+                },
+            }
+
+            def reload_process(pid):
+                return reload_procs.get(pid)
+
+            for pid, ppid, space in (
+                (100, 50, "taiki"),
+                (200, 1, "taiki"),
+                (300, 50, ".config"),
+                (400, 50, "taiki"),
+                (500, 50, "taiki"),
+            ):
+                reload_db.execute(
+                    "INSERT INTO mcp_servers(pid, ppid, name, fingerprint, "
+                    "started_at, heartbeat_at, workspace) VALUES "
+                    "(?, ?, 'taiki', 'abc', '2026-10-31T10:00:00-05:00', "
+                    "'2026-10-31T10:00:00-05:00', ?)",
+                    (pid, ppid, space),
+                )
+            # El padre del servicio entra solo como ``process``: en ``live``
+            # metería una entrada extra (no es servidor) al inventario.
+            live_map = {
+                pid: info
+                for pid, info in reload_procs.items()
+                if pid != 50
+            }
+            sent: list[tuple[int, int]] = []
+
+            def fake_signaller(pid, sig):
+                sent.append((pid, sig))
+
+            selection = servers.reload_processes(
+                reload_db,
+                workspace="taiki",
+                apply=False,
+                process=reload_process,
+                signaller=fake_signaller,
+                current="abc",
+                live=live_map,
+            )
+            sent_dry = list(sent)
+            plan = servers.reload_processes(
+                reload_db,
+                workspace="taiki",
+                apply=True,
+                process=reload_process,
+                signaller=fake_signaller,
+                current="abc",
+                live=live_map,
+            )
+            reasons = {item["pid"]: item["reason"] for item in plan["skipped"]}
+
+            def broken_signaller(pid, sig):
+                raise OSError("sin permiso")
+
+            undelivered = servers.reload_processes(
+                reload_db,
+                workspace="taiki",
+                apply=True,
+                process=reload_process,
+                signaller=broken_signaller,
+                current="abc",
+                live=live_map,
+            )
+            lazy = servers.reload_processes(
+                reload_db,
+                apply=False,
+                process=lambda pid: None,
+                live={},
+            )
+            h.eq(
+                (
+                    selection["signalled"],
+                    sent_dry,
+                    plan["signalled"],
+                    list(sent),
+                    reasons,
+                    (
+                        undelivered["signalled"],
+                        {
+                            item["pid"]: item["reason"]
+                            for item in undelivered["skipped"]
+                        }[100],
+                    ),
+                    lazy["reason"],
+                ),
+                (
+                    [100],
+                    [],
+                    [100],
+                    [(100, signal.SIGHUP)],
+                    {
+                        200: "huérfano",
+                        300: "otro workspace",
+                        400: "muerto",
+                        500: "muerto",
+                        600: "sin registro",
+                    },
+                    ([], "señal no entregada"),
+                    "sin servidores vivos de este workspace",
+                ),
+                "la recarga señala solo registrados vivos del workspace actual",
+            )
+        finally:
+            reload_db.close()
+
+        # ── La espera de la recarga: reloj, huella y sueño inyectados ──
+        wait_db = db.connect(":memory:")
+        try:
+            wait_procs = {
+                50: {
+                    "pid": 50,
+                    "ppid": 1,
+                    "cmdline": "opencode serve --service",
+                },
+                100: {
+                    "pid": 100,
+                    "ppid": 50,
+                    "cmdline": "python3 /x/taiki/server.py",
+                },
+            }
+
+            def wait_process(pid):
+                return wait_procs.get(pid)
+
+            wait_db.execute(
+                "INSERT INTO mcp_servers(pid, ppid, name, fingerprint, "
+                "started_at, heartbeat_at, workspace) VALUES "
+                "(100, 50, 'taiki', 'viejo', '2026-10-31T10:00:00-05:00', "
+                "'2026-10-31T10:00:00-05:00', 'taiki')"
+            )
+            ticks = {"t": 0.0}
+            reads = {"n": 0}
+            sleeps = {"n": 0}
+
+            def fake_clock():
+                return ticks["t"]
+
+            def fake_sleep(_seconds):
+                sleeps["n"] += 1
+                ticks["t"] += 0.1
+
+            disk = runtime.disk_fingerprint()
+
+            def reader_late(_conn, _pid):
+                reads["n"] += 1
+                return disk if reads["n"] > 1 else "viejo"
+
+            reloaded = servers.reload_processes(
+                wait_db,
+                workspace="taiki",
+                apply=True,
+                process=wait_process,
+                signaller=lambda _pid, _sig: None,
+                current="viejo",
+                live={100: wait_procs[100]},
+                wait=True,
+                timeout=5.0,
+                fingerprint_reader=reader_late,
+                clock=fake_clock,
+                sleep=fake_sleep,
+            )
+            h.ok(
+                reloaded["statuses"] == {100: "recargado"} and sleeps["n"] == 1,
+                "un proceso que registra la huella nueva durante la espera "
+                "queda recargado",
+            )
+
+            lazy = servers.reload_processes(
+                wait_db,
+                workspace="taiki",
+                apply=True,
+                process=wait_process,
+                signaller=lambda _pid, _sig: None,
+                current="viejo",
+                live={100: wait_procs[100]},
+                wait=False,
+                fingerprint_reader=reader_late,
+                clock=fake_clock,
+                sleep=fake_sleep,
+            )
+            h.ok(
+                lazy["statuses"] == {}
+                and reads["n"] == 2
+                and sleeps["n"] == 1,
+                "con wait=False no se sondea ni se espera",
+            )
+
+            slow = servers.reload_processes(
+                wait_db,
+                workspace="taiki",
+                apply=True,
+                process=wait_process,
+                signaller=lambda _pid, _sig: None,
+                current="viejo",
+                live={100: wait_procs[100]},
+                wait=True,
+                timeout=0.3,
+                fingerprint_reader=lambda _conn, _pid: "viejo",
+                clock=fake_clock,
+                sleep=fake_sleep,
+            )
+            h.ok(
+                slow["statuses"] == {100: "pendiente"} and sleeps["n"] == 4,
+                "sin huella nueva al vencer el timeout queda pendiente "
+                "(reloj inyectado, sin dormir)",
+            )
+
+            silent = servers.reload_processes(
+                wait_db,
+                workspace="taiki",
+                apply=True,
+                process=wait_process,
+                signaller=lambda _pid, _sig: None,
+                current="viejo",
+                live={100: wait_procs[100]},
+                wait=True,
+                fingerprint_reader=lambda _conn, _pid: None,
+                clock=fake_clock,
+                sleep=fake_sleep,
+            )
+            h.ok(
+                silent["statuses"] == {100: "sin respuesta"}
+                and sleeps["n"] == 4,
+                "sin huella registrada no hay con qué comparar: sin respuesta",
+            )
+        finally:
+            wait_db.close()
 
         servers.register(fleet, "taiki", "test")
         row = fleet.execute(

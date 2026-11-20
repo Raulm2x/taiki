@@ -93,6 +93,7 @@ def reassign_stale(
             agent=agent,
             session_id=session_id,
             force=True,
+            reason=f"lease caducado ({item['lease_until']})",
         )
         repo.comment_ticket(
             conn,
@@ -139,6 +140,7 @@ def retry(
             agent=agent,
             session_id=session_id,
             force=True,
+            reason=f"reintento tras fallo: {why}",
         )
         repo.comment_ticket(
             conn,
@@ -193,6 +195,7 @@ def retry(
         agent=agent,
         session_id=session_id,
         force=True,
+        reason=f"reintento tras fallo: {why}",
     )
     current = repo.get_ticket(conn, reopened["code"])
     return {

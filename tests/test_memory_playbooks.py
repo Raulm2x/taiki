@@ -79,15 +79,10 @@ def _slug(h: Harness) -> None:
         ],
         "se rechazan slugs vacíos, mayúsculas, símbolos y excesivos",
     )
-    h.eq(
-        playbook_key("revisar-pr"),
-        "playbook:revisar-pr",
-        "la clave de playbook usa el prefijo estable",
-    )
-    h.eq(
-        parse_playbook_key("playbook:revisar-pr"),
-        "revisar-pr",
-        "parse_playbook_key recupera el slug",
+    h.ok(
+        playbook_key("revisar-pr") == "playbook:revisar-pr"
+        and parse_playbook_key("playbook:revisar-pr") == "revisar-pr",
+        "la clave de playbook usa el prefijo estable y se parsea",
     )
     h.ok(
         parse_playbook_key("playbook:Revisar") is None,
@@ -97,43 +92,29 @@ def _slug(h: Harness) -> None:
 
 def _validation(h: Harness) -> None:
     conn = h.conn
-    h.raises(
-        ValidationError,
-        lambda: create_playbook(
-            conn,
-            slug="sin-evidencia",
-            title="Sin evidencia",
-            description="No debería guardarse.",
-            content="Cuerpo.",
-            evidence=[],
-            source="user",
-        ),
-        "create_playbook exige evidencia",
-    )
-    h.raises(
-        ValidationError,
-        lambda: _new(conn, "descripcion-larga", description="x" * 241),
-        "la descripción no puede superar 240 caracteres",
-    )
-    h.raises(
-        ValidationError,
-        lambda: _new(
-            conn,
-            "cuerpo-largo",
-            content="x" * 51,
-            config={"max_entry_chars": 10, "max_playbook_chars": 50},
-        ),
-        "el contenido respeta max_playbook_chars",
-    )
-    h.raises(
-        ValidationError,
-        lambda: _new(conn, "titulo-vacio", title=""),
-        "el nombre del playbook es obligatorio",
-    )
-    h.raises(
-        ValidationError,
-        lambda: _new(conn, "Clave-Rara"),
-        "un slug inválido no crea memoria",
+    _rejects(
+        h,
+        [
+            lambda: create_playbook(
+                conn,
+                slug="sin-evidencia",
+                title="Sin evidencia",
+                description="No debería guardarse.",
+                content="Cuerpo.",
+                evidence=[],
+                source="user",
+            ),
+            lambda: _new(conn, "descripcion-larga", description="x" * 241),
+            lambda: _new(
+                conn,
+                "cuerpo-largo",
+                content="x" * 51,
+                config={"max_entry_chars": 10, "max_playbook_chars": 50},
+            ),
+            lambda: _new(conn, "titulo-vacio", title=""),
+            lambda: _new(conn, "Clave-Rara"),
+        ],
+        "create_playbook exige evidencia, límites de tamaño, título y slug válidos",
     )
 
     created = _new(
@@ -142,26 +123,23 @@ def _validation(h: Harness) -> None:
         description="Checklist de revisión de pull requests.",
         files=[{"path": "references/checklist.md", "content": "- tests\n"}],
     )
-    h.eq(created["kind"], "playbook", "el playbook se guarda con kind=playbook")
-    h.eq(created["key"], "playbook:revisar-pr", "la clave incluye el slug")
-    h.eq(created["status"], "active", "source=user nace activo")
-    h.eq(created["description"], "Checklist de revisión de pull requests.", "guarda description")
-    h.eq(len(created["files"]), 1, "guarda los ficheros de apoyo")
-    h.ok(len(created["files"][0]["sha256"]) == 64, "calcula el sha256 del apoyo")
+    h.ok(
+        created["kind"] == "playbook"
+        and created["key"] == "playbook:revisar-pr"
+        and created["status"] == "active"
+        and created["description"] == "Checklist de revisión de pull requests."
+        and len(created["files"]) == 1
+        and len(created["files"][0]["sha256"]) == 64,
+        "el playbook se guarda con kind, clave, estado, description, apoyos y sha256",
+    )
 
     by_slug = get_playbook(conn, "revisar-pr")
     by_code = get_playbook(conn, created["code"])
-    h.eq(by_slug["code"], created["code"], "get_playbook resuelve por slug")
-    h.eq(by_code["id"], created["id"], "get_playbook resuelve por código")
-    h.eq(
-        by_slug["files"][0]["content"],
-        "- tests\n",
-        "get_playbook incluye el contenido de los apoyos para exportar",
-    )
-    h.raises(
-        ValidationError,
-        lambda: get_playbook(conn, "no-existe"),
-        "un slug desconocido falla",
+    h.ok(
+        by_slug["code"] == created["code"]
+        and by_code["id"] == created["id"]
+        and by_slug["files"][0]["content"] == "- tests\n",
+        "get_playbook resuelve por slug y código e incluye el contenido de apoyos",
     )
     normal = add_memory(
         conn,
@@ -169,16 +147,18 @@ def _validation(h: Harness) -> None:
         content="Contenido destilado.",
         source="user",
     )
-    h.raises(
-        ValidationError,
-        lambda: get_playbook(conn, normal["code"]),
-        "get_playbook rechaza una memoria que no es playbook",
+    _rejects(
+        h,
+        [
+            lambda: get_playbook(conn, "no-existe"),
+            lambda: get_playbook(conn, normal["code"]),
+        ],
+        "get_playbook falla con slug desconocido o memoria que no es playbook",
     )
-    h.eq(len(list_playbooks(conn)), 1, "list_playbooks solo lista playbooks")
-    h.eq(
-        len(list_playbooks(conn, status="active")),
-        1,
-        "list_playbooks filtra por estado",
+    h.ok(
+        len(list_playbooks(conn)) == 1
+        and len(list_playbooks(conn, status="active")) == 1,
+        "list_playbooks solo lista playbooks y filtra por estado",
     )
 
 
@@ -202,12 +182,7 @@ def _files(h: Harness) -> None:
         ],
         "se rechazan absolutos, traversal y prefijos no permitidos",
     )
-    h.eq(
-        len(list_playbooks(conn)),
-        before,
-        "los ficheros rechazados no crean playbooks",
-    )
-
+    rejected_count = len(list_playbooks(conn))
     created = _new(
         conn,
         "con-apoyos",
@@ -218,10 +193,11 @@ def _files(h: Harness) -> None:
             {"path": "references/sub/nota.md", "content": "nota"},
         ],
     )
-    h.eq(len(created["files"]), 4, "se guardan los cuatro tipos de apoyo")
     h.ok(
-        any(item["path"] == "references/sub/nota.md" for item in created["files"]),
-        "se admiten rutas anidadas dentro de references",
+        rejected_count == before
+        and len(created["files"]) == 4
+        and any(item["path"] == "references/sub/nota.md" for item in created["files"]),
+        "los rechazos no crean playbooks y se admiten los cuatro apoyos anidados",
     )
 
     updated = update_playbook(
@@ -229,11 +205,10 @@ def _files(h: Harness) -> None:
         "con-apoyos",
         files=[{"path": "references/sub/nota.md", "content": "nota nueva"}],
     )
-    h.eq(len(updated["files"]), 1, "patch reemplaza los ficheros de apoyo")
-    h.eq(
-        get_playbook(conn, "con-apoyos")["files"][0]["content"],
-        "nota nueva",
-        "el apoyo actualizado conserva su contenido",
+    h.ok(
+        len(updated["files"]) == 1
+        and get_playbook(conn, "con-apoyos")["files"][0]["content"] == "nota nueva",
+        "patch reemplaza los apoyos y conserva su contenido",
     )
 
 
@@ -258,34 +233,36 @@ def _export(h: Harness) -> None:
     memory = get_playbook(conn, "export-demo")
     result = export_playbook(root, memory)
     skill = Path(result["path"])
-    h.ok(skill.is_file(), "export_playbook escribe SKILL.md")
-    h.eq(skill.parent.name, "export-demo", "el skill vive en su carpeta de slug")
-    text = skill.read_text(encoding="utf-8")
-    h.ok(text.startswith("---\n"), "el skill empieza con frontmatter")
-    h.ok('name: "export-demo"' in text, "el frontmatter lleva el name del slug")
-    h.ok('description: "Demo de export a skill."' in text, "lleva description")
-    h.ok("  taiki:" in text, "el frontmatter lleva metadata taiki")
-    h.ok(f'code: "{memory["code"]}"' in text, "metadata incluye el código")
-    h.ok('"ticket:T-0047"' in text, "metadata incluye la evidencia de ticket")
-    h.ok('"commit:abc1234"' in text, "metadata incluye la evidencia de commit")
-    h.ok("Paso uno." in text, "el cuerpo del SKILL.md es el contenido")
     h.ok(
-        (skill.parent / "references/check.md").read_text(encoding="utf-8")
-        == "- tests\n",
-        "los apoyos se escriben con su contenido",
+        skill.is_file() and skill.parent.name == "export-demo",
+        "export_playbook escribe SKILL.md en la carpeta de su slug",
+    )
+    text = skill.read_text(encoding="utf-8")
+    h.ok(
+        text.startswith("---\n")
+        and 'name: "export-demo"' in text
+        and 'description: "Demo de export a skill."' in text
+        and "  taiki:" in text
+        and f'code: "{memory["code"]}"' in text,
+        "el frontmatter lleva name, description, metadata taiki y código",
     )
     h.ok(
-        (skill.parent / "scripts/run.sh").is_file(),
-        "los scripts de apoyo se escriben",
+        '"ticket:T-0047"' in text and '"commit:abc1234"' in text,
+        "la metadata incluye la evidencia de ticket y commit",
+    )
+    h.ok(
+        "Paso uno." in text
+        and (skill.parent / "references/check.md").read_text(encoding="utf-8")
+        == "- tests\n"
+        and (skill.parent / "scripts/run.sh").is_file(),
+        "el cuerpo y los apoyos se escriben con su contenido",
     )
 
     again = export_playbook(root, get_playbook(conn, "export-demo"))
-    h.eq(
-        skill.read_text(encoding="utf-8"),
-        text,
-        "exportar dos veces produce el mismo SKILL.md",
+    h.ok(
+        skill.read_text(encoding="utf-8") == text and again["removed"] == [],
+        "exportar dos veces produce el mismo SKILL.md sin retirar apoyos",
     )
-    h.eq(again["removed"], [], "la reexportación no retira apoyos vigentes")
 
     update_playbook(
         conn,
@@ -294,10 +271,10 @@ def _export(h: Harness) -> None:
     )
     third = export_playbook(root, get_playbook(conn, "export-demo"))
     h.ok(
-        not (skill.parent / "scripts/run.sh").exists(),
-        "la reexportación retira apoyos que ya no están en la memoria",
+        not (skill.parent / "scripts/run.sh").exists()
+        and third["removed"] == ["scripts/run.sh"],
+        "la reexportación retira apoyos ausentes y lo lista en el recibo",
     )
-    h.eq(third["removed"], ["scripts/run.sh"], "el recibo lista el apoyo retirado")
 
 
 def _export_all(h: Harness) -> None:
@@ -320,35 +297,21 @@ def _export_all(h: Harness) -> None:
         archive_playbook(conn, archived["code"], reason="Ya no aplica.")
         export_playbook(root, get_playbook(conn, "skill-archivado"))
         result = export_all(conn, root)
-        h.eq(
-            result["exported"],
-            ["skill-activo"],
-            "solo se exportan playbooks activos",
+        h.ok(
+            result["exported"] == ["skill-activo"]
+            and (root / ".taiki/generated/skills/skill-activo/SKILL.md").is_file(),
+            "solo se exportan playbooks activos y su SKILL.md se escribe",
         )
         h.ok(
-            (root / ".taiki/generated/skills/skill-activo/SKILL.md").is_file(),
-            "el playbook activo se exporta",
+            not (root / ".taiki/generated/skills/skill-propuesto").exists()
+            and (manual / "SKILL.md").is_file(),
+            "un propuesto no se exporta y no se tocan directorios ajenos",
         )
         h.ok(
-            not (root / ".taiki/generated/skills/skill-propuesto").exists(),
-            "un playbook propuesto no se exporta",
-        )
-        h.ok(
-            (manual / "SKILL.md").is_file(),
-            "export_all no toca directorios que no son playbooks",
-        )
-        h.eq(
-            result["removed"],
-            ["skill-archivado"],
-            "el skill de un playbook archivado se retira",
-        )
-        h.ok(
-            not (root / ".taiki/generated/skills/skill-archivado").exists(),
-            "la carpeta obsoleta desaparece",
-        )
-        h.ok(
-            (root / ".taiki/generated/skills/skill-activo/SKILL.md").is_file(),
-            "los skills vigentes se conservan",
+            result["removed"] == ["skill-archivado"]
+            and not (root / ".taiki/generated/skills/skill-archivado").exists()
+            and (root / ".taiki/generated/skills/skill-activo/SKILL.md").is_file(),
+            "el skill archivado se retira y los vigentes se conservan",
         )
     finally:
         conn.close()
@@ -364,34 +327,25 @@ def _brief(h: Harness) -> None:
         ):
             _new(conn, slug, description=description)
         short = brief_index(conn, {"playbook_index_chars": 90})
-        h.ok(len(short["text"]) <= 90, "el índice respeta playbook_index_chars")
-        h.ok(short["entries"], "el índice incluye al menos un playbook")
         first = short["entries"][0]
-        h.eq(
-            sorted(first),
-            ["code", "description", "slug", "title"],
-            "cada entrada lleva slug, title, description y code",
-        )
-        h.eq(
-            short["omitted"],
-            3 - len(short["entries"]),
-            "el índice cuenta las entradas omitidas",
+        h.ok(
+            len(short["text"]) <= 90
+            and bool(short["entries"])
+            and sorted(first) == ["code", "description", "slug", "title"]
+            and short["omitted"] == 3 - len(short["entries"]),
+            "el índice respeta playbook_index_chars, lleva claves y cuenta omitidos",
         )
 
         whole = brief_index(conn, {"playbook_index_chars": 5000})
-        h.eq(len(whole["entries"]), 3, "con espacio caben todos los activos")
-        h.ok("uno" in whole["text"] and "M-" in whole["text"], "el texto es compacto")
         h.ok(
-            "1. Lee el diff." not in whole["text"],
-            "el índice nunca incluye el cuerpo del playbook",
+            len(whole["entries"]) == 3
+            and "uno" in whole["text"]
+            and "M-" in whole["text"]
+            and "1. Lee el diff." not in whole["text"],
+            "con espacio caben todos los activos y el texto no incluye el cuerpo",
         )
 
         archive_playbook(conn, "dos", reason="Obsoleto.")
-        active = brief_index(conn, {"playbook_index_chars": 5000})
-        h.ok(
-            all(item["slug"] != "dos" for item in active["entries"]),
-            "un playbook archivado sale del índice",
-        )
         _new(
             conn,
             "propuesto",
@@ -400,8 +354,11 @@ def _brief(h: Harness) -> None:
         )
         active = brief_index(conn, {"playbook_index_chars": 5000})
         h.ok(
-            all(item["slug"] != "propuesto" for item in active["entries"]),
-            "un playbook propuesto no entra en el índice",
+            all(
+                item["slug"] not in ("dos", "propuesto")
+                for item in active["entries"]
+            ),
+            "un playbook archivado o propuesto no entra en el índice",
         )
     finally:
         conn.close()
@@ -417,11 +374,6 @@ def _budget(h: Harness) -> None:
             content="x" * 4000,
             config=cfg,
         )
-        h.eq(
-            created["budget"]["used"],
-            0,
-            "el cuerpo del playbook no consume el presupuesto del scope",
-        )
         normal = add_memory(
             conn,
             title="Nota normal",
@@ -429,10 +381,9 @@ def _budget(h: Harness) -> None:
             source="user",
             config=cfg,
         )
-        h.eq(
-            normal["budget"]["used"],
-            60,
-            "las memorias normales siguen contando en el presupuesto",
+        h.ok(
+            created["budget"]["used"] == 0 and normal["budget"]["used"] == 60,
+            "el cuerpo del playbook no consume presupuesto pero las notas sí",
         )
     finally:
         conn.close()
@@ -448,13 +399,13 @@ def _update(h: Harness) -> None:
         description="Descripción nueva.",
         content="Cuerpo nuevo.",
     )
-    h.eq(changed["title"], "Después", "update_playbook cambia el nombre")
-    h.eq(changed["content"], "Cuerpo nuevo.", "update_playbook cambia el cuerpo")
+    h.ok(
+        changed["title"] == "Después" and changed["content"] == "Cuerpo nuevo.",
+        "update_playbook cambia el nombre y el cuerpo",
+    )
     h.raises(
         ValidationError,
-        lambda: update_playbook(
-            conn, "editable", description="x" * 241
-        ),
+        lambda: update_playbook(conn, "editable", description="x" * 241),
         "update_playbook valida la descripción",
     )
     h.eq(

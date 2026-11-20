@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import re
 import zlib
 from typing import Any
 
-from .domain import KINDS
+from .domain import KINDS, ValidationError
 
 # Color fijo para los agentes habituales (índices de la paleta 256).
 AGENT_COLORS: dict[str, str] = {
@@ -105,8 +106,119 @@ ROUTING: dict[str, str] = {
     "bug": "high",
     "seguridad": "high",
 }
-STEPS_BY_LEVEL = {"low": 16, "medium": 24, "high": 40, "xhigh": 48, "max": 48}
+# El presupuesto es un techo: medium necesita 32 pasos porque los tickets de
+# 3+ módulos no caben en 24 (agotan pasos antes de commitear). high >= medium.
+STEPS_BY_LEVEL = {"low": 16, "medium": 32, "high": 40, "xhigh": 48, "max": 48}
 DEFAULT_CONCURRENCY = 3
+
+# ── Allowlist de worker project-aware ──────────────────────────────────────
+# Los perfiles ``worker*`` traen una allowlist fija pensada para Python y
+# Taiki. Un workspace de otro stack declara sus herramientas en
+# ``verify.command`` (binario de verificación) y, si necesita más, en el bloque
+# opcional ``commands.allow`` (lista de prefijos literales). De ahí se derivan
+# prefijos ``<bin> *`` que la sincronización de perfiles inyecta justo antes
+# del bloque final de denies: los denies destructivos siguen ganando porque un
+# prefijo cuyo primer token esté aquí nunca se inyecta.
+
+# Primer token que re-abriría un deny destructivo o de control de estado
+# (``rm``, ``git push``, ``taiki transition``, ``bash``...): fuera.
+DESTRUCTIVE_SHELL_TOKENS = frozenset(
+    {"rm", "sudo", "chmod", "chown", "git", "taiki", "bash", "sh"}
+)
+
+
+def _command_prefixes(command: str | list[str] | tuple[str, ...]) -> list[str]:
+    """Binarios allowlistables de un ``verify.command``.
+
+    Un array aporta su primer elemento (``["pnpm", "test"]`` → ``pnpm``);
+    una cadena se parte por segmentos (``&&``, ``||``, ``;``, ``|``) y aporta
+    el primer token de cada uno.
+    """
+    if isinstance(command, (list, tuple)):
+        return [str(command[0]).strip()] if command else []
+    prefixes: list[str] = []
+    for segment in re.split(r"&&|\|\||[;|]", str(command)):
+        tokens = segment.strip().split()
+        if tokens:
+            prefixes.append(tokens[0])
+    return prefixes
+
+
+def worker_shell_allows(config: dict[str, Any] | None = None) -> list[str]:
+    """Prefijos extra de shell para los perfiles ``worker*`` del workspace.
+
+    Nacen de ``verify.command`` y del bloque opcional ``commands.allow``
+    (ambos en ``.taiki/config.json``); sin fuentes no hay reglas. Un prefijo
+    cuyo primer token es destructivo se descarta: el deny correspondiente
+    gana siempre.
+    """
+    data = config if config is not None else {}
+    raw: list[str] = []
+    verify = data.get("verify")
+    command = verify.get("command") if isinstance(verify, dict) else None
+    if isinstance(command, (str, list, tuple)):
+        raw.extend(_command_prefixes(command))
+    block = data.get("commands")
+    entries = block.get("allow") if isinstance(block, dict) else None
+    if entries is None and isinstance(block, (list, tuple)):
+        entries = block
+    if entries is not None:
+        if not isinstance(entries, (list, tuple)) or not all(
+            isinstance(item, str) and item.strip() for item in entries
+        ):
+            raise ValidationError(
+                "commands.allow debe ser una lista de prefijos (cadenas no vacías)"
+            )
+        raw.extend(str(item) for item in entries)
+    allows: list[str] = []
+    for prefix in raw:
+        tokens = prefix.strip().split()
+        if not tokens or tokens[0].lower() in DESTRUCTIVE_SHELL_TOKENS:
+            continue
+        rule = prefix.strip()
+        if " " not in rule and not rule.endswith("*"):
+            rule = f"{rule} *"
+        if rule not in allows:
+            allows.append(rule)
+    return allows
+
+
+def render_worker_profile(text: str, allows: list[str] | None = None) -> str:
+    """Inyecta ``allows`` en el frontmatter de un perfil ``worker*``.
+
+    Las reglas entran justo antes del bloque final de denies (``find -exec``,
+    redirecciones...) para que el último match de un comando peligroso siga
+    siendo un deny. Sin ``allows`` o sin frontmatter reconocible el texto se
+    devuelve intacto.
+    """
+    if not allows:
+        return text
+    lines = text.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return text
+    try:
+        end = lines.index("---", 1)
+    except ValueError:
+        return text
+    front = lines[1:end]
+    # El bloque final de denies es una cola de entradas de 3 líneas que
+    # terminan en ``effect: deny``: insertamos antes de su primera entrada.
+    cut = len(front)
+    while (
+        cut >= 3
+        and front[cut - 1].strip() == "effect: deny"
+        and front[cut - 2].lstrip().startswith("resource:")
+        and front[cut - 3].lstrip().startswith("- action:")
+    ):
+        cut -= 3
+    block: list[str] = []
+    for rule in allows:
+        block.append("  - action: shell")
+        block.append(f'    resource: "{rule}"')
+        block.append("    effect: allow")
+    front[cut:cut] = block
+    return "\n".join([lines[0], *front, *lines[end:]])
+
 
 # Catálogo de modelos por defecto del proyecto. ``.taiki/config.json`` puede
 # sobrescribirlo en ``models``; un modelo/variante fuera del catálogo falla.
@@ -159,7 +271,7 @@ DEFAULT_AGENTS: dict[str, dict[str, Any]] = {
         "max_parallel": 2,
         "paths": [],
         "cost": 1.0,
-        "steps": 24,
+        "steps": 32,
     },
     "worker-high": {
         "model": "opencode-go/deepseek-v4.1-flash",
@@ -377,6 +489,10 @@ def registry(config: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
                 f"disponibles: {', '.join(sorted(merged))}"
             )
         merged[name] = {**merged[name], **value}
+    # Un workspace live (``none``/``scope``) no tiene worktrees que integrar:
+    # el merger no existe y el conductor no debe poder lanzarlo.
+    if ((config or {}).get("isolation") or {}).get("default") in ("none", "scope"):
+        merged.pop("merger", None)
     return {
         name: _capability(name, data, models)
         for name, data in merged.items()

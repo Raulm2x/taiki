@@ -9,7 +9,9 @@ from datetime import datetime, timedelta
 
 import cli
 from ticketlib import repo
+from ticketlib.domain import ValidationError
 from ticketlib.memory import add_memory, feedback_memory, get_memory
+from ticketlib.memory.config import resolve_memory_config, validate_memory_config
 from ticketlib.memory.stats import impact, stats
 from tests.support import Harness
 
@@ -97,48 +99,45 @@ def _stats(h: Harness) -> None:
     conn.commit()
 
     data = stats(conn)
-    h.eq(
-        set(data),
-        {
+    h.ok(
+        set(data)
+        == {
             "generated_at",
             "total",
             "by_status",
             "by_scope",
             "by_kind",
             "budget",
+            "index",
+            "storage",
             "proposals",
             "usage",
             "routing",
-        },
-        "stats devuelve un contrato estable",
-    )
-    h.ok(
-        data["total"] >= 4
+        }
+        and data["total"] >= 4
         and data["by_status"]["active"] >= 1
         and data["by_status"]["proposed"] == 1
         and data["by_status"]["stale"] == 1
         and data["by_status"]["archived"] == 1,
-        "stats cuenta por estado",
+        "stats devuelve un contrato estable y cuenta por estado",
     )
     h.ok(
-        data["by_scope"]["project"] >= 4 and data["by_kind"]["convention"] >= 1,
-        "stats agrupa por scope y kind",
+        data["by_scope"]["project"] >= 4
+        and data["by_kind"]["convention"] >= 1
+        and {"project", "user"} <= set(data["budget"])
+        and data["budget"]["project"]["limit"] > 0
+        and data["index"]["cap"] == 4500
+        and data["storage"]["cap"]
+        == data["budget"]["project"]["limit"] + data["budget"]["user"]["limit"]
+        and data["index"]["used"] != data["budget"]["project"]["used"],
+        "stats agrupa por scope/kind e incluye presupuesto por scope",
     )
     h.ok(
-        {"project", "user"} <= set(data["budget"])
-        and data["budget"]["project"]["limit"] > 0,
-        "stats incluye presupuesto por scope",
-    )
-    h.eq(
-        data["proposals"]["codes"],
-        [proposal["code"]],
-        "stats expone las propuestas pendientes",
-    )
-    h.ok(
-        data["usage"]["events"] >= 2
+        data["proposals"]["codes"] == [proposal["code"]]
+        and data["usage"]["events"] >= 2
         and data["usage"]["use_count"] >= 1
         and data["usage"]["helpful"] >= 1,
-        "stats agrega uso y feedback",
+        "stats expone propuestas y agrega uso y feedback",
     )
     route = next(
         item
@@ -153,11 +152,14 @@ def _stats(h: Harness) -> None:
     )
 
     payload = _json(["memory", "stats", "--json"])
-    h.eq(set(payload), set(data), "el JSON de stats conserva el contrato")
     code, human, _ = _run(["memory", "stats"])
     h.ok(
-        code == 0 and "Memorias:" in human and "Presupuesto:" in human,
-        "la salida humana de stats es clara",
+        set(payload) == set(data)
+        and code == 0
+        and "Memorias:" in human
+        and "Índice:" in human
+        and "Almacenamiento (advisory):" in human,
+        "el CLI de stats conserva el contrato JSON y la salida humana",
     )
 
     conn.execute(
@@ -165,6 +167,17 @@ def _stats(h: Harness) -> None:
         (first["code"], second["code"]),
     )
     conn.commit()
+
+    h.raises(
+        ValidationError,
+        lambda: validate_memory_config({"bogus": 1}),
+        "el bloque memory sigue rechazando claves desconocidas",
+    )
+    h.raises(
+        ValidationError,
+        lambda: resolve_memory_config({"project": "x", "memory": {"bogus": 1}}),
+        "el config raíz con una clave memory desconocida también falla",
+    )
 
 
 def _impact(h: Harness) -> None:
@@ -196,9 +209,9 @@ def _impact(h: Harness) -> None:
     conn.commit()
 
     data = impact(conn, days=30)
-    h.eq(
-        set(data),
-        {
+    h.ok(
+        set(data)
+        == {
             "generated_at",
             "days",
             "cutoff",
@@ -208,30 +221,46 @@ def _impact(h: Harness) -> None:
             "verification",
             "trend",
             "notes",
-        },
-        "impact devuelve un contrato estable",
+        }
+        and data["closed"] == 2
+        and data["attempts"]["total"] == 3
+        and data["attempts"]["avg"] == 1.5
+        and data["lead_time_hours"]["avg"] == 3.5,
+        "impact devuelve contrato, cierres, intentos y lead time",
     )
-    h.eq(data["closed"], 2, "impact cuenta los cierres de la ventana")
-    h.eq(data["attempts"]["total"], 3, "impact suma intentos")
-    h.eq(data["attempts"]["avg"], 1.5, "impact calcula la media de intentos")
-    h.eq(data["lead_time_hours"]["avg"], 3.5, "impact calcula el lead time medio")
     h.ok(
         data["verification"]["verified"] == 1
-        and data["verification"]["failures"] == 1,
-        "impact cuenta verificaciones y fallos",
-    )
-    h.ok(len(data["trend"]) == 2, "impact agrupa la tendencia por semanas")
-    h.ok(
-        data["notes"] and "causalidad" in data["notes"][0],
-        "impact recuerda que no afirma causalidad",
+        and data["verification"]["failures"] == 1
+        and len(data["trend"]) == 2
+        and data["notes"]
+        and "causalidad" in data["notes"][0],
+        "impact cuenta verificaciones, agrupa la tendencia y no afirma causalidad",
     )
 
     recent = impact(conn, days=1)
     h.eq(recent["closed"], 0, "la ventana de impact acota los cierres")
 
+    # Un confirmado histórico sin completed_at cuenta vía confirmed_at.
+    legacy = repo.create_ticket(conn, title="Impacto confirmado", kind="bug")
+    conn.execute(
+        "UPDATE tickets SET status = 'confirmado', iterations = 1, "
+        "started_at = ?, completed_at = NULL, confirmed_at = ?, "
+        "updated_at = ? WHERE id = ?",
+        (_stamp(3, hours=4), _stamp(3), _stamp(3), legacy["id"]),
+    )
+    conn.commit()
+    legacy_data = impact(conn, days=30)
+    h.ok(
+        legacy_data["closed"] == 3
+        and legacy_data["attempts"]["total"] == 4,
+        "impact cuenta un confirmado sin completed_at vía confirmed_at",
+    )
+
     payload = _json(["memory", "impact", "--days", "30", "--json"])
-    h.eq(set(payload), set(data), "el JSON de impact conserva el contrato")
-    h.eq(payload["days"], 30, "el CLI pasa --days a impact")
+    h.ok(
+        set(payload) == set(data) and payload["days"] == 30,
+        "el CLI de impact conserva el contrato y pasa --days",
+    )
     code, human, _ = _run(["memory", "impact", "--days", "30"])
     h.ok(
         code == 0 and "Impacto" in human and "Nota:" in human,

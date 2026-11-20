@@ -95,6 +95,12 @@ CREATE TABLE IF NOT EXISTS links (
 
 CREATE INDEX IF NOT EXISTS idx_links_ticket ON links(ticket_id);
 
+CREATE TABLE IF NOT EXISTS renamed_from (
+    old_code   TEXT PRIMARY KEY,
+    new_code   TEXT NOT NULL,
+    renamed_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS mcp_servers (
     pid          INTEGER PRIMARY KEY,
     ppid         INTEGER,
@@ -159,6 +165,7 @@ CREATE TABLE IF NOT EXISTS memories (
     paths           TEXT,
     kinds           TEXT,
     ticket_kinds    TEXT,
+    tags            TEXT,
     status          TEXT NOT NULL DEFAULT 'proposed',
     confidence      REAL NOT NULL DEFAULT 0.5,
     source          TEXT NOT NULL DEFAULT 'agent',
@@ -437,6 +444,22 @@ def _migrate_v7(conn: sqlite3.Connection, force: bool = False) -> None:
         conn.execute("ALTER TABLE tickets ADD COLUMN reversal TEXT")
 
 
+def _migrate_v8(conn: sqlite3.Connection, force: bool = False) -> None:
+    """Tags libres de dominio en la memoria (aditiva, sin backfill)."""
+    if "tags" not in _table_columns(conn, "memories"):
+        conn.execute("ALTER TABLE memories ADD COLUMN tags TEXT")
+
+
+def _migrate_v9(conn: sqlite3.Connection, force: bool = False) -> None:
+    """Alias de códigos renumerados (aditiva)."""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS renamed_from ("
+        "old_code TEXT PRIMARY KEY, "
+        "new_code TEXT NOT NULL, "
+        "renamed_at TEXT NOT NULL)"
+    )
+
+
 MIGRATIONS = {
     2: _migrate_v2,
     3: _migrate_v3,
@@ -444,6 +467,8 @@ MIGRATIONS = {
     5: _migrate_v5,
     6: _migrate_v6,
     7: _migrate_v7,
+    8: _migrate_v8,
+    9: _migrate_v9,
 }
 
 
@@ -508,6 +533,59 @@ def _normalize_agent_aliases(conn: sqlite3.Connection) -> None:
                 f"UPDATE {table} SET {column} = ? WHERE lower({column}) = ?",
                 (canonical, alias),
             )
+
+
+def renamed_chain(
+    conn: sqlite3.Connection, code: str
+) -> tuple[str, bool]:
+    """Sigue ``renamed_from`` hasta el código actual.
+
+    Devuelve ``(código final, existe)``. No hay cadenas ambiguas: al
+    renumerar se reescriben los alias cuyo destino cambia. Un ciclo (dato
+    corrupto) se corta y se trata como inexistente.
+    """
+    seen: set[str] = set()
+    current = code
+    while True:
+        if current in seen:
+            return current, False
+        seen.add(current)
+        row = conn.execute(
+            "SELECT new_code FROM renamed_from WHERE old_code = ?", (current,)
+        ).fetchone()
+        if row is None:
+            break
+        current = row["new_code"]
+    exists = (
+        conn.execute("SELECT 1 FROM tickets WHERE code = ?", (current,))
+        .fetchone()
+        is not None
+    )
+    return current, exists
+
+
+def record_renamed(
+    conn: sqlite3.Connection, old_code: str, new_code: str, ts: str
+) -> None:
+    """Registra un alias y aplana las cadenas existentes.
+
+    Si ``new_code`` ya era destino de otro alias, esas filas pasan a apuntar
+    al código nuevo: nunca quedan cadenas. El llamador controla la
+    transacción.
+    """
+    if old_code == new_code:
+        return
+    conn.execute(
+        "UPDATE renamed_from SET new_code = ?, renamed_at = ? WHERE new_code = ?",
+        (new_code, ts, new_code),
+    )
+    conn.execute(
+        "INSERT INTO renamed_from(old_code, new_code, renamed_at) "
+        "VALUES (?, ?, ?) "
+        "ON CONFLICT(old_code) DO UPDATE SET "
+        "new_code = excluded.new_code, renamed_at = excluded.renamed_at",
+        (old_code, new_code, ts),
+    )
 
 
 @contextmanager

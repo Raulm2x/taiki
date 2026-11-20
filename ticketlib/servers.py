@@ -32,6 +32,8 @@ STATES = (
     "huérfano",
     "muerto",
 )
+# Estados a los que se puede pedir una recarga de código: registrados y vivos.
+RELOADABLE_STATES = ("al día", "desactualizado", "duplicado")
 SELF = os.getpid()
 
 # El servicio de OpenCode lanza los MCP como hijos directos.
@@ -368,6 +370,38 @@ def _terminate(
     return _wait_dead(pid, process, slug, sleep)
 
 
+def identify_active(
+    conn: Any,
+    group: list[dict[str, Any]],
+    active_pid: int | None = None,
+) -> tuple[int | None, str | None]:
+    """El PID activo de un grupo de duplicados y la evidencia que lo respalda.
+
+    Orden de evidencia: ``active_pid`` explícito (el ``meta.mcp_pid`` de la DB
+    del proyecto, que ``runtime.register`` escribe al arrancar y la CLI lee
+    aparte del registro global), ``meta.mcp_pid`` de la propia conexión, el
+    ``connection`` que declaró el cliente y el ``heartbeat_at`` más reciente
+    del grupo. ``(None, None)`` cuando ninguna evidencia alcanza: entonces el
+    grupo se conserva entero y solo ``force`` permite terminarlo.
+    """
+    pids = {entry["pid"] for entry in group}
+    if active_pid is not None and active_pid in pids:
+        return active_pid, "meta del proyecto"
+    meta_pid = db.meta_get(conn, "mcp_pid")
+    if meta_pid and meta_pid.isdigit() and int(meta_pid) in pids:
+        return int(meta_pid), "meta.mcp_pid"
+    declared = [entry for entry in group if entry.get("connection")]
+    if len(declared) == 1:
+        return declared[0]["pid"], "connection"
+    beats = [entry for entry in group if entry.get("heartbeat_at")]
+    if beats:
+        newest = max(entry["heartbeat_at"] for entry in beats)
+        candidates = [entry for entry in beats if entry["heartbeat_at"] == newest]
+        if len(candidates) == 1:
+            return candidates[0]["pid"], "heartbeat_at"
+    return None, None
+
+
 def prune(
     conn: Any,
     apply: bool = False,
@@ -380,23 +414,63 @@ def prune(
     escalate: bool = True,
     sleep: Callable[[float], None] = time.sleep,
     duplicates: bool = False,
-) -> dict[str, list[int]]:
+    force: bool = False,
+    active_pid: int | None = None,
+) -> dict[str, Any]:
     """Limpia registros muertos y termina huérfanos; nunca un proceso con dueño.
 
     Un proceso cuyo padre sigue vivo (aunque la sesión esté idle durante horas)
     no se toca. Los duplicados solo se terminan con ``duplicates=True`` y se
-    conserva siempre el más reciente.
+    conserva el activo del grupo según :func:`identify_active` (su primer
+    criterio es ``active_pid``, el PID que la DB del proyecto dejó en
+    ``meta.mcp_pid``), aunque no sea el más reciente; sin evidencia del activo
+    se conservan todos y solo ``force`` limpia como antes (dejando el más
+    reciente).
     """
-    plan: dict[str, list[int]] = {
+    plan: dict[str, Any] = {
         "dead": [],
         "orphans": [],
         "killed": [],
         "stubborn": [],
         "duplicates": [],
         "kept": [],
+        "active": [],
+        "warnings": [],
     }
     entries = inventory(conn, process=process, current=current, live=live)
     current_pid = os.getpid()
+
+    # Grupos de duplicados: el activo identificado se conserva siempre; sin
+    # evidencia se conserva el grupo entero y solo ``force`` lo limpia.
+    active: dict[int, str] = {}
+    undetermined: set[int] = set()
+    if duplicates:
+        groups: dict[int, list[dict[str, Any]]] = {}
+        for entry in entries:
+            if entry["state"] == "duplicado":
+                groups.setdefault(int(entry["duplicate_of"]), []).append(entry)
+        for group in groups.values():
+            pid, evidence = identify_active(conn, group, active_pid=active_pid)
+            if pid is None or evidence is None:
+                roster = ", ".join(
+                    str(item["pid"])
+                    for item in sorted(group, key=lambda item: item["pid"])
+                )
+                undetermined.update(item["pid"] for item in group)
+                newest = max(item["pid"] for item in group)
+                plan["warnings"].append(
+                    f"sin evidencia del activo en ({roster}): "
+                    + (
+                        f"--force conserva el más nuevo ({newest}) "
+                        "y termina los demás"
+                        if force
+                        else "se conservan todos; usa --force para terminar "
+                        "igualmente"
+                    )
+                )
+                continue
+            active[pid] = evidence
+            plan["active"].append({"pid": pid, "evidence": evidence})
 
     for entry in entries:
         pid = entry["pid"]
@@ -409,9 +483,16 @@ def prune(
             continue
 
         if state == "duplicado":
-            if not duplicates or pid == entry.get("duplicate_of") or pid == current_pid:
+            newest = pid == entry.get("duplicate_of")
+            if not duplicates or pid == current_pid or pid in active:
                 plan["kept"].append(pid)
                 continue
+            if pid in undetermined:
+                # Sin evidencia del activo: solo --force termina, conservando
+                # el más reciente del grupo, como hacia antes del arreglo.
+                if not force or newest:
+                    plan["kept"].append(pid)
+                    continue
             plan["duplicates"].append(pid)
             if not apply:
                 continue
@@ -441,4 +522,173 @@ def prune(
         else:
             plan["stubborn"].append(pid)
 
+    return plan
+
+
+def registered_fingerprint(conn: Any, pid: int) -> str | None:
+    """Huella registrada de un proceso: su fila o el handshake de ``meta``."""
+    row = conn.execute(
+        "SELECT fingerprint FROM mcp_servers WHERE pid = ?", (pid,)
+    ).fetchone()
+    if row is not None and row["fingerprint"]:
+        return row["fingerprint"]
+    meta_pid = db.meta_get(conn, "mcp_pid")
+    if meta_pid and meta_pid.isdigit() and int(meta_pid) == pid:
+        return db.meta_get(conn, "mcp_fingerprint")
+    return None
+
+
+def _wait_reload(
+    conn: Any,
+    pids: list[int],
+    *,
+    fingerprint_reader: Callable[[Any, int], str | None],
+    clock: Callable[[], float],
+    sleep: Callable[[float], None],
+    timeout: float,
+    step: float,
+) -> dict[int, str]:
+    """Sondea la huella registrada hasta ver el código nuevo (o el timeout).
+
+    Estado por proceso: ``recargado`` (la huella registrada ya coincide con la
+    del disco), ``pendiente`` (venció el timeout sin coincidir) o
+    ``sin respuesta`` (no hay huella registrada que comparar).
+    """
+    disk = runtime.disk_fingerprint()
+    statuses: dict[int, str] = {}
+    pending: list[int] = []
+    for pid in pids:
+        fingerprint = fingerprint_reader(conn, pid)
+        if fingerprint is None:
+            statuses[pid] = "sin respuesta"
+        elif fingerprint == disk:
+            statuses[pid] = "recargado"
+        else:
+            pending.append(pid)
+    deadline = clock() + max(0.0, timeout)
+    while pending and clock() < deadline:
+        sleep(step)
+        for pid in list(pending):
+            fingerprint = fingerprint_reader(conn, pid)
+            if fingerprint is None:
+                statuses[pid] = "sin respuesta"
+                pending.remove(pid)
+            elif fingerprint == disk:
+                statuses[pid] = "recargado"
+                pending.remove(pid)
+    for pid in pending:
+        statuses[pid] = "pendiente"
+    return statuses
+
+
+# Estados de la espera tras señalar: la huella nueva ya consta, aún no, o no
+RELOAD_WAITED = ("recargado", "pendiente", "sin respuesta")
+
+
+def reload_processes(
+    conn: Any,
+    workspace: str | None = None,
+    apply: bool = True,
+    *,
+    process: Callable[[int], dict[str, Any] | None] = process_info,
+    signaller: Callable[[int, int], None] = os.kill,
+    current: str | None = None,
+    live: dict[int, dict[str, Any]] | None = None,
+    wait: bool = False,
+    timeout: float = 5.0,
+    fingerprint_reader: Callable[[Any, int], str | None] = (
+        registered_fingerprint
+    ),
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+    step: float = 0.1,
+) -> dict[str, Any]:
+    """Envía SIGHUP a los MCP vivos del workspace para que recarguen código.
+
+    Selecciona solo procesos registrados (fila en ``mcp_servers``), vivos y del
+    workspace indicado: los de otros proyectos no se tocan y los huérfanos
+    quedan para :func:`prune`. Con ``apply=False`` devuelve la selección sin
+    enviar la señal. Cada servidor re-ejecuta su código en su siguiente punto
+    seguro entre peticiones; el stdio se hereda y el cliente no ve el relevo.
+
+    Con ``wait`` la llamada no vuelve enseguida: sondea la huella registrada
+    de cada proceso señalado hasta que coincide con el código en disco (el
+    re-exec ya ocurrió) o hasta ``timeout`` segundos, y reporta por PID
+    ``recargado``/``pendiente``/``sin respuesta`` en ``statuses``. Así la
+    primera llamada MCP posterior no falla con ``StaleServerError``. La CLI lo
+    activa por defecto; el lector de huella, el reloj y la espera son
+    inyectables para probarlo sin procesos ni señales reales.
+    """
+    if workspace is None:
+        from . import workspace as workspace_lib
+
+        info = workspace_lib.resolve()
+        workspace = str(info["workspace"] or info["db"])
+    if not hasattr(signal, "SIGHUP"):
+        return {
+            "signalled": [],
+            "skipped": [],
+            "statuses": {},
+            "reason": "SIGHUP no disponible en esta plataforma",
+        }
+    entries = inventory(conn, process=process, current=current, live=live)
+    plan: dict[str, Any] = {
+        "signalled": [],
+        "skipped": [],
+        "statuses": {},
+        "reason": "",
+    }
+    for entry in entries:
+        pid = entry["pid"]
+        if pid == SELF:
+            plan["skipped"].append({"pid": pid, "reason": "proceso actual"})
+        elif entry["state"] not in RELOADABLE_STATES:
+            plan["skipped"].append({"pid": pid, "reason": entry["state"]})
+        elif not entry.get("workspace"):
+            plan["skipped"].append({"pid": pid, "reason": "workspace desconocido"})
+        elif str(entry["workspace"]) != str(workspace):
+            plan["skipped"].append({"pid": pid, "reason": "otro workspace"})
+        else:
+            plan["signalled"].append(pid)
+            if apply:
+                try:
+                    signaller(pid, signal.SIGHUP)
+                except OSError:
+                    plan["signalled"].remove(pid)
+                    plan["skipped"].append(
+                        {"pid": pid, "reason": "señal no entregada"}
+                    )
+    if apply and wait and plan["signalled"]:
+        plan["statuses"] = _wait_reload(
+            conn,
+            plan["signalled"],
+            fingerprint_reader=fingerprint_reader,
+            clock=clock,
+            sleep=sleep,
+            timeout=timeout,
+            step=step,
+        )
+    if not plan["signalled"]:
+        plan["reason"] = "sin servidores vivos de este workspace"
+    elif not apply:
+        plan["reason"] = (
+            f"dry-run: {len(plan['signalled'])} servidor(es) recibirían SIGHUP"
+        )
+    elif plan["statuses"]:
+        counts = {
+            state: sum(1 for s in plan["statuses"].values() if s == state)
+            for state in RELOAD_WAITED
+        }
+        plan["reason"] = (
+            f"señalados: {len(plan['signalled'])} · "
+            f"recargados: {counts['recargado']} · "
+            f"pendientes: {counts['pendiente']} · "
+            f"sin respuesta: {counts['sin respuesta']} · "
+            f"omitidos: {len(plan['skipped'])}"
+        )
+    else:
+        plan["reason"] = (
+            f"SIGHUP a {len(plan['signalled'])} servidor(es); "
+            "recargan su código en el siguiente límite de petición"
+        )
     return plan

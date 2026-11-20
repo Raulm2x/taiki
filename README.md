@@ -63,17 +63,17 @@ están pensados para agentes.
 
 `taiki` puede destilar lo aprendido en memorias pequeñas y revisables, sin
 guardar transcripciones. El **brief** recupera el contexto vigente al empezar;
-las lecciones de los agentes nacen como propuestas y solo el usuario las
-aprueba.
+las lecciones de los agentes con evidencia validada se activan solas y el
+usuario solo confirma tickets.
 
 ```bash
 taiki brief                    # brief operativo (datos, no instrucciones)
 taiki remember "Prefiero commits en español"
 taiki memory candidates        # qué merece revisión (rework, rechazos, hotspots…)
 taiki memory review --write    # paquete para el subagente curator
-taiki memory pending           # propuestas de los agentes
+taiki memory pending           # propuestas sin evidencia validada
 taiki memory pending --diff    # cambio frente a la memoria sustituida
-taiki memory approve M-0001    # solo el usuario
+taiki memory approve M-0001    # aprobación manual (solo el usuario)
 taiki memory playbook list     # playbooks exportables como skills
 taiki memory playbook export --all   # .taiki/generated/skills
 taiki skills suggest           # skills curadas para el stack del proyecto
@@ -91,9 +91,11 @@ taiki memory rollback ID       # revierte por asiento o --snapshot
 Las memorias llevan evidencia (ticket, commit, archivo…), respetan un
 presupuesto de caracteres y se archivan en vez de borrarse. El motor de
 candidatos es determinista: no usa LLM ni escribe memoria. El subagente
-**curator** lee el paquete de revisión y propone como máximo 5 memorias; el
+**curator** lee el paquete de revisión y escribe como máximo 5 memorias; el
 conductor lo lanza cada 5 tickets cerrados o con 3+ candidatos. Los agentes
-proponen y **solo el usuario aprueba**. El curado (`curate`) y el auto-curado
+escriben con evidencia y la política `auto_approve_evidence` las activa solas;
+el agente corrige o niega lo que ya no se sostenga y **el usuario solo confirma
+tickets**. El curado (`curate`) y el auto-curado
 opt-in mantienen la memoria sana con ledger y sin borrar; `export`/`import` y
 `rollback` permiten versionar, mover y deshacer con checksum y auditoría.
 `stats` e `impact` son métricas descriptivas: no demuestran causalidad.
@@ -147,8 +149,8 @@ El borrado requiere OK del conductor y una ruta exacta:
   proyecto y migración desde `ticket`.
 - [Uso](docs/uso.md) — CLI diario, épicas y numeración, TUI, revisión y
   confirmación.
-- [Memoria](docs/memoria.md) — brief, propuestas, aprobación, presupuesto,
-  evidencia y seguridad.
+- [Memoria](docs/memoria.md) — brief, evidencia, autonomía, presupuesto y
+  seguridad.
 - [MCP](docs/mcp.md) — herramientas, envelopes, recursos, prompts y sesiones.
 - [Operación](docs/operacion.md) — workspaces, orquestación, guard, worktrees,
   tickets temporales, servidores MCP, datos y aislamiento.

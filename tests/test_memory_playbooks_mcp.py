@@ -55,19 +55,16 @@ def run(h: Harness) -> None:
     )
 
     loaded = handlers.call_tool("memory_playbook", {"slug": "revisar-pr"})
-    h.eq(loaded["code"], created["code"], "memory_playbook resuelve por slug")
-    h.eq(loaded["slug"], "revisar-pr", "la respuesta incluye el slug")
     h.ok(
-        loaded["description"] == "Checklist para revisar un pull request."
+        loaded["code"] == created["code"]
+        and loaded["slug"] == "revisar-pr"
+        and loaded["description"] == "Checklist para revisar un pull request."
         and "Lee el diff" in loaded["content"]
-        and loaded["evidence"][0]["ref"] == ticket["code"],
-        "memory_playbook devuelve metadatos, cuerpo y evidencia",
-    )
-    h.ok(
-        [item["path"] for item in loaded["files"]]
+        and loaded["evidence"][0]["ref"] == ticket["code"]
+        and [item["path"] for item in loaded["files"]]
         == ["references/check.md", "scripts/run.sh"]
         and all("content" not in item for item in loaded["files"]),
-        "el listado de apoyos no vuelca su contenido",
+        "memory_playbook resuelve por slug con metadatos, cuerpo y apoyos compactos",
     )
 
     support = handlers.call_tool(

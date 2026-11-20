@@ -16,8 +16,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from ticketlib import db, workspace
+from ticketlib import agents, db, servers, workspace
 from ticketlib.domain import TicketError
+from ticketlib.githook import (
+    install_commit_msg_hook,
+    install_post_commit_hook,
+    install_pre_commit_hook,
+    install_pre_push_hook,
+)
 from ticketlib.memory.sync import (
     install_opencode_memory,
     sync_generated,
@@ -116,6 +122,98 @@ def install_opencode(root: Path) -> dict[str, Any]:
     return {"client": "opencode", "method": "file", "detail": str(path)}
 
 
+def install_repo_hooks(root: str | Path) -> Path | None:
+    """Instala los cuatro hooks de Taiki; ``None`` si ``root`` no es un repo Git.
+
+    ``taiki mcp install`` lo usa para dejar el repo listo sin exigir un
+    ``taiki hook-install`` aparte; este último sigue siendo la vía manual.
+    """
+    try:
+        installed = [
+            install_post_commit_hook(root),
+            install_commit_msg_hook(root),
+            install_pre_push_hook(root),
+            install_pre_commit_hook(root),
+        ]
+    except TicketError as exc:
+        print(
+            f"OpenCode: no se instalaron los hooks ({exc}). "
+            "Ejecuta `taiki hook-install` dentro del repo.",
+            file=sys.stderr,
+        )
+        return None
+    return installed[-1].parent
+
+
+def sync_agent_profiles(
+    root: str | Path,
+    config: dict[str, Any],
+    force: bool = False,
+) -> dict[str, list[str]]:
+    """Sincroniza los perfiles de ``.opencode/agents`` sin pisar los propios.
+
+    Un perfil que ya existe y difiere del de Taiki se conserva y se informa en
+    ``customized``; solo ``force`` lo sobrescribe. En un workspace live
+    (``none``/``scope``) no hay worktrees que integrar: se copia todo menos
+    ``merger.md`` y se retira el de destino solo si es idéntico al de origen
+    (prístino) o si se fuerza. Uno personalizado se conserva.
+
+    Los perfiles ``worker*`` son project-aware: la sincronización inyecta en
+    su frontmatter los allows del workspace (``verify.command`` y
+    ``commands.allow``, ver :func:`ticketlib.agents.worker_shell_allows`)
+    antes del bloque final de denies, así un proyecto no-Python puede dar a
+    sus workers `pnpm` o `node` sin abrir comandos destructivos. La
+    comparación prístino/personalizado usa el texto ya renderizado.
+    """
+    source = Path(__file__).resolve().parent.parent / ".opencode" / "agents"
+    dest = Path(root) / ".opencode" / "agents"
+    dest.mkdir(parents=True, exist_ok=True)
+    live = (config.get("isolation") or {}).get("default") in ("none", "scope")
+    allows = agents.worker_shell_allows(config)
+    copied: list[str] = []
+    skipped: list[str] = []
+    removed: list[str] = []
+    customized: list[str] = []
+    for profile in sorted(source.glob("*.md")):
+        if live and profile.name == "merger.md":
+            skipped.append(profile.name)
+            continue
+        target = dest / profile.name
+        text = profile.read_text(encoding="utf-8")
+        if allows and profile.name.startswith("worker"):
+            text = agents.render_worker_profile(text, allows)
+        if not target.exists():
+            target.write_text(text, encoding="utf-8")
+            copied.append(profile.name)
+            continue
+        if target.read_text(encoding="utf-8") == text:
+            copied.append(profile.name)
+        elif force:
+            target.write_text(text, encoding="utf-8")
+            copied.append(profile.name)
+        else:
+            customized.append(profile.name)
+    if live:
+        stale = dest / "merger.md"
+        if stale.exists():
+            source_merger = source / "merger.md"
+            pristine = source_merger.is_file() and (
+                stale.read_text(encoding="utf-8")
+                == source_merger.read_text(encoding="utf-8")
+            )
+            if force or pristine:
+                stale.unlink()
+                removed.append(stale.name)
+            else:
+                customized.append(stale.name)
+    return {
+        "copied": copied,
+        "skipped": skipped,
+        "removed": removed,
+        "customized": customized,
+    }
+
+
 def uninstall_opencode(root: Path) -> Path | None:
     """Quita el MCP del proyecto sin tocar el resto de su configuración."""
     removed = _drop_server(root, MCP_NAME)
@@ -159,6 +257,38 @@ def cmd_mcp_install(args: argparse.Namespace) -> int:
 
     result = install_opencode(root)
     print(f"OpenCode: MCP `{MCP_NAME}` instalado en {result['detail']}")
+    hooks = install_repo_hooks(root)
+    if hooks is not None:
+        print(f"OpenCode: hooks instalados en {hooks}")
+    agents_source = Path(__file__).resolve().parent.parent / ".opencode" / "agents"
+    if not agents_source.is_dir():
+        print(
+            "OpenCode: el paquete no trae perfiles de agente; "
+            "se conservan los existentes en .opencode/agents.",
+            file=sys.stderr,
+        )
+    profiles = sync_agent_profiles(
+        root, config, force=getattr(args, "force_agents", False)
+    )
+    live = (config.get("isolation") or {}).get("default") in ("none", "scope")
+    suffix = "sin merger: isolation live" if live else "con merger"
+    print(
+        f"OpenCode: {len(profiles['copied'])} perfiles de agente "
+        f"sincronizados ({suffix})"
+    )
+    if profiles["removed"]:
+        print(
+            "OpenCode: retirado "
+            + ", ".join(profiles["removed"])
+            + " (sin merger en isolation live)"
+        )
+    if profiles["customized"]:
+        print(
+            "OpenCode: perfiles personalizados conservados: "
+            + ", ".join(profiles["customized"])
+            + ". Usa `--force-agents` para sobrescribirlos.",
+            file=sys.stderr,
+        )
 
     conn = db.connect()
     try:
@@ -187,6 +317,39 @@ def cmd_mcp_install(args: argparse.Namespace) -> int:
             "(ese cliente no admite alcance por proyecto)."
         )
     print(f"Guard activado en {folder / workspace.CONFIG_NAME}")
+
+    # La instalación suele seguir a un merge: se pide a los MCP vivos de este
+    # workspace que recarguen su código por señal en vez de esperar a que
+    # alguien reinicie OpenCode. Sin servidores vivos no hay ruido ni fallo.
+    if getattr(args, "no_reload", False):
+        print("OpenCode: recarga de servidores MCP omitida (--no-reload)")
+        return 0
+    try:
+        registry = db.connect(workspace.registry_path())
+        try:
+            reload_plan = servers.reload_processes(
+                registry,
+                workspace=str(folder),
+                apply=True,
+                wait=not getattr(args, "no_wait", False),
+            )
+        finally:
+            registry.close()
+    except Exception:  # noqa: BLE001 - la recarga nunca rompe el install
+        reload_plan = None
+    if reload_plan and reload_plan["signalled"]:
+        statuses = reload_plan.get("statuses") or {}
+        line = (
+            "OpenCode: SIGHUP de recarga a "
+            + ", ".join(str(pid) for pid in reload_plan["signalled"])
+        )
+        if statuses:
+            recargados = sum(1 for s in statuses.values() if s == "recargado")
+            pendientes = sum(1 for s in statuses.values() if s == "pendiente")
+            line += f"; recargados: {recargados}, pendientes: {pendientes}"
+        else:
+            line += "; recargan su código en el siguiente límite de petición"
+        print(line)
     return 0
 
 

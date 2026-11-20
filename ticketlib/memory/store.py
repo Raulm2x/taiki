@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 from typing import Any, Iterable
 
 from .. import db
@@ -11,6 +12,7 @@ from ..domain import ValidationError
 from ..util import check_enum, fts_match, now
 from . import core
 from . import ledger as ledger_lib
+from .curate import _set_status
 from .lifecycle import (
     approve_memory,
     archive_memory,
@@ -61,6 +63,7 @@ def add_memory(
     paths: Iterable[object] | None = None,
     kinds: Iterable[object] | None = None,
     ticket_kinds: Iterable[object] | None = None,
+    tags: Iterable[object] | None = None,
     confidence: float = 0.5,
     source: str = "agent",
     actor: str | None = None,
@@ -129,6 +132,7 @@ def add_memory(
     project_paths = core.clean_project_paths(paths)
     kind_list = core.clean_kinds(kinds)
     ticket_kind_list = core.clean_ticket_kinds(ticket_kinds)
+    tag_list = core.clean_tags(tags)
     evidence_rows = core.clean_evidence(evidence)
     file_rows = core.clean_files(files, cfg)
     ticket = core.ticket_id(ticket_id)
@@ -143,6 +147,7 @@ def add_memory(
         )
 
     fingerprint = normalize_fingerprint(title_text, content_text)
+    validated = core.validated_evidence(conn, evidence_rows)
     final_status = status or core.decide_status(
         kind=kind,
         source=source,
@@ -150,6 +155,8 @@ def add_memory(
         confidence_value=level,
         text=" ".join((title_text, description_text, content_text, key_text)),
         policy=str(cfg["write_policy"]),
+        validated_evidence=len(validated),
+        auto_approve=bool(cfg["auto_approve_evidence"]),
     )
 
     with db.tx(conn):
@@ -175,11 +182,11 @@ def add_memory(
         cursor = conn.execute(
             "INSERT INTO memories("
             "code, scope, kind, \"key\", title, description, content, paths, kinds, "
-            "ticket_kinds, "
+            "ticket_kinds, tags, "
             "status, confidence, source, actor, session_id, ticket_id, "
             "supersedes_id, pinned, locked, created_at, updated_at, archived_at, "
             "fingerprint"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 code,
                 scope,
@@ -195,6 +202,7 @@ def add_memory(
                 json.dumps(ticket_kind_list, ensure_ascii=False)
                 if ticket_kind_list
                 else None,
+                json.dumps(tag_list, ensure_ascii=False) if tag_list else None,
                 final_status,
                 level,
                 source,
@@ -252,20 +260,61 @@ def add_memory(
         return core.receipt(conn, row, cfg)
 
 
+def _evidence_root(conn: sqlite3.Connection) -> str | None:
+    """Raíz del proyecto a partir del fichero de la DB abierta."""
+    try:
+        row = conn.execute("PRAGMA database_list").fetchone()
+        path = str(row["file"] or "") if row is not None else ""
+    except sqlite3.Error:
+        return None
+    if not path:
+        return None
+    parent = Path(path).expanduser().parent
+    return str(parent.parent if parent.name == ".taiki" else parent)
+
+
+def _with_freshness(
+    conn: sqlite3.Connection,
+    data: dict[str, Any],
+    mark: bool = True,
+) -> dict[str, Any]:
+    """Añade la vigencia de la evidencia y, con ``mark``, marca ``stale``."""
+    freshness = core.evidence_freshness(
+        conn,
+        data.get("evidence") or [],
+        data.get("files") or [],
+        root=_evidence_root(conn),
+    )
+    data["freshness"] = freshness
+    if mark and not freshness["ok"] and data.get("status") == "active":
+        reason = "evidencia no vigente: " + "; ".join(freshness["reasons"])
+        with db.tx(conn):
+            _set_status(conn, data, "stale", action="stale", reason=reason)
+        data["status"] = "stale"
+    return data
+
+
 def get_memory(
     conn: sqlite3.Connection,
     code: Any,
     *,
     session_id: str | None = None,
     record_usage: bool = False,
+    mark: bool = True,
 ) -> dict[str, Any]:
-    """Devuelve una memoria con evidencia, ficheros y presupuesto."""
+    """Devuelve una memoria con evidencia, ficheros y presupuesto.
+
+    ``mark=False`` calcula la vigencia sin mutar el estado: los listados y
+    resúmenes no deben degradar memorias como efecto de una lectura.
+    """
     row = core.memory_row(conn, code)
     if record_usage:
         with db.tx(conn):
             core.record_usage(conn, int(row["id"]), "get", session_id)
         row = core.memory_row(conn, code)
-    return core.row_to_memory(row, conn, details=True)
+    return _with_freshness(
+        conn, core.row_to_memory(row, conn, details=True), mark=mark
+    )
 
 
 def _ticket_kinds_filter(column: str, values: list[str]) -> tuple[str, list[Any]]:
@@ -385,4 +434,7 @@ def search_memories(
                     session_id,
                     note=query,
                 )
-    return [core.row_to_memory(row) for row in rows]
+    return [
+        _with_freshness(conn, core.row_to_memory(row, conn, details=True), mark=False)
+        for row in rows
+    ]

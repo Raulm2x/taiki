@@ -17,9 +17,11 @@ from ticketlib import (
     db,
     domain,
     githook,
+    gate as gate_lib,
     repo,
     runtime,
     servers as servers_lib,
+    status as status_lib,
     workspace,
 )
 from ticketlib.memory.config import load_memory_config
@@ -27,6 +29,7 @@ from ticketlib.memory.models import PLAYBOOK_KIND
 from ticketlib.memory.playbooks import SKILL_FILE, SKILLS_RELATIVE, slug_of
 from ticketlib.memory.stats import stats as memory_stats
 from ticketlib.memory.store import list_memories
+from ticketlib.store import links as links_store
 from ticketlib.util import now, parse_datetime
 
 from . import memory as memory_handlers
@@ -275,10 +278,98 @@ def _handle_health(
     return data
 
 
+def _handle_gate_run(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    session: str | None = None,
+    actor: str = "agente",
+) -> dict[str, Any]:
+    """Ejecuta gates declarados; nunca comandos recibidos en la llamada."""
+    ticket = str(args.get("ticket") or "").strip() or None
+    all_entries = gate_lib.resolve_gates(conn, ticket, session)
+    wanted = str(args.get("name") or "").strip()
+    entries = all_entries
+    if wanted:
+        entries = [entry for entry in all_entries if entry["name"] == wanted]
+        if not entries:
+            available = ", ".join(entry["name"] for entry in all_entries)
+            raise domain.ValidationError(
+                f"Gate desconocido: {wanted}. Disponibles: {available}"
+            )
+    cwd = gate_lib.resolve_cwd(conn, ticket)
+    timeout = args.get("timeout")
+    results = [
+        gate_lib.run_gate(entry, cwd, timeout=timeout) for entry in entries
+    ]
+    return {
+        "gates": results,
+        "ok": all(item["exit"] == 0 for item in results),
+    }
+
+
+def _handle_unlink(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    session: str | None = None,
+    actor: str = "agente",
+) -> dict[str, Any]:
+    code = args.get("code")
+    if not code:
+        raise domain.ValidationError("El parámetro 'code' es obligatorio")
+    kind = args.get("kind")
+    if not kind:
+        raise domain.ValidationError("El parámetro 'kind' es obligatorio")
+    ref = args.get("ref")
+    if not ref:
+        raise domain.ValidationError("El parámetro 'ref' es obligatorio")
+    ticket = links_store.unlink_ticket(
+        conn,
+        code,
+        kind=kind,
+        ref=ref,
+        actor=actor,
+        actor_type="agente",
+        session_id=session,
+        reason=args.get("reason"),
+    )
+    return _receipt(
+        ticket,
+        detail=bool(args.get("detail", False)),
+        extra={"unlinked": {"kind": kind, "ref": ref}},
+    )
+
+
+def _handle_links_repair(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    session: str | None = None,
+    actor: str = "agente",
+) -> dict[str, Any]:
+    return links_store.repair_links(
+        conn,
+        root=args.get("root") or _project_root(),
+        repos=args.get("repos") or [],
+        apply=bool(args.get("apply", False)),
+        force=bool(args.get("force", False)),
+        actor=actor,
+        actor_type="agente",
+        session_id=session,
+    )
+
+
+def _handle_epic_check(
+    conn: sqlite3.Connection,
+    args: dict[str, Any],
+    _session: str | None = None,
+    _actor: str = "agente",
+) -> dict[str, Any]:
+    """Cierre derivado de la épica: read-only, sin caché ni eventos."""
+    return status_lib.epic_check(conn, args["code"])
+
+
 # ---------------------------------------------------------------------------
 # Tabla de Despacho (Registry)
 # ---------------------------------------------------------------------------
-
 _DOMAIN_MODULES = (_handler_tickets, _handler_orchestration)
 
 

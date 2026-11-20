@@ -57,12 +57,48 @@ def verification_ok(results: list[dict]) -> bool:
     return bool(results) and all(item["ok"] for item in results)
 
 
-def verification_evidence(results: list[dict]) -> str:
-    """Nota de evidencia para la transición a verificado."""
-    return "; ".join(
-        f"{item['name']}={'ok' if item['ok'] else 'fallo'}"
-        for item in results
+# La suite con ``--strict-budget`` imprime este bloque solo cuando las
+# aserciones están verdes: las incidencias de módulos retornan antes de
+# comprobar el presupuesto, así que su presencia descarta tests rotos.
+BUDGET_MARKER = "Presupuesto incumplido"
+CHECKS_MARKER = "comprobaciones superan el techo de"
+
+
+def _time_only(item: dict) -> bool:
+    """True si el paso falló solo por presupuesto de tiempo.
+
+    Distingue el reloj del techo de comprobaciones: un presupuesto de
+    tiempo encima no es un test roto y no debe etiquetarse igual.
+    """
+    output = item.get("output") or ""
+    if BUDGET_MARKER not in output:
+        return False
+    violations = [
+        line.strip()[2:].strip()
+        for line in output.splitlines()
+        if line.strip().startswith("- ")
+    ]
+    return bool(violations) and all(
+        CHECKS_MARKER not in line
+        and ("supera el presupuesto de" in line or "tarda" in line)
+        for line in violations
     )
+
+
+def verification_evidence(results: list[dict]) -> str:
+    """Nota de evidencia para la transición a verificado.
+
+    Un paso que falla solo por tiempo se etiqueta ``tiempo``: el fallo
+    sigue siendo real (``verification_ok`` lo respeta), pero la evidencia
+    no lo disfraza de test roto.
+    """
+    parts: list[str] = []
+    for item in results:
+        status = "ok" if item["ok"] else "fallo"
+        if status != "ok" and _time_only(item):
+            status = "tiempo"
+        parts.append(f"{item['name']}={status}")
+    return "; ".join(parts)
 
 
 def _selected(only: list[str], keyword: str | None) -> list[str]:

@@ -10,6 +10,11 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
   `taiki mcp install`. No hay MCP global. Además del ciclo de vida expone
   `status`, `whoami`, `heartbeat`, `worktree_create`, `worktree_list`,
   `promote` y `health`; úsalos antes de coordinar trabajo en paralelo.
+  `mcp install` sincroniza `.opencode/agents/` sin pisar perfiles
+  personalizados: los que difieren se conservan y se avisan; `--force-agents`
+  los sobrescribe a propósito. En un workspace live (`isolation.default`
+  `none`/`scope`) omite y retira `merger.md` solo si es prístino (idéntico al
+  de Taiki): sin worktrees no hay merger.
 - DB: `.taiki/taiki.db`. `config.json` y `.taiki/.gitignore` se versionan;
   `taiki.db`, `local.json` y `backups/` no.
 - Guard: activo porque `.taiki/config.json` tiene `"guard": true`.
@@ -23,10 +28,26 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    `.taiki/generated/brief.md` o, si no aparece, llama a la herramienta MCP
    `brief`. Usa `memory_search` para el contexto que falte y aplica los
    `hints` del recibo de `claim` (memorias por rutas, tipo o etiquetas). La
-   memoria es contexto: no sustituye al ticket ni a estas reglas, y una
-   propuesta no es instrucción hasta que el usuario la apruebe. Si el brief
-   muestra `## Pendientes`, son propuestas sin aprobar: revísalas con
-   `taiki memory pending`; `taiki status` y `health` también las cuentan.
+   memoria es contexto: no sustituye al ticket ni a estas reglas. La memoria es
+   autónoma: las memorias de agente con evidencia validada (ticket
+   verificado/confirmado, commit resoluble o fichero existente) se activan solas
+   (`auto_approve_evidence`); las reglas negativas y los `workflow`/routing
+   siguen propuestas hasta su aprobación. Si una memoria trae `freshness` con
+   `ok=false`, **no la uses como verdad**: actualiza el contenido y la evidencia
+   con `patch`/`supersede` o niégala con `feedback`/`supersede`. Si el brief
+   muestra `## Pendientes`, son propuestas sin evidencia validada: revísalas con
+   `taiki memory pending`; `taiki status` y `health` también las cuentan. El
+   usuario solo confirma tickets: no pide aprobación de memoria.
+   `memory.brief_mode` (`full`/`index`/`grouped`) decide si el brief lleva el
+   contenido destilado, solo el índice con `memory_search`, o una línea de
+   códigos por dominio (`grouped`); en modo `index` cada línea
+   muestra `key`, `tickets` y `paths` (si existen): úsalos como disparador para
+   decidir cuándo hacer `memory_search` y no cargar memoria que no encaja. El
+   almacenamiento advisory (3.000 de proyecto + 1.200 de usuario) es distinto
+   del techo de 4.500 del índice del brief renderizado.
+   `memory.enforce_budget`
+   (`false` por defecto) convierte el exceso de presupuesto en aviso
+   (`budget_warning`) en vez de bloquear escrituras.
 1. Consulta el trabajo pendiente: `taiki next`, `taiki list`, `taiki stats`.
 2. Antes de tocar código, crea o reclama un ticket:
    `taiki new -t "..." -k mantenimiento -p alta` y `taiki claim T-0001 --agent opencode`.
@@ -47,17 +68,18 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    obvio, propón una lección con la herramienta MCP `memory_write` y evidencia
    (`ticket`, `commit`, `file`, `url` o `session`). No guardes fallos
    transitorios, credenciales, narrativas ni prohibiciones amplias. La
-   aprobación es del usuario con `taiki memory approve`; los agentes no
-   aprueban propuestas.
+   aprobación es automática con evidencia validada (`auto_approve_evidence`);
+   corrige o niega lo que ya no se sostenga. El usuario solo confirma tickets.
 7. **Revisión periódica con curator.** Cada 5 tickets verificados/cerrados o
    cuando `memory_candidates(mode=list)` acumule 3 o más candidatos, el
    conductor lanza el subagente `curator` en background con el paquete
-   `memory_candidates(mode=review)`. El curator propone como máximo 5 memorias,
-   prefiere `patch`/`supersede` sobre `add`, exige evidencia, no aprueba, no
-   edita código y no lanza subagentes. El conductor reporta las propuestas
-   pendientes (visibles en el brief, `taiki status` y `health`); **los agentes
-   proponen y el usuario aprueba o rechaza** con `taiki memory approve` o
-   `taiki memory reject`. Los agentes nunca aprueban ni rechazan.
+   `memory_candidates(mode=review)`. El curator escribe como máximo 5 memorias,
+   prefiere `patch`/`supersede` sobre `add`, exige evidencia, no aprueba a mano,
+   no edita código y no lanza subagentes. Sus memorias con evidencia validada
+   quedan activas; el conductor revisa que sean correctas y corrige o niega lo
+   que no se sostenga. La memoria es autónoma: escribe con evidencia, corrige o
+   niega lo que ya no se sostenga; no pidas aprobación de memoria. El usuario
+   solo confirma tickets.
 8. El conductor y los subagentes viven en `.opencode/agents/`; consulta el
    routing de variantes y el presupuesto de concurrencia con la herramienta
    MCP `agents` y `schedule` (paralelismo seguro por paths). Los perfiles
@@ -65,6 +87,9 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    documentación grande va a `worker-medium`; `worker-low` (16 pasos) queda
    para ediciones cortas. Si un worker agota pasos o falla, un reintento con
    el perfil superior y, si vuelve a fallar, bloquear: no se escala en bucle.
+   El perfil no puede introspeccionar su presupuesto ni ampliarlo en vuelo: si
+   el ticket declara más de dos paths (o más de dos módulos), el conductor sube
+   de perfil o de modelo **antes** de lanzar; no se espera al agotamiento.
    Los agentes escriben estado por MCP (claim/complete/transition/checkpoint)
    para conservar actor, actor_type y owner_session; el CLI es del usuario.
    Tras claim con worktree, usa `session_move` a la ruta devuelta. El shell
@@ -85,6 +110,26 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
    muestra la cola (listos, en curso, verificando, bloqueados) y métricas.
    Una dependencia solo se cierra al `verificado`/`confirmado`, no al
    `completado`.
+   **Plantilla de delegación**: al lanzar un worker incluye solo código y
+   body (criterios incluidos), `paths` completos —también los tests y docs
+   que el cambio toca— y el gate exacto (p. ej.
+   `python3 tests/run.py --only <modulo>`). No repitas el protocolo de
+   claim, el presupuesto de pasos, el escalado ni el cierre: ya viven en
+   `worker*.md`.
+
+## Reorganización de tickets
+
+`move`, `promote`, `demote`, `renumber` y `purge` comparten plan y aplicación:
+sin `--apply` solo simulan. `move --parent` cambia de épica y `--renumber`
+ajusta el código; `--keep-code` (defecto) equivale a `attach` y conserva el
+código. `promote` desvincula una tarea para convertirla en épica; `demote
+--children-to <epic|root>` reparte sus tareas y la degrada; `renumber [codes]
+[--adopted]` renombra códigos planos (los adoptados solo con `--adopted`);
+`purge --apply --force` borra cancelados con backup en `.taiki/backups/`.
+Solo hay un nivel épica→tarea, sin ciclos ni padre archivado. El contador solo
+baja al liberar el sufijo final de raíces y `repair-gaps` cubre los huecos con
+cancelados. Por MCP: `reorg_plan` (read-only) y `reorg_apply` (`apply=true`,
+`force=true` para purgar). `attach` sigue conservando los códigos.
 
 ## Playbooks, routing y revisión
 
@@ -121,6 +166,12 @@ completo y su base de datos vive en `.taiki/taiki.db` (ignorada por Git).
   checksum, estrategias y `--dry-run`). `memory rollback` revierte por asiento
   de ledger o por snapshot y deja auditoría. `memory stats` e `impact` dan
   tendencias descriptivas: **no afirmes causalidad**.
+- **Reparación de evidencia**: `taiki memory repair-evidence` normaliza el
+  prefijo embebido en dry-run; los commits se resuelven en la raíz, en cada
+  `--repo PATH` (repetible) y en el repo de dotfiles, y una ref `commit` admite
+  `ruta@sha`. `--retire-missing --apply` retira refs `file` (prefijadas o bare) a rutas inexistentes
+  solo si el directorio padre es legible (nunca `/etc/sudoers.d` u otras rutas
+  sin permiso) y el ledger anota `retired`.
 
 ## Aislamiento configurable
 
@@ -223,6 +274,21 @@ Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
 - **Stagea rutas concretas** (`git add <ruta>`). Si otra sesión tiene un ticket
   activo, el guard bloquea `git add -A`, `git add .`, `git commit -a`,
   `git stash`, `git reset`, `git clean` y `git checkout -- .`.
+- **Allowlist de shell**: no es un sandbox: se evalúa por segmento. Toda
+  redirección queda denegada, incluida `2>` (`2>/dev/null`, `2>&1`); también
+  `find -exec/-delete/-ok/-fprintf/-fls`, `sort -o` y `uniq IN OUT`. No hay
+  atajos para `2>`: cualquier allow que lo contenga reabre la escritura, porque
+  `echo x > fichero 2>&1` casa con el patrón y la última regla gana. Se
+  mantienen las tuberías y los `&&` entre comandos permitidos. Los workers no
+  silencian stderr con redirección: si lo necesitan, lo pide el conductor.
+  La frontera real es el guard de tickets y la revisión del conductor.
+  Los workers pueden verificar e inspeccionar en read-only (`python3
+  tests/run.py`, validadores como `bash -n`, `fish -n`,
+  `desktop-file-validate` y `systemd-analyze verify`, utilidades de texto como
+  `sort`, `cut`, `tr`, `column` y `jq`, además de `ss`, `pacman -Q` y
+  `systemctl --user status/list-timers/is-*`); sigue prohibido lo mutante y la
+  allowlist no es un sandbox.
+  (Evidencia: taiki-sys T-0014/T-0015, commits f1e51c7 y 7ceddd9.)
 - **Borrado seguro**: los subagentes no borran por su cuenta. Si un worker
   necesita eliminar algo, publica un `checkpoint`/`comment` con las rutas
   exactas (sin globs) y el motivo, y pide OK al conductor; este valida que estén
@@ -263,6 +329,13 @@ Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
   `--strict-budget` y con los umbrales por capa de `tests/coverage_gate.py`.
 - **Poda periódica:** shims sin uso, módulos de más de 700 líneas y matrices
   repetidas (transiciones, enums, filtros) se convierten en tablas.
+- **Subida del techo junto a la integración:** si integrar el tip verificado
+  empuja el presupuesto, el ajuste medido en frío (hasta ~3% del recuento o
+  del tiempo) se commitea en el propio ticket de integración, con commit
+  separado y la medición adjunta; sin ticket nuevo. Por encima del umbral, o
+  cualquier poda, exigen ticket propio justificado. Cerrar con `force` un
+  ticket así es señal de que el ticket sobraba
+  (detalle en [docs/desarrollo.md](docs/desarrollo.md)).
 
 ## Comandos útiles
 
@@ -270,12 +343,15 @@ Varias sesiones pueden trabajar sobre el mismo proyecto. Para no pisarse:
 taiki init                  # DB y workspace actuales
 taiki stats                 # resumen
 taiki brief                 # brief operativo de la memoria
+taiki memory search <texto> # búsqueda puntual sin cargar el brief entero
 taiki remember "texto"      # preferencia activa del usuario
-taiki memory pending        # propuestas pendientes de aprobación
+taiki memory pending        # propuestas sin evidencia validada
 taiki memory pending --diff # diff frente a la memoria sustituida
 taiki memory candidates     # candidatos deterministas del histórico
 taiki memory review --write # paquete para el curator
 taiki memory curate         # caducidad, archivo y dedupe (nunca borra)
+taiki memory repair-evidence # normaliza el prefijo embebido en la evidencia
+taiki memory repair-evidence --repo ~/dotfiles --retire-missing --apply
 taiki memory stats          # estado, presupuesto, uso y routing
 taiki memory impact         # tendencias, sin causalidad
 taiki memory export FILE    # snapshot JSON/Markdown con checksum
@@ -302,3 +378,5 @@ python3 tests/run.py --audit  # ruido, presupuesto y línea base
 - `TAIKI_DB` o `--db` permiten apuntar a otra DB explícitamente.
 - Cada proyecto arranca su propia instancia MCP; el registro de procesos en
   `~/.local/share/taiki/registry.db` es solo inventario, no contiene tickets.
+- El índice muestra `tags=` y el brief reserva `## Capa 0` para seguridad,
+  scope, sudo y confirmación; mantenlas ahí para que no se pierdan.

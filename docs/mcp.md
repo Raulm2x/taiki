@@ -4,7 +4,8 @@ Volver a [README](../README.md) · [Índice de documentación](README.md)
 
 ## Herramientas MCP
 
-El servidor expone 32 herramientas. El nombre real no lleva prefijo (`list`,
+El servidor expone 39 herramientas; `tools/list` mide 32.480 bytes (31,7 KiB,
+bajo el techo de 32 KiB del benchmark). El nombre real no lleva prefijo (`list`,
 `claim`…), aunque algunos clientes las muestren como `taiki_*`.
 
 | Herramienta | Uso |
@@ -12,17 +13,22 @@ El servidor expone 32 herramientas. El nombre real no lleva prefijo (`list`,
 | `list` | Abiertos en resumen; `include_closed`, `detail`, `fields`, `leaves_only` |
 | `get` | Detalle; `include`, `fields`, `history_limit` y `raw` ajustan qué llega |
 | `next` | Siguiente ticket en resumen; `detail=true` para el registro completo |
+| `epic_check` | Solo lectura: estado derivado de una épica (`abierta`/`completa`) desde sus hijas, recuento por estado, bloqueadas y canceladas con motivo, criterio de cierre y camino real sobre la máquina de estados |
 | `create`, `update`, `transition`, `complete`, `comment`, `link` | Ciclo de vida |
+| `reject_delivery` | Escribe: rechaza una entrega con `reason` obligatorio, registra el evento `delivery_rejected` y con `reopen=true` reabre a `en_progreso` |
 | `claim` | Reclama; `worktree=true` solo en modo `worktree`, `lease_minutes`, `steal`, `force` |
 | `heartbeat` | Renueva el lease en comandos largos |
 | `status`, `whoami` | Sesiones, claims, worktrees y tu ticket activo |
 | `worktree_create`, `worktree_list` | Aislan la escritura por tarea (`worktree`) |
+| `reorg_plan`, `reorg_apply` | Reorganizan tickets (`move`, `renumber`, `promote`, `demote`, `purge`); `reorg_plan` es read-only, `reorg_apply` exige `apply=true` y `force=true` para purgar |
+| `unlink` | Quita un enlace concreto (`code` + `kind` + `ref`) tras verificar que pertenece al ticket; registra el evento `desvincular` |
+| `links_repair` | Detecta enlaces rotos (commits que no resuelven, `depende` de tickets inexistentes, `archivo` ausente con padre legible); dry-run por defecto, `apply=true` retira con evento `desvincular` y `force=true` permite los `depende` de tickets bloqueados |
 | `promote` | Convierte un scratch `S-####` en `T-####` |
 | `scratch_drop` | Archiva y cancela un scratch sin consumir `T-####` |
 | `health` | MCP, hooks, claims caducados, solapamientos, worktrees e integridad de memoria (`memory`) |
 | `brief` | Brief operativo de memoria; `section`, `budget` y `write` |
 | `memory_search` | Busca memorias por texto, scope, tipo, estado, rutas o kinds; snippets salvo `include_content=true` |
-| `memory_write` | Operaciones `add`, `patch`, `remove`, `supersede` y `feedback` con evidencia y aprobación humana; con `kind=playbook` acepta `description` y `files [{path, content}]` |
+| `memory_write` | Operaciones `add`, `patch`, `remove`, `supersede` y `feedback` con evidencia validada (auto-aprobación; manual opcional); con `kind=playbook` acepta `description` y `files [{path, content}]` |
 | `memory_playbook` | Solo lectura: carga un playbook por `slug`; `path` devuelve un fichero de apoyo concreto |
 | `memory_checklist` | Solo lectura: checklist de pitfalls y convenciones por tipo de memoria (`pitfall`/`convention`) y rutas |
 | `memory_candidates` | Solo lectura: `mode=list` lista candidatos; `mode=review` devuelve el paquete del curator. Acepta `since`, `kind` y `limit` |
@@ -63,7 +69,7 @@ cualquier worktree; no se crea una DB vacía dentro de `.worktrees/`.
 
 ## Recursos y prompts MCP
 
-El catálogo de 32 herramientas está en [Herramientas MCP](#herramientas-mcp) y
+El catálogo de 39 herramientas está en [Herramientas MCP](#herramientas-mcp) y
 se genera desde `mcp_layer/schemas.py`. Aquí solo quedan los recursos y prompts:
 
 Recursos: `taiki://inbox`, `taiki://stats`, `taiki://ticket/{code}`,
@@ -98,12 +104,12 @@ Resolución de sesiones automática compatible con `sessionId`, `session_id`, `A
 6. Antes de revisar un cambio, pide `memory_checklist(kind="pitfall"|"convention",
    paths=[...])` y completa con `memory_search`; `kind` es el tipo de memoria.
 7. Nunca `confirmado`: eso lo hace el usuario con `taiki confirm`. Tampoco
-   apruebes propuestas: `taiki memory approve` es del usuario.
+   pidas aprobación de memoria: es autónoma con evidencia; el usuario solo confirma tickets.
 8. Cada 5 tickets verificados/cerrados o al acumular 3+ candidatos, usa
    `memory_candidates(mode=review)` y el prompt `taiki:curate`. El curator
    propone como máximo 5 memorias, prefiere `patch`/`supersede`, exige
    evidencia y no aprueba ni edita código. El conductor lo lanza en background
-   y publica las propuestas para el usuario.
+   y publica solo las propuestas sin evidencia o dudosas para el usuario.
 
 En clientes que prefijan el servidor verás `taiki_list`, `taiki_claim`, etc.;
 el nombre real de la herramienta es el que aparece en `tools/list`.

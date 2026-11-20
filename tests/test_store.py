@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import threading
 import time
+from pathlib import Path
 
 from ticketlib import db, domain, render, repo, workspace
 from ticketlib.store import queries, relations, workflow
@@ -267,8 +268,10 @@ def run(h: Harness) -> None:
 
     # Atomicidad en claim_ticket
     t_atomic = repo.create_ticket(conn, title="Ticket para prueba atómica de claim")
-    h.ok(t_atomic["status"] == "nuevo", "ticket inicia en estado nuevo")
-    h.ok(t_atomic["assigned_to"] is None, "ticket inicia sin asignación")
+    h.ok(
+        t_atomic["status"] == "nuevo" and t_atomic["assigned_to"] is None,
+        "ticket inicia en estado nuevo y sin asignación",
+    )
 
     # Primer reclamo por agente alfa
     claim_a = repo.claim_ticket(conn, t_atomic["code"], agent="agente:alfa")
@@ -573,8 +576,19 @@ def run(h: Harness) -> None:
                 (migrated["isolation"], migrated["resources"], migrated["reversal"]),
                 db.schema_version(legacy),
             ),
-            (7, ("worktree", [], None), 7),
-            "la migración sube a v7, deja worktree sin recursos y es idempotente",
+            (domain.SCHEMA_VERSION, ("worktree", [], None), domain.SCHEMA_VERSION),
+            "la migración sube a la versión actual, deja worktree sin recursos "
+            "y es idempotente",
+        )
+        h.ok(
+            legacy.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'renamed_from'"
+            ).fetchone()
+            is not None
+            and db.renamed_chain(legacy, previous["code"])
+            == (previous["code"], True),
+            "la migración crea renamed_from y el alias resuelve códigos vivos",
         )
     finally:
         legacy.close()
@@ -954,3 +968,752 @@ def run(h: Harness) -> None:
         ),
         "la configuración rechaza un isolation inválido",
     )
+
+    # ── Plan puro de reorganización (move/renumber/promote/demote) ──────
+    def reorg_rejects(label: str, func) -> str:
+        try:
+            func()
+        except domain.ValidationError:
+            return label
+        raise AssertionError(f"{label}: no se rechazó")
+
+    reorg_a = repo.create_ticket(conn, title="Épica reorganización A")
+    reorg_b = repo.create_ticket(conn, title="Épica reorganización B")
+    moved = repo.create_ticket(conn, title="Tarea plana movible")
+    conn.execute(
+        "UPDATE tickets SET code = 'T-9101' WHERE id = ?", (moved["id"],)
+    )
+    repo.create_ticket(
+        conn, title="Hija ya numerada", parent_id=reorg_b["code"]
+    )
+    conn.commit()
+    moved = repo.get_ticket(conn, "T-9101")
+
+    before = {
+        row["code"]: row["parent_id"]
+        for row in conn.execute("SELECT code, parent_id FROM tickets")
+    }
+    move_plan = repo.reorg_plan(
+        conn,
+        "move",
+        [moved["code"]],
+        parent=reorg_b["code"],
+        renumber=True,
+    )
+    keep_plan = repo.reorg_plan(
+        conn,
+        "move",
+        [moved["code"]],
+        parent=reorg_b["code"],
+        renumber=False,
+    )
+    after = {
+        row["code"]: row["parent_id"]
+        for row in conn.execute("SELECT code, parent_id FROM tickets")
+    }
+    h.ok(
+        move_plan["items"][0]["new_code"] == reorg_b["code"] + ".02"
+        and move_plan["items"][0]["parent_code"] == reorg_b["code"]
+        and keep_plan["items"][0]["new_code"] == "T-9101"
+        and any("conserva" in item for item in keep_plan["warnings"])
+        and reorg_rejects(
+            "move sin renumber",
+            lambda: repo.reorg_plan(
+                conn, "move", [moved["code"]], parent=reorg_b["code"]
+            ),
+        )
+        == "move sin renumber"
+        and before == after,
+        "move con renumber evita colisiones, sin renumber conserva el "
+        "código con aviso, sin flag se rechaza y no escribe",
+    )
+
+    ren_epic = repo.create_ticket(conn, title="Épica renumerado plan")
+    ren_flat_a = repo.create_ticket(
+        conn, title="Plana A", parent_id=ren_epic["code"]
+    )
+    ren_flat_b = repo.create_ticket(
+        conn, title="Plana B", parent_id=ren_epic["code"]
+    )
+    conn.execute(
+        "UPDATE tickets SET code = 'T-9102' WHERE id = ?",
+        (ren_flat_a["id"],),
+    )
+    conn.execute(
+        "UPDATE tickets SET code = 'T-9103' WHERE id = ?",
+        (ren_flat_b["id"],),
+    )
+    occupied = repo.create_ticket(conn, title="Código ocupado")
+    conn.execute(
+        "UPDATE tickets SET code = ? WHERE id = ?",
+        (ren_epic["code"] + ".01", occupied["id"]),
+    )
+    adopted = repo.create_ticket(conn, title="Adoptada plan")
+    repo.attach_tickets(
+        conn, ren_epic["code"], [adopted["code"]], actor="test"
+    )
+    conn.commit()
+    ren_flat_a = repo.get_ticket(conn, "T-9102")
+    ren_flat_b = repo.get_ticket(conn, "T-9103")
+
+    before = {
+        row["code"]: row["parent_id"]
+        for row in conn.execute("SELECT code, parent_id FROM tickets")
+    }
+    default_plan = repo.reorg_plan(conn, "renumber")
+    adopted_plan = repo.reorg_plan(conn, "renumber", include_adopted=True)
+    after = {
+        row["code"]: row["parent_id"]
+        for row in conn.execute("SELECT code, parent_id FROM tickets")
+    }
+    h.ok(
+        [
+            (item["code"], item["new_code"])
+            for item in default_plan["items"]
+        ]
+        == [
+            ("T-9102", ren_epic["code"] + ".02"),
+            ("T-9103", ren_epic["code"] + ".03"),
+        ]
+        and adopted["code"]
+        in {item["code"] for item in adopted_plan["items"]}
+        and len(adopted_plan["items"]) == 3
+        and not any(
+            item["code"].startswith(item["parent_code"] + ".")
+            for item in adopted_plan["items"]
+        )
+        and before == after,
+        "renumber numera por id, salta códigos ocupados, excluye adoptados "
+        "por defecto, los incluye con include_adopted, respeta los ya "
+        "numerados y no escribe",
+    )
+
+    archived_epic = repo.create_ticket(conn, title="Épica archivada")
+    conn.execute(
+        "UPDATE tickets SET archived = 1 WHERE id = ?",
+        (archived_epic["id"],),
+    )
+    conn.commit()
+    rejected = [
+        reorg_rejects(
+            "auto-padre",
+            lambda: repo.reorg_plan(
+                conn,
+                "move",
+                [moved["code"]],
+                parent=moved["code"],
+                renumber=True,
+            ),
+        ),
+        reorg_rejects(
+            "descendencia",
+            lambda: repo.reorg_plan(
+                conn,
+                "move",
+                [ren_epic["code"]],
+                parent=ren_flat_a["code"],
+                renumber=True,
+            ),
+        ),
+        reorg_rejects(
+            "dos niveles",
+            lambda: repo.reorg_plan(
+                conn,
+                "move",
+                [moved["code"]],
+                parent=ren_flat_a["code"],
+                renumber=True,
+            ),
+        ),
+        reorg_rejects(
+            "padre archivado",
+            lambda: repo.reorg_plan(
+                conn,
+                "move",
+                [moved["code"]],
+                parent=archived_epic["code"],
+                renumber=True,
+            ),
+        ),
+        reorg_rejects(
+            "hijo con hijos",
+            lambda: repo.reorg_plan(
+                conn,
+                "move",
+                [ren_epic["code"]],
+                parent=reorg_a["code"],
+                renumber=True,
+            ),
+        ),
+        reorg_rejects(
+            "padre en el plan",
+            lambda: repo.reorg_plan(
+                conn,
+                "move",
+                [reorg_a["code"], reorg_b["code"]],
+                parent=reorg_a["code"],
+                renumber=True,
+            ),
+        ),
+    ]
+    h.eq(
+        rejected,
+        [
+            "auto-padre",
+            "descendencia",
+            "dos niveles",
+            "padre archivado",
+            "hijo con hijos",
+            "padre en el plan",
+        ],
+        "el plan rechaza auto-padre, ciclo, dos niveles, padre archivado, "
+        "hijo con hijos y padre dentro del plan",
+    )
+
+    demote_epic = repo.create_ticket(conn, title="Épica a degradar")
+    demote_child = repo.create_ticket(
+        conn, title="Tarea reasignable", parent_id=demote_epic["code"]
+    )
+    dest_epic = repo.create_ticket(conn, title="Épica destino")
+    demote_plan = repo.reorg_plan(
+        conn,
+        "demote",
+        [demote_epic["code"]],
+        children_to=dest_epic["code"],
+        parent=reorg_a["code"],
+    )
+    demote_items = {
+        item["code"]: item["parent_code"]
+        for item in demote_plan["items"]
+    }
+    promote_root = repo.create_ticket(conn, title="Raíz promovible")
+    promote_plan = repo.reorg_plan(
+        conn, "promote", [promote_root["code"], demote_child["code"]]
+    )
+    h.ok(
+        demote_items[demote_epic["code"]] == reorg_a["code"]
+        and demote_items[demote_child["code"]] == dest_epic["code"]
+        and reorg_rejects(
+            "demote sin children_to",
+            lambda: repo.reorg_plan(
+                conn, "demote", [demote_epic["code"]]
+            ),
+        )
+        == "demote sin children_to"
+        and {
+            item["code"]: item["parent_code"]
+            for item in promote_plan["items"]
+        }
+        == {promote_root["code"]: None, demote_child["code"]: None}
+        and any("potencial" in item for item in promote_plan["warnings"])
+        and any("desvincula" in item for item in promote_plan["warnings"])
+        and repo.reorg_plan(conn, "renumber", include_adopted=True)
+        == repo.reorg_plan(conn, "renumber", include_adopted=True),
+        "demote reasigna los hijos y mueve la épica, exige children_to, "
+        "promote deja la raíz como no-op y desvincula las tareas, y el "
+        "plan es determinista",
+    )
+
+    # ── Aplicación atómica de la reorganización y referencias ──────────
+    # Caso real aislado: T-0023 raíz con T-0024..T-0027 colgados como raíces.
+    with h.env(TAIKI_DB=str(h.tmp / "reorg_apply.db")):
+        rconn = db.connect()
+        reorg_ts = "2026-01-01T00:00:00-05:00"
+        seeds = [
+            repo.create_ticket(rconn, title=f"Hija plana {number}")
+            for number in (24, 25, 26, 27)
+        ]
+        real_epic = repo.create_ticket(rconn, title="Épica caso real")
+        for ticket, code in zip(
+            [real_epic, *seeds],
+            ["T-0023", "T-0024", "T-0025", "T-0026", "T-0027"],
+        ):
+            rconn.execute(
+                "UPDATE tickets SET code = ? WHERE id = ?", (code, ticket["id"])
+            )
+        rconn.commit()
+        real_epic = repo.get_ticket(rconn, "T-0023")
+        seed_ids = [repo.get_ticket(rconn, f"T-00{n}")["id"] for n in (24, 25, 26, 27)]
+        child_id = seed_ids[0]
+        rconn.execute(
+            "UPDATE tickets SET status='completado', resolution='hecho', "
+            "paths=?, isolation='none', assigned_to='worker-x', "
+            "owner_session='ses-x' WHERE id=?",
+            ('["src/a.py"]', child_id),
+        )
+        rconn.execute(
+            "INSERT INTO tags(ticket_id, tag) VALUES (?, 'reorg')", (child_id,)
+        )
+        watcher = repo.create_ticket(rconn, title="Watcher")
+        rconn.execute(
+            "UPDATE tickets SET code = 'T-0030' WHERE id = ?", (watcher["id"],)
+        )
+        rconn.commit()
+        repo.link_ticket(rconn, "T-0030", "depende", "T-0024", actor="test")
+        repo.link_ticket(rconn, "T-0030", "relacionado", "T-0025", actor="test")
+        rconn.execute(
+            "INSERT INTO links(ticket_id, kind, ref, created_at) "
+            "VALUES (?, 'depende', 'T-0023.01', ?)",
+            (watcher["id"], reorg_ts),
+        )
+        rconn.execute(
+            "INSERT INTO links(ticket_id, kind, ref, created_at) "
+            "VALUES (?, 'otro', 'renumerado:T-0024->T-0023.01', ?)",
+            (child_id, reorg_ts),
+        )
+        rconn.execute(
+            "INSERT INTO memories(code, kind, \"key\", title, content, "
+            "ticket_id, created_at, updated_at, fingerprint) "
+            "VALUES ('M-9001', 'fact', 'reorg.apply', 'Ref', 'cuerpo', "
+            "'T-0024', ?, ?, 'fp-reorg')",
+            (reorg_ts, reorg_ts),
+        )
+        memory_id = rconn.execute(
+            "SELECT id FROM memories WHERE code = 'M-9001'"
+        ).fetchone()["id"]
+        rconn.executemany(
+            "INSERT INTO memory_evidence(memory_id, kind, ref, created_at) "
+            "VALUES (?, 'ticket', ?, ?)",
+            [(memory_id, "T-0024", reorg_ts), (memory_id, "T-0023.01", reorg_ts)],
+        )
+        rconn.commit()
+        before = dict(
+            rconn.execute(
+                "SELECT status, resolution, paths, isolation, assigned_to, "
+                "owner_session, created_at FROM tickets WHERE id = ?",
+                (child_id,),
+            ).fetchone()
+        )
+        tags_before = [
+            row["tag"]
+            for row in rconn.execute(
+                "SELECT tag FROM tags WHERE ticket_id = ? ORDER BY tag",
+                (child_id,),
+            )
+        ]
+
+        applied = repo.reorg_apply(
+            rconn,
+            "move",
+            ["T-0024", "T-0025", "T-0026", "T-0027"],
+            parent="T-0023",
+            renumber=True,
+            actor="test",
+            session_id="ses-reorg",
+        )
+        rows_after = {
+            row["id"]: dict(row)
+            for row in rconn.execute("SELECT id, code, parent_id FROM tickets")
+        }
+        seeded_codes = [rows_after[ticket_id]["code"] for ticket_id in seed_ids]
+        depends = {
+            row["ref"]
+            for row in rconn.execute(
+                "SELECT ref FROM links WHERE ticket_id = ? AND kind = 'depende'",
+                (watcher["id"],),
+            )
+        }
+        related = {
+            row["ref"]
+            for row in rconn.execute(
+                "SELECT ref FROM links WHERE ticket_id = ? AND kind = 'relacionado'",
+                (watcher["id"],),
+            )
+        }
+        historical = {
+            row["ref"]
+            for row in rconn.execute(
+                "SELECT ref FROM links WHERE ticket_id = ? AND kind = 'otro'",
+                (child_id,),
+            )
+        }
+        evidence = {
+            row["ref"]
+            for row in rconn.execute(
+                "SELECT ref FROM memory_evidence WHERE memory_id = ?",
+                (memory_id,),
+            )
+        }
+        memory_ticket = rconn.execute(
+            "SELECT ticket_id FROM memories WHERE id = ?", (memory_id,)
+        ).fetchone()["ticket_id"]
+        failures: list[str] = []
+        if not (
+            seeded_codes == [f"T-0023.0{n}" for n in (1, 2, 3, 4)]
+            and all(
+                rows_after[ticket_id]["parent_id"] == real_epic["id"]
+                for ticket_id in seed_ids
+            )
+            and not any(
+                row["code"].startswith("__reorg__")
+                for row in rows_after.values()
+            )
+            and depends == {"T-0023.01"}
+            and related == {"T-0023.02"}
+            and historical == {"renumerado:T-0024->T-0023.01"}
+            and evidence == {"T-0023.01"}
+            and memory_ticket == "T-0023.01"
+            and applied["references"] == {
+                "links": 2,
+                "evidence": 1,
+                "memories": 1,
+            }
+            and applied["events"] == 8
+        ):
+            failures.append("caso real/referencias")
+
+        fused = True
+        try:
+            rconn.execute(
+                "INSERT INTO tickets_fts(tickets_fts) VALUES('integrity-check')"
+            )
+        except Exception:
+            fused = False
+        fts_codes = {
+            ticket_id: rconn.execute(
+                "SELECT code FROM tickets_fts WHERE rowid = ?", (ticket_id,)
+            ).fetchone()["code"]
+            for ticket_id in (real_epic["id"], child_id)
+        }
+        if not (
+            fused
+            and fts_codes[real_epic["id"]] == "T-0023"
+            and fts_codes[child_id] == "T-0023.01"
+            and repo.get_ticket(rconn, "T-0023.01")["parent_code"] == "T-0023"
+            and repo.get_ticket(rconn, "T-0023")["progress"]["total"] == 4
+            and set(repo.search_codes(rconn, "hija")) >= set(seeded_codes)
+        ):
+            failures.append("fts/derivados")
+
+        after = dict(
+            rconn.execute(
+                "SELECT status, resolution, paths, isolation, assigned_to, "
+                "owner_session, created_at FROM tickets WHERE id = ?",
+                (child_id,),
+            ).fetchone()
+        )
+        tags_after = [
+            row["tag"]
+            for row in rconn.execute(
+                "SELECT tag FROM tags WHERE ticket_id = ? ORDER BY tag",
+                (child_id,),
+            )
+        ]
+        if not (before == after and tags_before == tags_after):
+            failures.append("conservación")
+
+        ad_epic = repo.create_ticket(rconn, title="Épica adoptiva")
+        ad_child = repo.create_ticket(rconn, title="Adoptada")
+        for ticket, code in ((ad_epic, "T-0050"), (ad_child, "T-0051")):
+            rconn.execute(
+                "UPDATE tickets SET code = ? WHERE id = ?", (code, ticket["id"])
+            )
+        rconn.commit()
+        repo.attach_tickets(rconn, "T-0050", ["T-0051"], actor="test")
+        kept = repo.reorg_apply(rconn, "renumber")
+        still = repo.get_ticket(rconn, "T-0051")["code"]
+        moved = repo.reorg_apply(rconn, "renumber", include_adopted=True)
+        if not (
+            kept["items"] == []
+            and still == "T-0051"
+            and [item["code"] for item in moved["items"]] == ["T-0051"]
+            and repo.get_ticket(rconn, "T-0050.01")["parent_code"] == "T-0050"
+        ):
+            failures.append("adoptados")
+
+        rb_epic = repo.create_ticket(rconn, title="Épica rollback")
+        rb_child = repo.create_ticket(rconn, title="Hija rollback")
+        for ticket, code in ((rb_epic, "T-0040"), (rb_child, "T-0041")):
+            rconn.execute(
+                "UPDATE tickets SET code = ? WHERE id = ?", (code, ticket["id"])
+            )
+        rconn.commit()
+        repo.link_ticket(rconn, "T-0040", "relacionado", "T-0041", actor="test")
+        rconn.execute(
+            "CREATE TRIGGER reorg_boom BEFORE UPDATE ON tickets "
+            "WHEN NEW.code = 'T-0040.01' BEGIN SELECT RAISE(ABORT, 'boom'); END"
+        )
+        rconn.commit()
+        boom = False
+        try:
+            repo.reorg_apply(
+                rconn, "move", ["T-0041"], parent="T-0040", renumber=True
+            )
+        except Exception:
+            boom = True
+        finally:
+            rconn.execute("DROP TRIGGER reorg_boom")
+        if not (
+            boom
+            and repo.get_ticket(rconn, "T-0041")["parent_code"] is None
+            and not rconn.execute(
+                "SELECT 1 FROM tickets WHERE code LIKE '__reorg__%'"
+            ).fetchone()
+            and rconn.execute(
+                "SELECT COUNT(*) FROM events WHERE ticket_id = ? "
+                "AND action = 'renumerar'",
+                (rb_child["id"],),
+            ).fetchone()[0]
+            == 0
+            and {
+                row["ref"]
+                for row in rconn.execute(
+                    "SELECT ref FROM links WHERE ticket_id = ? "
+                    "AND kind = 'relacionado'",
+                    (rb_epic["id"],),
+                )
+            }
+            == {"T-0041"}
+        ):
+            failures.append("rollback")
+        h.ok(
+            not failures,
+            "reorg_apply: fallan " + ", ".join(failures),
+        )
+        rconn.close()
+
+    # ── Purga de cancelados: backup, guardrails y contador ─────────────
+    with h.env(TAIKI_DB=str(h.tmp / "purge.db")):
+        pconn = db.connect()
+        try:
+            ts = "2026-01-01T00:00:00-05:00"
+
+            def cancelado(title: str) -> dict:
+                ticket = repo.create_ticket(pconn, title=title)
+                pconn.execute(
+                    "UPDATE tickets SET status = 'cancelado' WHERE id = ?",
+                    (ticket["id"],),
+                )
+                pconn.commit()
+                return ticket
+
+            viva = cancelado("Raíz viva")
+            pconn.execute(
+                "UPDATE tickets SET code = 'T-0097' WHERE id = ?",
+                (viva["id"],),
+            )
+            purga_a, purga_b = cancelado("zafiro A"), cancelado("zafiro B")
+            pconn.execute(
+                "UPDATE tickets SET code = 'T-0098' WHERE id = ?",
+                (purga_a["id"],),
+            )
+            pconn.execute(
+                "UPDATE tickets SET code = 'T-0099' WHERE id = ?",
+                (purga_b["id"],),
+            )
+            pconn.execute(
+                "INSERT INTO tags(ticket_id, tag) VALUES (?, 'x')",
+                (purga_b["id"],),
+            )
+            pconn.execute(
+                "INSERT INTO comments(ticket_id, ts, author, body) "
+                "VALUES (?, ?, 'test', 'nota')",
+                (purga_b["id"], ts),
+            )
+            pconn.execute(
+                "INSERT INTO links(ticket_id, kind, ref, created_at) "
+                "VALUES (?, 'otro', 'nota', ?)",
+                (purga_b["id"], ts),
+            )
+            db.meta_set(pconn, domain.TICKET_COUNTER, "100")
+            pconn.commit()
+
+            dry = repo.purge_plan(pconn, ["T-0098", "T-0099"])
+            h.ok(
+                [item["code"] for item in dry["items"]]
+                == ["T-0098", "T-0099"]
+                and dry["counter"] == {"before": 100, "after": 98}
+                and pconn.execute(
+                    "SELECT COUNT(*) FROM tickets "
+                    "WHERE code IN ('T-0098', 'T-0099')"
+                ).fetchone()[0]
+                == 2
+                and not (h.tmp / "backups").exists(),
+                "purge_plan simula, proyecta el contador y no escribe",
+            )
+
+            result = repo.purge_apply(
+                pconn, ["T-0098", "T-0099"], actor="test"
+            )
+            ids = (purga_a["id"], purga_b["id"])
+            orphans = sum(
+                pconn.execute(
+                    f"SELECT COUNT(*) FROM {table} "
+                    "WHERE ticket_id IN (?, ?)",
+                    ids,
+                ).fetchone()[0]
+                for table in ("events", "comments", "links", "tags")
+            )
+            backup = Path(result["backup"])
+            backup_conn = db.connect(backup)
+            try:
+                kept = backup_conn.execute(
+                    "SELECT COUNT(*) FROM tickets "
+                    "WHERE code IN ('T-0098', 'T-0099')"
+                ).fetchone()[0]
+            finally:
+                backup_conn.close()
+            h.ok(
+                pconn.execute(
+                    "SELECT COUNT(*) FROM tickets WHERE id IN (?, ?)", ids
+                ).fetchone()[0]
+                == 0
+                and orphans == 0
+                and backup.is_file()
+                and kept == 2
+                and pconn.execute(
+                    "SELECT COUNT(*) FROM tickets_fts "
+                    "WHERE tickets_fts MATCH 'zafiro'"
+                ).fetchone()[0]
+                == 0
+                and result["counter"] == {"before": 100, "after": 98}
+                and int(db.meta_get(pconn, domain.TICKET_COUNTER)) == 98,
+                "purge aplica con backup, limpia FTS y baja el contador",
+            )
+        finally:
+            pconn.close()
+
+    with h.env(TAIKI_DB=str(h.tmp / "purge-reject.db")):
+        rconn = db.connect()
+        try:
+            ts = "2026-01-01T00:00:00-05:00"
+
+            def rechazable(title: str, status: str = "cancelado") -> dict:
+                ticket = repo.create_ticket(rconn, title=title)
+                rconn.execute(
+                    "UPDATE tickets SET status = ? WHERE id = ?",
+                    (status, ticket["id"]),
+                )
+                rconn.commit()
+                return ticket
+
+            def memoria(code: str, ticket_ref: str | None = None) -> int:
+                return rconn.execute(
+                    "INSERT INTO memories(code, kind, \"key\", title, content, "
+                    "status, confidence, source, ticket_id, created_at, "
+                    "updated_at, fingerprint) VALUES (?, 'pitfall', ?, 't', "
+                    "'c', 'proposed', 0.5, 'agent', ?, ?, ?, ?)",
+                    (code, code.lower(), ticket_ref, ts, ts, f"fp-{code}"),
+                ).lastrowid
+
+            abierto = rechazable("Abierto", status="nuevo")
+            padre = rechazable("Padre cancelado")
+            repo.create_ticket(
+                rconn, title="Hija del padre", parent_id=padre["code"]
+            )
+            con_link = rechazable("Con enlace entrante")
+            repo.link_ticket(
+                rconn, abierto["code"], "depende", con_link["code"], actor="t"
+            )
+            con_evidencia = rechazable("Con evidencia")
+            rconn.execute(
+                "INSERT INTO memory_evidence(memory_id, kind, ref, created_at) "
+                "VALUES (?, 'ticket', ?, ?)",
+                (memoria("M-9101"), con_evidencia["code"], ts),
+            )
+            con_memoria = rechazable("Con memoria")
+            memoria("M-9102", con_memoria["code"])
+            rconn.commit()
+
+            h.raises(
+                domain.ValidationError,
+                lambda: repo.purge_plan(rconn, [abierto["code"]]),
+                "purge rechaza un ticket abierto",
+            )
+            h.raises(
+                domain.ValidationError,
+                lambda: repo.purge_plan(rconn, [padre["code"]]),
+                "purge rechaza una épica con tareas",
+            )
+            h.raises(
+                domain.ValidationError,
+                lambda: repo.purge_plan(rconn, [con_link["code"]]),
+                "purge rechaza un ticket referenciado por un enlace",
+            )
+            h.raises(
+                domain.ValidationError,
+                lambda: repo.purge_plan(rconn, [con_evidencia["code"]]),
+                "purge rechaza un ticket con evidencia de memoria",
+            )
+            h.raises(
+                domain.ValidationError,
+                lambda: repo.purge_plan(rconn, [con_memoria["code"]]),
+                "purge rechaza un ticket con memories.ticket_id",
+            )
+        finally:
+            rconn.close()
+
+    with h.env(TAIKI_DB=str(h.tmp / "purge-gap.db")):
+        gconn = db.connect()
+        try:
+            hueco = repo.create_ticket(gconn, title="Hueco")
+            gconn.execute(
+                "UPDATE tickets SET code = 'T-0024', status = 'cancelado' "
+                "WHERE id = ?",
+                (hueco["id"],),
+            )
+            vivo = repo.create_ticket(gconn, title="Vivo")
+            gconn.execute(
+                "UPDATE tickets SET code = 'T-0025' WHERE id = ?",
+                (vivo["id"],),
+            )
+            db.meta_set(gconn, domain.TICKET_COUNTER, "26")
+            gconn.commit()
+            gap = repo.purge_plan(gconn, ["T-0024"])
+            applied = repo.purge_apply(gconn, ["T-0024"])
+            h.ok(
+                gap["counter"]["after"] == 26
+                and applied["counter"]["after"] == 26
+                and int(db.meta_get(gconn, domain.TICKET_COUNTER)) == 26
+                and any("repair-gaps" in item for item in gap["warnings"])
+                and repo.get_ticket(gconn, "T-0025")["id"] == vivo["id"],
+                "purge con hueco no baja el contador y avisa de repair-gaps",
+            )
+
+            fallo = repo.create_ticket(gconn, title="Backup imposible")
+            gconn.execute(
+                "UPDATE tickets SET code = 'T-0096', status = 'cancelado' "
+                "WHERE id = ?",
+                (fallo["id"],),
+            )
+            gconn.commit()
+            original = workspace._copy_database
+
+            def boom(source, target):
+                raise OSError("sin espacio")
+
+            workspace._copy_database = boom
+            try:
+                abortado = False
+                try:
+                    repo.purge_apply(gconn, ["T-0096"])
+                except domain.ValidationError:
+                    abortado = True
+            finally:
+                workspace._copy_database = original
+            h.ok(
+                abortado
+                and gconn.execute(
+                    "SELECT COUNT(*) FROM tickets WHERE code = 'T-0096'"
+                ).fetchone()[0]
+                == 1,
+                "si el backup falla no se borra nada",
+            )
+        finally:
+            gconn.close()
+
+        mem = db.connect(":memory:")
+        try:
+            en_memoria = repo.create_ticket(mem, title="En memoria")
+            mem.execute(
+                "UPDATE tickets SET status = 'cancelado' WHERE id = ?",
+                (en_memoria["id"],),
+            )
+            h.raises(
+                domain.ValidationError,
+                lambda: repo.purge_apply(mem, [en_memoria["code"]]),
+                "purge apply rechaza una base :memory: sin backup posible",
+            )
+        finally:
+            mem.close()
+

@@ -230,6 +230,7 @@ def _snippet(memory: dict[str, Any]) -> dict[str, Any]:
             "status",
             "confidence",
             "paths",
+            "tags",
             "pinned",
             "use_count",
             "updated_at",
@@ -240,6 +241,8 @@ def _snippet(memory: dict[str, Any]) -> dict[str, Any]:
     data["snippet"] = content[:SNIPPET_CHARS] + (
         "…" if len(content) > SNIPPET_CHARS else ""
     )
+    if memory.get("freshness") is not None:
+        data["freshness"] = memory["freshness"]
     return data
 
 
@@ -415,6 +418,7 @@ def _operation_receipt(
             confidence=op.get("confidence", 0.5),
             source="agent",
             ticket_kinds=op.get("ticket_kinds"),
+            tags=op.get("tags"),
             evidence=op.get("evidence"),
             files=op.get("files"),
             pinned=bool(op.get("pin")),
@@ -436,6 +440,7 @@ def _operation_receipt(
                 "key",
                 "confidence",
                 "ticket_kinds",
+                "tags",
             )
             if key in op
         }
@@ -473,6 +478,7 @@ def _operation_receipt(
             confidence=op.get("confidence", old.get("confidence", 0.5)),
             source="agent",
             ticket_kinds=op.get("ticket_kinds", old.get("ticket_kinds")),
+            tags=op.get("tags", old.get("tags")),
             evidence=op.get("evidence"),
             pinned=bool(op.get("pin", old.get("pinned"))),
             **common,

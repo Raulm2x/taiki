@@ -51,51 +51,42 @@ def run(h: Harness) -> None:
 
     ledger_before = conn.execute("SELECT COUNT(*) FROM memory_ledger").fetchone()[0]
     payload = handlers.call_tool("memory_stats", {}, meta=_META)
-    h.eq(
-        set(payload),
-        {"stats", "impact"},
-        "mode=all devuelve stats e impact",
-    )
+    ledger_after = conn.execute("SELECT COUNT(*) FROM memory_ledger").fetchone()[0]
     stats = payload["stats"]
     h.ok(
-        stats["by_status"]["active"] >= 1
+        set(payload) == {"stats", "impact"}
+        and stats["by_status"]["active"] >= 1
         and stats["by_status"]["proposed"] == 1
-        and proposal["code"] in stats["proposals"]["codes"],
-        "stats reutiliza conteos y propuestas",
-    )
-    h.ok(
-        {"project", "user"} <= set(stats["budget"]),
-        "memory_stats expone presupuesto por scope",
-    )
-    h.ok(
-        payload["impact"]["closed"] >= 1
-        and payload["impact"]["notes"],
-        "impact resume cierres y recuerda la no causalidad",
-    )
-    ledger_after = conn.execute("SELECT COUNT(*) FROM memory_ledger").fetchone()[0]
-    h.eq(
-        ledger_after,
-        ledger_before,
-        "memory_stats no escribe en el ledger",
+        and proposal["code"] in stats["proposals"]["codes"]
+        and {"project", "user"} <= set(stats["budget"])
+        and payload["impact"]["closed"] >= 1
+        and payload["impact"]["notes"]
+        and ledger_after == ledger_before,
+        "mode=all devuelve stats, presupuesto e impacto sin escribir el ledger",
     )
 
     only_stats = handlers.call_tool("memory_stats", {"mode": "stats"}, meta=_META)
-    h.eq(set(only_stats), {"stats"}, "mode=stats no calcula impacto")
     only_impact = handlers.call_tool(
         "memory_stats", {"mode": "impact", "days": 7}, meta=_META
     )
-    h.eq(set(only_impact), {"impact"}, "mode=impact no calcula stats")
-    h.eq(only_impact["impact"]["days"], 7, "days se pasa al impacto")
+    h.ok(
+        set(only_stats) == {"stats"}
+        and set(only_impact) == {"impact"}
+        and only_impact["impact"]["days"] == 7,
+        "mode=stats e impact se limitan a su bloque y respetan days",
+    )
 
+    h.raises(
+        ValidationError,
+        lambda: handlers.call_tool(
+            "memory_stats", {"mode": "otro"}, meta=_META
+        ),
+        "mode desconocido se rechaza",
+    )
     h.raises(
         ValidationError,
         lambda: handlers.call_tool(
             "memory_stats", {"mode": "impact", "days": 0}, meta=_META
         ),
         "days=0 se rechaza antes de ejecutar",
-    )
-    h.raises(
-        ValidationError,
-        lambda: handlers.call_tool("memory_stats", {"mode": "otro"}, meta=_META),
-        "mode desconocido se rechaza",
     )

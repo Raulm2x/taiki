@@ -29,16 +29,19 @@ from pathlib import Path
 
 from commands.release import (
     _bump_for,
+    _bump_reason,
     _changelog,
     _explicit_bumps,
     _groups,
     _tickets,
+    _verify_command,
     cmd_release,
 )
 from commands.tickets import cmd_claim
 from commands.worktree import cmd_worktree_merge
 from tests.seeds import git_repo
 from ticketlib import __version__, db, repo, workspace
+from ticketlib.domain import TicketError
 
 # CHANGELOG de partida con el bloque de trabajo en curso que dejaban las
 # integraciones antiguas y una release anterior que debe conservarse.
@@ -537,7 +540,8 @@ def _push_cases(tmp: Path) -> tuple[dict, dict]:
 def _bump_cases(root: Path) -> dict[str, dict]:
     """Niveles del trailer: capa pura y dos dry-runs de integración.
 
-    La precedencia y el parseo se prueban en ``_bump_for``/``_explicit_bumps``
+    La precedencia y el parseo se prueban en ``_bump_for``/``_bump_reason``/
+    ``_explicit_bumps``
     (sin repos); el repo de ``run`` solo se usa para comprobar que el resumen
     integra ``explicit_bumps`` y que ``--bump`` prevalece. Un ``reset --hard``
     devuelve ``develop`` a su base.
@@ -547,27 +551,32 @@ def _bump_cases(root: Path) -> dict[str, dict]:
         body = f"{subject}\n\n{trailer}" if trailer else subject
         return {"sha": subject[:7], "subject": subject, "body": body}
 
+    # El trailer solo sube el nivel de los tipos (feat → minor): nunca lo
+    # degrada (T-0090.01). BREAKING gana siempre.
     cases = {
-        "trailer_patch": [commit("feat: flag (T-0010)", "Release-Bump: patch")],
-        "trailer_minor": [
+        "feat_trailer_patch": [commit("feat: flag (T-0010)", "Release-Bump: patch")],
+        "feat_trailer_minor": [
             commit("feat: flag (T-0011)", "Release-Bump: minor"),
             commit("fix: borde (T-0012)"),
         ],
+        "fix_trailer_minor": [commit("fix: borde (T-0016)", "Release-Bump: minor")],
+        "fix_trailer_major": [commit("fix: borde (T-0017)", "Release-Bump: major")],
         "breaking_trailer_patch": [
             commit("feat!: rompe api (T-0013)", "Release-Bump: patch")
         ],
-        "convention": [commit("feat: normal (T-0015)")],
+        "feat_convention": [commit("feat: normal (T-0015)")],
+        "fixes_only": [commit("fix: parche (T-0018)")],
     }
-    results: dict[str, dict] = {
-        name: {
-            "bump": _bump_for(commits),
+    results: dict[str, dict] = {}
+    for name, commits in cases.items():
+        level = _bump_for(commits)
+        results[name] = {
+            "bump": level,
+            "reason": _bump_reason(commits, level),
             "explicit": [
-                (item["subject"], item["level"])
-                for item in _explicit_bumps(commits)
+                (item["subject"], item["level"]) for item in _explicit_bumps(commits)
             ],
         }
-        for name, commits in cases.items()
-    }
     base = _git(root, "rev-parse", "develop")
     _commit(
         root,
@@ -580,11 +589,13 @@ def _bump_cases(root: Path) -> dict[str, dict]:
     _git(root, "reset", "--hard", base)
     results["integration"] = {
         "bump": declared.get("bump"),
+        "reason_feat": str(declared.get("bump_reason") or "").startswith("feat en"),
+        "override": override.get("bump"),
+        "override_reason": override.get("bump_reason"),
         "explicit": [
             (item.get("subject"), item.get("level"))
             for item in declared.get("explicit_bumps") or []
         ],
-        "override": override.get("bump"),
     }
     return results
 
@@ -634,6 +645,45 @@ def _changelog_cases() -> tuple[dict, dict]:
         "range": [f"T-{code:04d}" for code in range(50, 58)],
         "range_in_section": True,
         "rerun": True,
+    }
+    return actual, expected
+
+
+def _verify_cases(tmp: Path) -> tuple[dict, dict]:
+    """Resolución de gates: cadena con ``&&``, array, config y default ausente.
+
+    No ejecuta binarios externos ni depende del gate real: solo comprueba la
+    forma del comando y si necesita shell. El entorno se limpia en ``run``.
+    """
+    configured = tmp / "proyecto-config"
+    configured.mkdir(parents=True, exist_ok=True)
+    workspace.init_workspace(configured)
+    folder = configured / ".taiki"
+    config = workspace.load_config(folder)
+    config["verify"] = {"command": ["pnpm", "test", "--run"]}
+    workspace.save_config(config, folder)
+    bare = tmp / "proyecto-sin-gate"
+    bare.mkdir()
+
+    try:
+        _verify_command(None, bare)
+    except TicketError as exc:
+        missing = str(exc)
+    else:
+        missing = ""
+
+    actual = {
+        "string_shell": _verify_command("pnpm test && pnpm lint"),
+        "array": _verify_command([sys.executable, "-m", "pytest"]),
+        "config_array": _verify_command(None, configured),
+        "missing_mentions_config": "verify.command" in missing
+        and ".taiki/config.json" in missing,
+    }
+    expected = {
+        "string_shell": ("pnpm test && pnpm lint", True),
+        "array": ([sys.executable, "-m", "pytest"], False),
+        "config_array": (["pnpm", "test", "--run"], False),
+        "missing_mentions_config": True,
     }
     return actual, expected
 
@@ -893,6 +943,8 @@ def run(h) -> None:
     bumps_actual = _bump_cases(root)
     changelog_units, changelog_unit_expected = _changelog_cases()
     reconcile_actual, reconcile_expected = _reconcile_cases(tmp)
+    with h.env(TAIKI_RELEASE_VERIFY=None, TICKETS_RELEASE_VERIFY=None):
+        verify_actual, verify_expected = _verify_cases(tmp)
 
     rc, release = _release(root, no_verify=False, verify_cmd="true")
     message = _git(root, "log", "-1", "--format=%B", "main")
@@ -1002,6 +1054,7 @@ def run(h) -> None:
             "bumps": bumps_actual,
             "changelog": changelog_units,
             "reconcile": reconcile_actual,
+            "verify": verify_actual,
             "version": version_actual,
             "marker": marker_actual,
             "release": {
@@ -1037,27 +1090,54 @@ def run(h) -> None:
             "sync": sync_expected,
             "push": push_expected,
             "bumps": {
-                "trailer_patch": {
-                    "bump": "patch",
+                # El expected viejo asumía que el trailer degradaba el nivel
+                # de los tipos; es justo el bug corregido (T-0090.01).
+                "feat_trailer_patch": {
+                    "bump": "minor",
+                    "reason": "feat en feat: f feat: flag (T-0010)",
                     "explicit": [("feat: flag (T-0010)", "patch")],
                 },
-                "trailer_minor": {
+                "feat_trailer_minor": {
                     "bump": "minor",
+                    "reason": "feat en feat: f feat: flag (T-0011)",
                     "explicit": [("feat: flag (T-0011)", "minor")],
+                },
+                "fix_trailer_minor": {
+                    "bump": "minor",
+                    "reason": "trailer Release-Bump: minor en fix: bo fix: borde (T-0016)",
+                    "explicit": [("fix: borde (T-0016)", "minor")],
+                },
+                "fix_trailer_major": {
+                    "bump": "major",
+                    "reason": "trailer Release-Bump: major en fix: bo fix: borde (T-0017)",
+                    "explicit": [("fix: borde (T-0017)", "major")],
                 },
                 "breaking_trailer_patch": {
                     "bump": "major",
+                    "reason": "BREAKING en feat!:  feat!: rompe api (T-0013)",
                     "explicit": [("feat!: rompe api (T-0013)", "patch")],
                 },
-                "convention": {"bump": "minor", "explicit": []},
-                "integration": {
+                "feat_convention": {
+                    "bump": "minor",
+                    "reason": "feat en feat: n feat: normal (T-0015)",
+                    "explicit": [],
+                },
+                "fixes_only": {
                     "bump": "patch",
-                    "explicit": [("feat: flag (T-0014)", "patch")],
+                    "reason": "sin feat ni trailer que suba",
+                    "explicit": [],
+                },
+                "integration": {
+                    "bump": "minor",
+                    "reason_feat": True,
                     "override": "minor",
+                    "override_reason": "forzado con --bump minor",
+                    "explicit": [("feat: flag (T-0014)", "patch")],
                 },
             },
             "changelog": changelog_unit_expected,
             "reconcile": reconcile_expected,
+            "verify": verify_expected,
             "marker": marker_expected,
             "version": version_expected,
             "release": {

@@ -177,6 +177,11 @@ def _summary(ticket: dict[str, Any], *, preview: bool = False) -> dict[str, Any]
     data = presentation.summary(ticket)
     data["risk"] = risk_for(ticket.get("paths"), ticket.get("resources"))
     data["requires_review"] = requires_review(ticket.get("paths"))
+    # ``attempts`` es un alias explícito de ``iterations`` (mismo entero);
+    # la paridad con el CLI la exige el test de resumen de test_mcp.py.
+    attempts = int(ticket.get("iterations") or 0)
+    data["iterations"] = attempts
+    data["attempts"] = attempts
     if preview:
         body = str(ticket.get("body") or "").strip()
         data["body_preview"] = (

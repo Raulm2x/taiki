@@ -18,6 +18,11 @@ from typing import Any, Iterable
 CONFIG = Path(__file__).resolve().parent
 ASSERTIONS = {"ok", "eq", "raises"}
 
+# Texto y AST por fichero, cacheados por (mtime_ns, tamaño). La auditoría
+# escanea cada módulo dos veces (fuentes y nombres usados); sin caché se paga
+# el parseo dos veces y el informe se lleva casi un segundo de la suite.
+_PARSE_CACHE: dict[Path, tuple[tuple[int, int], str, ast.Module]] = {}
+
 DEFAULT_BUDGET: dict[str, Any] = {
     "suite": {
         "max_seconds": 2.0,
@@ -134,11 +139,28 @@ def quarantine_problem(
     return None
 
 
-def unused_imports(path: Path, tree: ast.AST | None = None) -> list[str]:
-    """Nombres importados que el módulo no usa."""
-    module = tree if tree is not None else ast.parse(path.read_text(encoding="utf-8"))
+def parse_source(path: Path) -> tuple[str, ast.Module]:
+    """Texto y AST del fichero, reutilizados mientras no cambie en disco."""
+    path = Path(path)
+    stat = path.stat()
+    stamp = (stat.st_mtime_ns, stat.st_size)
+    cached = _PARSE_CACHE.get(path)
+    if cached is not None and cached[0] == stamp:
+        return cached[1], cached[2]
+    text = path.read_text(encoding="utf-8")
+    tree = ast.parse(text)
+    _PARSE_CACHE[path] = (stamp, text, tree)
+    return text, tree
+
+
+def _walk(tree: ast.AST) -> list[ast.AST]:
+    return list(ast.walk(tree))
+
+
+def _unused_imports(nodes: list[ast.AST]) -> list[str]:
     imported: dict[str, int] = {}
-    for node in ast.walk(module):
+    used: set[str] = set()
+    for node in nodes:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 imported[(alias.asname or alias.name).split(".")[0]] = node.lineno
@@ -146,12 +168,19 @@ def unused_imports(path: Path, tree: ast.AST | None = None) -> list[str]:
             for alias in node.names:
                 if alias.name != "*":
                     imported[alias.asname or alias.name] = node.lineno
-    used = {node.id for node in ast.walk(module) if isinstance(node, ast.Name)}
+        elif isinstance(node, ast.Name):
+            used.add(node.id)
     return sorted(
         name
         for name in imported
         if name not in used and name != "annotations"
     )
+
+
+def unused_imports(path: Path, tree: ast.AST | None = None) -> list[str]:
+    """Nombres importados que el módulo no usa."""
+    module = tree if tree is not None else parse_source(path)[1]
+    return _unused_imports(_walk(module))
 
 
 def _message(call: ast.Call) -> tuple[str, int] | None:
@@ -174,11 +203,10 @@ def _reasoned(call: ast.Call) -> bool:
     return False
 
 
-def unsafe_skips(tree: ast.AST) -> list[str]:
-    """Skip/xfail sin motivo: decoradores o llamadas sueltas."""
+def _unsafe_skips(nodes: list[ast.AST]) -> list[str]:
     found: list[str] = []
     skip_names = {"skip", "skipIf", "skipUnless", "xfail"}
-    for node in ast.walk(tree):
+    for node in nodes:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             for decorator in node.decorator_list:
                 target = decorator.func if isinstance(decorator, ast.Call) else decorator
@@ -204,15 +232,20 @@ def unsafe_skips(tree: ast.AST) -> list[str]:
     return sorted(dict.fromkeys(found))
 
 
+def unsafe_skips(tree: ast.AST) -> list[str]:
+    """Skip/xfail sin motivo: decoradores o llamadas sueltas."""
+    return _unsafe_skips(_walk(tree))
+
+
 def scan_source(name: str, path: Path | None = None) -> ModuleSource:
     """Cuenta comprobaciones fuente, líneas, imports muertos y mensajes."""
     target = path or CONFIG / f"{name}.py"
-    text = target.read_text(encoding="utf-8")
-    tree = ast.parse(text)
+    text, tree = parse_source(target)
+    nodes = _walk(tree)
     source = ModuleSource(name=name, lines=len(text.splitlines()))
-    source.unused_imports = unused_imports(target, tree)
-    source.unsafe_skips = unsafe_skips(tree)
-    for node in ast.walk(tree):
+    source.unused_imports = _unused_imports(nodes)
+    source.unsafe_skips = _unsafe_skips(nodes)
+    for node in nodes:
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
@@ -227,7 +260,7 @@ def scan_source(name: str, path: Path | None = None) -> ModuleSource:
 
 def seed_names(path: Path | None = None) -> list[str]:
     target = path or CONFIG / "seeds.py"
-    tree = ast.parse(target.read_text(encoding="utf-8"))
+    tree = parse_source(target)[1]
     return [
         node.name
         for node in tree.body
@@ -238,10 +271,9 @@ def seed_names(path: Path | None = None) -> list[str]:
 def used_names(paths: Iterable[Path]) -> set[str]:
     used: set[str] = set()
     for path in paths:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        used.update(
-            node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
-        )
+        for node in ast.walk(parse_source(Path(path))[1]):
+            if isinstance(node, ast.Name):
+                used.add(node.id)
     return used
 
 

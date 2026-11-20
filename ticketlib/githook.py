@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from . import commits, env as envlib, worktree
+from . import commits, db, env as envlib, workspace, worktree
 from .domain import TicketError
 from .store.relations import TICKET_CODE_RE
 
@@ -327,6 +327,36 @@ def _integration_warnings(root: Path, branch: str | None) -> list[str]:
     return warnings
 
 
+def _live_branch() -> str:
+    """Rama del árbol vivo del workspace (``isolation.live_branch``)."""
+    config = workspace.load_config()
+    isolation = config.get("isolation") if isinstance(config, dict) else None
+    if not isinstance(isolation, dict):
+        return "main"
+    return str(isolation.get("live_branch") or "main")
+
+
+def _live_branch_allowed(conn: Any, name: str, codes: list[str]) -> bool:
+    """¿La rama protegida es la live y todos los códigos son ``none``/``scope``?
+
+    Un ticket con aislamiento ``worktree`` nunca commitea en la rama live: su
+    trabajo vive en ``agent/T-XXXX-*``.
+    """
+    if not codes or name != _live_branch():
+        return False
+    placeholders = ", ".join("?" for _ in codes)
+    isolations = [
+        row["isolation"]
+        for row in conn.execute(
+            f"SELECT isolation FROM tickets WHERE code IN ({placeholders})",
+            codes,
+        )
+    ]
+    return len(isolations) == len(codes) and all(
+        value in commits.LIVE_ISOLATIONS for value in isolations
+    )
+
+
 def check_commit_message(
     conn: Any,
     message: str,
@@ -348,8 +378,11 @@ def check_commit_message(
 
     Con ``branch`` (o detectada desde ``repo``) se bloquea commitear en
     ``main``/``master`` y se exige que ``agent/T-XXXX-*`` o ``hotfix/T-XXXX``
-    correspondan al ticket del asunto. ``repo`` añade avisos de integración
-    (develop ausente, desalineada o rama sin rebasar) sin bloquear.
+    correspondan al ticket del asunto. La excepción live es la rama
+    ``isolation.live_branch`` del workspace cuando todos los tickets del asunto
+    usan aislamiento ``none``/``scope``; un ticket ``worktree`` sigue bloqueado
+    en la rama protegida. ``repo`` añade avisos de integración (develop
+    ausente, desalineada o rama sin rebasar) sin bloquear.
     """
     disabled = str(envlib.get("HOOK", "")).strip().lower()
     if disabled in DISABLED_VALUES:
@@ -373,7 +406,9 @@ def check_commit_message(
     root = Path(repo).expanduser() if repo is not None else Path.cwd()
     name = branch if branch is not None else commits.current_branch(root)
 
-    if name in commits.PROTECTED_BRANCHES:
+    if name in commits.PROTECTED_BRANCHES and not _live_branch_allowed(
+        conn, name, subject_codes
+    ):
         return {
             "ok": False,
             "reason": "protected-branch",
@@ -391,24 +426,70 @@ def check_commit_message(
         return {"ok": False, "reason": "no-code", "codes": [], "missing": [],
                 "unconfirmed": [], "warnings": []}
 
+    # Un renumber no debe romper el push: el asunto puede citar el código
+    # viejo y se valida contra el ticket actual. Solo cuenta si el destino
+    # existe; un alias roto sigue siendo unknown-code.
+    subject_resolved: dict[str, str] = {}
+    alias_warnings: list[str] = []
+    for code in subject_codes:
+        final, exists = db.renamed_chain(conn, code)
+        if final != code and exists:
+            subject_resolved[code] = final
+            alias_warnings.append(f"{code} fue renumerado a {final}")
+    canonical_subject = list(
+        dict.fromkeys(subject_resolved.get(code, code) for code in subject_codes)
+    )
+
     expected = ticket or subject_codes[0]
+    if ticket is None:
+        expected = canonical_subject[0]
+    else:
+        expected = db.renamed_chain(conn, ticket)[0]
     strict = name is not None and name.startswith(
         (commits.AGENT_PREFIX, commits.HOTFIX_PREFIX)
     )
-    policy = commits.branch_policy(name, expected, agent=strict)
-    if not policy["ok"]:
+    # La rama pudo crearse antes del renumber (agent/T-0013-*): prueba el
+    # código canónico y los códigos del asunto que resuelven a él.
+    candidates = list(
+        dict.fromkeys(
+            [
+                expected,
+                *(
+                    code
+                    for code in subject_codes
+                    if subject_resolved.get(code) == expected
+                ),
+                *([ticket] if ticket and ticket != expected else []),
+            ]
+        )
+    )
+    policies = [
+        commits.branch_policy(name, candidate, agent=strict)
+        for candidate in candidates
+    ]
+    policy = next((item for item in policies if item["ok"]), None)
+    if policy is None:
+        canonical_message = policies[0]["message"]
+        aliases = candidates[1:]
+        if aliases:
+            canonical_message = (
+                f"{canonical_message} (código actual {expected}; "
+                f"alias del asunto: {', '.join(aliases)})"
+            )
         return {
             "ok": False,
-            "reason": policy["reason"],
+            "reason": policies[0]["reason"],
             "codes": subject_codes,
             "missing": [],
             "unconfirmed": [],
-            "warnings": [],
+            "warnings": alias_warnings,
             "branch": name,
-            "message": policy["message"],
+            "message": canonical_message,
         }
 
-    codes = list(dict.fromkeys([*subject_codes, *body_codes]))
+    codes = list(
+        dict.fromkeys([*canonical_subject, *body_codes])
+    )
     placeholders = ", ".join("?" for _ in codes)
     statuses = {
         row["code"]: row["status"]
@@ -417,15 +498,29 @@ def check_commit_message(
             codes,
         )
     }
-    missing = [code for code in subject_codes if code not in statuses]
+    missing = [
+        code
+        for code in subject_codes
+        if subject_resolved.get(code, code) not in statuses
+    ]
     if missing:
+        details = []
+        for code in missing:
+            final, exists = db.renamed_chain(conn, code)
+            if final != code:
+                details.append(
+                    f"{code} fue renumerado a {final}, que no existe"
+                )
+            else:
+                details.append(f"{code} no existe")
         return {
             "ok": False,
             "reason": "unknown-code",
             "codes": subject_codes,
             "missing": missing,
             "unconfirmed": [],
-            "warnings": [],
+            "warnings": alias_warnings,
+            "message": "; ".join(details),
         }
 
     ready = (
@@ -434,7 +529,9 @@ def check_commit_message(
         else {"en_progreso", "completado", "confirmado"}
     )
     unconfirmed = [
-        code for code in subject_codes if statuses[code] not in ready
+        code
+        for code in subject_codes
+        if statuses[subject_resolved.get(code, code)] not in ready
     ]
     if unconfirmed:
         return {
@@ -443,14 +540,15 @@ def check_commit_message(
             "codes": subject_codes,
             "missing": [],
             "unconfirmed": unconfirmed,
-            "warnings": [],
+            "warnings": alias_warnings,
         }
 
-    warnings = [
+    warnings = list(alias_warnings)
+    warnings.extend(
         f"{code} no existe; solo se avisa porque está en el cuerpo"
         for code in body_codes
         if code not in statuses
-    ]
+    )
     if repo is not None:
         warnings.extend(_integration_warnings(root, name))
     return {

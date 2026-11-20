@@ -5,8 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from ticketlib import db
-from ticketlib.memory import add_memory
+from ticketlib.memory import add_memory, patch_memory
 from ticketlib.memory.brief import render_brief, write_brief
+from ticketlib.memory.config import resolve_memory_config
 from ticketlib.memory.render import escape_text
 from tests.support import Harness
 
@@ -61,27 +62,24 @@ def _seed(conn) -> dict[str, str]:
 def run(h: Harness) -> None:
     conn = h.conn
     codes = _seed(conn)
+    rama_code = codes["rama"]
 
     result = render_brief(conn, {}, budget=5000)
     text = result["text"]
     h.ok(
-        "% — " in text and "chars]" in text,
-        "la cabecera incluye porcentaje y caracteres",
+        "% — " in text and "chars]" in text and result["version"] == 1,
+        "la cabecera incluye porcentaje y caracteres y el brief declara versión",
     )
-    h.eq(result["version"], 1, "el brief declara su versión")
     h.ok(
         "## Proyecto" in text
         and "## Usuario" in text
         and "## Routing observado" in text
-        and "## Pendientes" in text,
-        "el brief incluye las cuatro secciones con datos",
-    )
-    h.ok(
-        codes["rama"] in result["sections"]["project"]
+        and "## Pendientes" in text
+        and codes["rama"] in result["sections"]["project"]
         and codes["commits"] in result["sections"]["user"]
         and codes["flujo"] in result["sections"]["routing"]
         and codes["propuesta"] in result["sections"]["pending"],
-        "cada memoria cae en su sección",
+        "el brief incluye las cuatro secciones y cada memoria cae en la suya",
     )
     h.eq(
         render_brief(conn, {}, budget=5000)["text"],
@@ -96,15 +94,11 @@ def run(h: Harness) -> None:
     pending_line = next(
         line for line in text.splitlines() if "taiki memory pending" in line
     )
-    h.eq(
-        result["usage"]["used"],
-        active_content + len(pending_line),
-        "el uso cuenta el contenido activo y la línea de pendientes",
-    )
     h.ok(
-        "Revisar el presupuesto del brief." not in text
+        result["usage"]["used"] == active_content + len(pending_line)
+        and "Revisar el presupuesto del brief." not in text
         and "Propuesta de decisión" not in text,
-        "el brief no vuelca el contenido ni el título de las propuestas",
+        "el uso cuenta contenido y pendientes y no vuelca las propuestas",
     )
 
     first = add_memory(
@@ -142,16 +136,11 @@ def run(h: Harness) -> None:
         source="user",
     )
     escaped_text = render_brief(conn, {}, budget=5000)["text"]
-    entered = escaped["content"]
     h.ok(
-        escaped_text.count(entered) == 0
-        and "primera\\nsegunda linea" in escaped_text,
-        "los saltos se escapan en el brief",
-    )
-    h.eq(
-        escape_text("a\nb\tc\x07"),
-        "a\\nb\\tc\\x07",
-        "escape_text convierte saltos, tabuladores y controles",
+        escaped["content"] not in escaped_text
+        and "primera\\nsegunda linea" in escaped_text
+        and escape_text("a\nb\tc\x07") == "a\\nb\\tc\\x07",
+        "los saltos se escapan en el brief y en escape_text",
     )
 
     filtered = render_brief(conn, {}, budget=5000, section="user")
@@ -180,13 +169,12 @@ def run(h: Harness) -> None:
             source="user",
         )
         tight = render_brief(budget_conn, {}, budget=25)
-        h.eq(tight["usage"]["used"], 20, "el brief no supera el presupuesto")
-        h.eq(len(tight["omitted"]), 1, "solo una entrada cabe en 25 caracteres")
         h.ok(
-            len(tight["omitted"]) == 1
+            tight["usage"]["used"] == 20
+            and len(tight["omitted"]) == 1
             and tight["omitted"][0] in (one["code"], two["code"])
             and "entradas omitidas; usa memory_search" in tight["text"],
-            "el footer nombra las omitidas y cómo buscarlas",
+            "el brief no supera el presupuesto y nombra la entrada omitida",
         )
         included = one["code"] if one["code"] not in tight["omitted"] else two["code"]
         content = "A" * 20 if included == one["code"] else "B" * 20
@@ -203,10 +191,10 @@ def run(h: Harness) -> None:
         h.ok(
             "## Routing" not in empty["text"]
             and "## Pendientes" not in empty["text"]
-            and "(sin memorias)" in empty["text"],
-            "sin datos se omiten routing y pendientes",
+            and "(sin memorias)" in empty["text"]
+            and empty["usage"]["pending"] == 0,
+            "sin datos se omiten routing y pendientes y usage.pending es cero",
         )
-        h.eq(empty["usage"]["pending"], 0, "sin propuestas usage.pending es cero")
     finally:
         empty_conn.close()
 
@@ -237,7 +225,7 @@ def run(h: Harness) -> None:
             and all(code in pending_line for code in codes[:5])
             and codes[5] not in pending_line
             and "(+2 más)" in many["text"],
-            "el brief compacta varias propuestas a cinco códigos",
+            "el brief compacta varias propuestas a cinco códigos con (+2 más)",
         )
         h.ok(
             all(item["content"] not in many["text"] for item in proposals),
@@ -260,18 +248,14 @@ def run(h: Harness) -> None:
 
     data = write_brief(h.tmp, conn, {}, budget=5000)
     target = Path(h.tmp) / ".taiki" / "generated" / "brief.md"
-    h.eq(data["path"], str(target), "write_brief devuelve la ruta del artefacto")
-    h.ok(
-        target.read_text(encoding="utf-8").startswith(
-            "generated by taiki; do not edit"
-        ),
-        "el artefacto lleva la cabecera de generado",
-    )
     folder = target.parent
-    h.eq(
-        [item.name for item in folder.iterdir()],
-        ["brief.md"],
-        "la escritura atómica no deja temporales",
+    h.ok(
+        data["path"] == str(target)
+        and target.read_text(encoding="utf-8").startswith(
+            "generated by taiki; do not edit"
+        )
+        and [item.name for item in folder.iterdir()] == ["brief.md"],
+        "write_brief devuelve la ruta, escribe la cabecera y no deja temporales",
     )
     add_memory(
         conn,
@@ -286,4 +270,67 @@ def run(h: Harness) -> None:
     h.ok(
         "Aparece tras reescribir." in target.read_text(encoding="utf-8"),
         "reescribir reemplaza el artefacto completo",
+    )
+
+    root_config = {"project": "taiki-sys", "guard": True, "scope": {}, "verify": {}}
+    h.ok(
+        render_brief(conn, root_config, budget=5000)["text"]
+        == render_brief(conn, {}, budget=5000)["text"]
+        and resolve_memory_config({"project": "x", "memory": {"stale_after_days": 10}})[
+            "stale_after_days"
+        ]
+        == 10,
+        "el brief acepta el config raíz sin memory y el bloque memory explícito se valida",
+    )
+
+    patch_memory(
+        conn,
+        rama_code,
+        ticket_kinds=["bug"],
+        paths=["src/a.py", "src/b.py"],
+    )
+    long_title = "T" * 130
+    add_memory(
+        conn,
+        title=long_title,
+        content="Título largo.",
+        kind="fact",
+        key="titulo-largo",
+        scope="project",
+        source="user",
+    )
+    layer_code = add_memory(
+        conn,
+        title="Política de scope",
+        content="El scope live exige paths.",
+        kind="convention",
+        key="scope-policy",
+        tags=["security"],
+        scope="project",
+        source="user",
+    )["code"]
+    index_text = render_brief(conn, {"brief_mode": "index"}, budget=5000)["text"]
+    grouped_text = render_brief(conn, {"brief_mode": "grouped"}, budget=5000)["text"]
+    full_text = render_brief(conn, {"brief_mode": "full"}, budget=5000)["text"]
+    h.ok(
+        rama_code in index_text
+        and layer_code in index_text
+        and "## Capa 0" in index_text
+        and "tags=security" in index_text
+        and index_text.index(layer_code) < index_text.index("## Proyecto")
+        and "Rama de integración" in index_text
+        and "memory_search" in index_text
+        and "key=rama-integracion" in index_text
+        and "tickets=bug" in index_text
+        and "paths=src/a.py" in index_text
+        and long_title[:80] in index_text
+        and long_title not in index_text
+        and "develop integra con --ff-only." not in index_text
+        and "## Rama" in grouped_text
+        and rama_code in grouped_text
+        and "memory_search rama" in grouped_text
+        and "## Rama" not in index_text
+        and "develop integra con --ff-only." in full_text,
+        "brief_mode=index lista código, título y disparadores sin contenido destilado; "
+        "grouped agrupa por dominio sin contenido; full lo conserva",
     )

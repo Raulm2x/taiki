@@ -15,36 +15,33 @@ from .schema_common import ToolSpec
 MEMORY_SPECS = [
     ToolSpec(
         "brief",
-        "Brief operativo de memoria: datos vigentes acotados por presupuesto "
-        "(proyecto, usuario y routing observado). Aplícalo al empezar para "
-        "recuperar contexto sin arrastrar todo el historial. Con write=true "
-        "genera .taiki/generated/brief.md.",
+        "Brief operativo de memoria acotado por presupuesto; aplícalo al "
+        "empezar. write=true genera .taiki/generated/brief.md.",
         {
             "budget": {
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 100_000,
-                "description": "Presupuesto de caracteres; por defecto el del workspace",
+                "description": "Presupuesto de caracteres",
             },
             "section": {
                 "type": "string",
                 "enum": ["project", "user", "all"],
                 "default": "all",
-                "description": "Sección del brief a renderizar",
+                "description": "Sección a renderizar",
             },
             "write": {
                 "type": "boolean",
                 "default": False,
-                "description": "Escribe el artefacto .taiki/generated/brief.md",
+                "description": "Genera .taiki/generated/brief.md",
             },
         },
         read_only=True,
     ),
     ToolSpec(
         "memory_search",
-        "Busca memorias vigentes por texto y filtra por scope, tipo, estado, "
-        "rutas, kinds o ticket_kinds. Devuelve snippets compactos; usa "
-        "include_content=true solo cuando necesites el contenido completo.",
+        "Busca memorias vigentes con filtros (scope, tipo, estado, rutas, "
+        "kinds); include_content=true para el contenido completo.",
         {
             "query": {
                 "type": "string",
@@ -54,70 +51,65 @@ MEMORY_SPECS = [
             "scope": {
                 "type": "string",
                 "enum": list(MEMORY_SCOPES),
-                "description": "Scope de la memoria",
+                "description": "Scope",
             },
             "kind": {
                 "type": "string",
                 "enum": list(MEMORY_KINDS),
-                "description": "Tipo principal de la memoria",
+                "description": "Tipo principal",
             },
             "status": {
                 "type": "string",
                 "enum": list(MEMORY_STATUSES),
-                "description": "Estado; por defecto excluye archivadas y sustituidas",
+                "description": "Estado (defecto: sin archivadas)",
             },
             "paths": {
                 "type": "array",
                 "items": {"type": "string", "maxLength": 500},
                 "maxItems": 100,
-                "description": "Rutas del proyecto que debe tocar la memoria",
+                "description": "Rutas que debe tocar",
             },
             "kinds": {
                 "type": "array",
                 "items": {"type": "string", "enum": list(MEMORY_KINDS)},
                 "maxItems": 20,
-                "description": "Tipos secundarios de memoria que debe incluir",
+                "description": "Tipos secundarios",
             },
             "ticket_kinds": {
                 "type": "array",
                 "items": {"type": "string", "enum": list(KINDS)},
                 "maxItems": 20,
-                "description": (
-                    "Tipos de ticket aplicables; las memorias sin etiqueta son "
-                    "generales y también casan"
-                ),
+                "description": "Tipos de ticket (sin etiqueta = general)",
             },
             "limit": {
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 100,
                 "default": 10,
-                "description": "Máximo de memorias devueltas",
+                "description": "Tope de resultados",
             },
             "include_content": {
                 "type": "boolean",
                 "default": False,
-                "description": "Devuelve el contenido completo en vez de snippet",
+                "description": "Contenido completo en vez de snippet",
             },
         },
         read_only=True,
     ),
     ToolSpec(
         "memory_checklist",
-        "Checklist acotado de pitfalls y convenciones activos para revisar un "
-        "cambio. kind filtra por tipo de ticket y memory_kind por tipo de "
-        "memoria (pitfall o convention); paths filtra por rutas. Cada entrada "
-        "es compacta y lleva evidencia. Solo lectura.",
+        "Checklist de pitfalls y convenciones para revisar un cambio; "
+        "kind filtra por tipo de ticket y paths por rutas.",
         {
             "kind": {
                 "type": "string",
                 "enum": list(KINDS),
-                "description": "Tipo de ticket: bug, funcionalidad, etc.",
+                "description": "Tipo de ticket",
             },
             "memory_kind": {
                 "type": "string",
                 "enum": list(CHECKLIST_KINDS),
-                "description": "Tipo de memoria: pitfall o convention",
+                "description": "pitfall o convention",
             },
             "paths": {
                 "type": "array",
@@ -130,26 +122,24 @@ MEMORY_SPECS = [
                 "minimum": 1,
                 "maximum": 20,
                 "default": 5,
-                "description": "Máximo de entradas del checklist",
+                "description": "Tope de entradas",
             },
         },
         read_only=True,
     ),
     ToolSpec(
         "memory_playbook",
-        "Carga un playbook (procedimiento) aprobado por su slug. Devuelve el "
-        "cuerpo, los metadatos y la lista de ficheros de apoyo; usa path para "
-        "leer un apoyo concreto sin volcar todo el skill. Solo lectura.",
+        "Carga un playbook por slug; path lee un apoyo concreto. Solo lectura.",
         {
             "slug": {
                 "type": "string",
                 "maxLength": 64,
-                "description": "Slug del playbook, por ejemplo revisar-pr",
+                "description": "Slug, p. ej. revisar-pr",
             },
             "path": {
                 "type": "string",
                 "maxLength": 500,
-                "description": "Fichero de apoyo a cargar (references/, scripts/, assets/ o templates/)",
+                "description": "Apoyo a cargar (references/, scripts/, …)",
             },
         },
         ("slug",),
@@ -157,18 +147,15 @@ MEMORY_SPECS = [
     ),
     ToolSpec(
         "memory_write",
-        "Escribe o mantiene memorias y playbooks. Cada operación se aplica con "
-        "la política de escritura del workspace: las propuestas quedan "
-        "pendientes de aprobación humana. Usa evidence (ticket, commit, file, "
-        "url o session) cuando propongas una lección; no guardes fallos "
-        "transitorios, secretos ni prohibiciones amplias. Con kind=playbook "
-        "indica key=playbook:<slug>, description y, si aplica, files.",
+        "Escribe o mantiene memorias y playbooks; las propuestas esperan "
+        "aprobación. Aporta evidence (ticket, commit, file, url o session); "
+        "con kind=playbook usa key=playbook:<slug>.",
         {
             "target": {
                 "type": "string",
                 "enum": list(MEMORY_SCOPES),
                 "default": "project",
-                "description": "Scope de las memorias nuevas",
+                "description": "Scope de las nuevas",
             },
             "operations": {
                 "type": "array",
@@ -187,31 +174,34 @@ MEMORY_SPECS = [
                                 "supersede",
                                 "feedback",
                             ],
-                            "description": "Operación sobre la memoria",
+                            "description": "Operación",
                         },
                         "code": {
                             "type": "string",
                             "maxLength": 40,
-                            "description": "Código M-0001 para patch/remove/supersede/feedback",
+                            "description": "M-0001 de la memoria",
                         },
                         "kind": {
                             "type": "string",
                             "enum": list(MEMORY_KINDS),
-                            "description": "Tipo principal de memoria",
+                            "description": "Tipo principal",
                         },
                         "ticket_kinds": {
                             "type": "array",
                             "items": {"type": "string", "enum": list(KINDS)},
                             "maxItems": 20,
-                            "description": (
-                                "Tipos de ticket aplicables; vacío o ausente "
-                                "significa general"
-                            ),
+                            "description": "Tipos de ticket",
+                        },
+                        "tags": {
+                            "type": "array",
+                            "items": {"type": "string", "maxLength": 33},
+                            "maxItems": 20,
+                            "description": "Etiquetas de dominio",
                         },
                         "key": {
                             "type": "string",
                             "maxLength": 200,
-                            "description": "Clave estable; una nueva reemplaza la vigente",
+                            "description": "Clave estable",
                         },
                         "title": {
                             "type": "string",
@@ -221,12 +211,12 @@ MEMORY_SPECS = [
                         "content": {
                             "type": "string",
                             "maxLength": 12_000,
-                            "description": "Contenido destilado; en un playbook es el procedimiento",
+                            "description": "Contenido destilado",
                         },
                         "description": {
                             "type": "string",
                             "maxLength": 600,
-                            "description": "Resumen; en un playbook se limita a 240 caracteres",
+                            "description": "Resumen (240 en playbooks)",
                         },
                         "files": {
                             "type": "array",
@@ -239,27 +229,27 @@ MEMORY_SPECS = [
                                     "path": {
                                         "type": "string",
                                         "maxLength": 500,
-                                        "description": "Ruta interna: references/, scripts/, assets/ o templates/",
+                                        "description": "Ruta interna del apoyo",
                                     },
                                     "content": {
                                         "type": "string",
                                         "maxLength": 12_000,
-                                        "description": "Contenido de texto del fichero de apoyo",
+                                        "description": "Contenido del apoyo",
                                     },
                                 },
                             },
-                            "description": "Ficheros de apoyo de un playbook",
+                            "description": "Ficheros de apoyo",
                         },
                         "evidence": {
                             "type": "array",
                             "maxItems": 20,
                             "items": {"type": ["string", "object"]},
-                            "description": "Referencias que respaldan la memoria",
+                            "description": "Referencias que la respaldan",
                         },
                         "reason": {
                             "type": "string",
                             "maxLength": 2_000,
-                            "description": "Motivo del cambio o de la lección",
+                            "description": "Motivo del cambio",
                         },
                         "confidence": {
                             "type": "number",
@@ -269,26 +259,23 @@ MEMORY_SPECS = [
                         },
                         "pin": {
                             "type": "boolean",
-                            "description": "Fija o desfija la memoria en el brief",
+                            "description": "Fija o desfija en el brief",
                         },
                         "helpful": {
                             "type": "boolean",
-                            "description": "Feedback: true si la memoria ayudó",
+                            "description": "true si la memoria ayudó",
                         },
                     },
                 },
-                "description": "Operaciones a aplicar en orden",
+                "description": "Operaciones en orden",
             },
         },
         ("operations",),
     ),
     ToolSpec(
         "memory_candidates",
-        "Candidatos de aprendizaje deterministas a partir del histórico. "
-        "mode=list devuelve candidatos compactos (rework, rechazos, bloqueos, "
-        "cierres costosos, routing, hotspots y directivas); mode=review "
-        "devuelve el paquete completo para el curator con memorias actuales, "
-        "tickets recientes, umbrales, reglas e instrucciones. Solo lectura.",
+        "Candidatos de aprendizaje deterministas del histórico; mode=review "
+        "devuelve el paquete completo para el curator.",
         {
             "mode": {
                 "type": "string",
@@ -299,29 +286,27 @@ MEMORY_SPECS = [
             "since": {
                 "type": "string",
                 "maxLength": 40,
-                "description": "Ventana temporal: 90d o una fecha ISO",
+                "description": "Ventana temporal: 90d o fecha ISO",
             },
             "kind": {
                 "type": "string",
                 "enum": list(MEMORY_KINDS),
-                "description": "Filtra por tipo de memoria sugerida",
+                "description": "Tipo de memoria sugerida",
             },
             "limit": {
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 100,
                 "default": 20,
-                "description": "Máximo de candidatos o de tickets recientes",
+                "description": "Tope de candidatos",
             },
         },
         read_only=True,
     ),
     ToolSpec(
         "memory_stats",
-        "Estadísticas e impacto de la memoria. mode=stats devuelve conteos "
-        "por estado/scope/kind, presupuesto, propuestas, uso y routing; "
-        "mode=impact devuelve tendencias de cierres, intentos, lead time y "
-        "verificación en days; mode=all devuelve ambos. Solo lectura.",
+        "Estadísticas de memoria: mode=stats da conteos y presupuesto; "
+        "mode=impact, tendencias en days; mode=all, ambos.",
         {
             "mode": {
                 "type": "string",

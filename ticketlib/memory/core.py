@@ -6,15 +6,18 @@ import hashlib
 import json
 import re
 import sqlite3
+from pathlib import Path
 from typing import Any, Iterable
 
 from .. import db
 from ..domain import KINDS, ValidationError
+from ..gitutil import resolve_commit
 from ..util import check_enum, now
 from . import budget as budget_lib
 from . import ledger as ledger_lib
 from . import security
-from .config import load_memory_config, validate_memory_config
+from .config import resolve_memory_config
+from .evidence import commit_roots, resolve_evidence_commit
 from .models import (
     BUDGET_STATUSES,
     EVIDENCE_KINDS,
@@ -24,6 +27,7 @@ from .models import (
     MEMORY_SCOPES,
     MEMORY_SOURCES,
     MEMORY_STATUSES,
+    TAG_RE,
     TICKET_CODE_RE,
     default_key,
     evidence_kind_for_ref,
@@ -33,12 +37,8 @@ from .models import (
 
 
 def config(value: dict[str, Any] | None) -> dict[str, Any]:
-    """Valida el bloque memory o carga los defaults del workspace."""
-    if value is None:
-        return load_memory_config()
-    if "memory" in value:
-        return validate_memory_config(value.get("memory"))
-    return validate_memory_config(value)
+    """Resuelve el config raíz, el bloque memory o los defaults."""
+    return resolve_memory_config(value)
 
 
 def load_list(value: Any) -> list[str]:
@@ -69,6 +69,7 @@ def row_to_memory(
     data["paths"] = load_list(data.get("paths"))
     data["kinds"] = load_list(data.get("kinds"))
     data["ticket_kinds"] = load_list(data.get("ticket_kinds"))
+    data["tags"] = load_list(data.get("tags"))
     if details and conn is not None:
         data["evidence"] = [
             dict(item)
@@ -87,6 +88,77 @@ def row_to_memory(
             )
         ]
     return data
+
+
+def _evidence_path(ref: str, root: str | Path | None) -> Path:
+    """Resuelve una ruta de evidencia relativa al proyecto."""
+    path = Path(ref).expanduser()
+    if not path.is_absolute() and root is not None:
+        path = Path(root).expanduser() / path
+    return path
+
+
+def evidence_freshness(
+    conn: sqlite3.Connection,
+    evidence: Iterable[Any] | None,
+    files: Iterable[Any] | None = None,
+    root: str | Path | None = None,
+    repos: Iterable[Any] | None = None,
+) -> dict[str, Any]:
+    """Comprueba que la evidencia de una memoria sigue vigente.
+
+    Tickets cancelados o inexistentes, commits que no resuelven y ficheros
+    ausentes o con otro ``sha256`` marcan la memoria como no vigente. Las
+    evidencias de tipo ``url`` y ``session`` no se pueden comprobar.
+    """
+    blobs = {
+        str(item.get("path") or ""): str(item.get("sha256") or "")
+        for item in files or []
+        if isinstance(item, dict)
+    }
+    checked = 0
+    reasons: list[str] = []
+    stale: list[dict[str, str]] = []
+    roots: list[Path] | None = None
+    for item in evidence or []:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "")
+        ref = str(item.get("ref") or "").strip()
+        reason: str | None = None
+        if kind == "ticket":
+            checked += 1
+            row = conn.execute(
+                "SELECT status FROM tickets WHERE code = ?", (ref,)
+            ).fetchone()
+            if row is None or str(row["status"]) == "cancelado":
+                reason = f"ticket {ref} cancelado/inexistente"
+        elif kind == "commit":
+            checked += 1
+            if roots is None:
+                roots = commit_roots(root, repos)
+            if resolve_evidence_commit(ref, roots, root) is None:
+                reason = f"commit {ref} inexistente"
+        elif kind == "file":
+            checked += 1
+            path = _evidence_path(ref, root)
+            if not path.exists():
+                reason = f"fichero {ref} inexistente"
+            elif blobs.get(ref) and path.is_file():
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                if digest != blobs[ref]:
+                    reason = f"fichero {ref} cambió"
+        else:
+            continue
+        if reason is not None:
+            reasons.append(reason)
+            stale.append({"kind": kind, "ref": ref, "reason": reason})
+    return {
+        "ok": not stale,
+        "checked": checked,
+        "reasons": reasons,
+        "stale": stale,
+    }
 
 
 def memory_row(conn: sqlite3.Connection, ref: Any) -> sqlite3.Row:
@@ -220,6 +292,31 @@ def clean_kinds(kinds: Iterable[object] | None) -> list[str]:
     return out
 
 
+def clean_tags(tags: Iterable[object] | None) -> list[str]:
+    """Valida etiquetas de dominio como slugs cortos, sin duplicados.
+
+    Acepta un string suelto o una lista; el vacío se normaliza a una lista
+    vacía para que una memoria sin tags no arrastre valores falsos.
+    """
+    if tags is None:
+        return []
+    if isinstance(tags, str):
+        tags = [tags]
+    out: list[str] = []
+    for item in tags:
+        value = str(item or "").strip().lower()
+        if not value:
+            continue
+        if not TAG_RE.fullmatch(value):
+            raise ValidationError(
+                f"tag de memoria inválido: {value!r} "
+                "(minúsculas, 1-33 caracteres: a-z 0-9 . _ / -)"
+            )
+        if value not in out:
+            out.append(value)
+    return out
+
+
 def clean_ticket_kinds(kinds: Iterable[object] | None) -> list[str]:
     """Valida las etiquetas de tipo de ticket (vacío = general)."""
     if kinds is None:
@@ -237,6 +334,48 @@ def clean_ticket_kinds(kinds: Iterable[object] | None) -> list[str]:
         if value and value not in out:
             out.append(value)
     return out
+
+
+def evidence_root(conn: sqlite3.Connection) -> str | None:
+    """Raíz del proyecto a partir del fichero de la DB abierta."""
+    try:
+        row = conn.execute("PRAGMA database_list").fetchone()
+        path = str(row["file"] or "") if row is not None else ""
+    except sqlite3.Error:
+        return None
+    if not path:
+        return None
+    parent = Path(path).expanduser().parent
+    return str(parent.parent if parent.name == ".taiki" else parent)
+
+
+def _embedded_kind(ref: str) -> tuple[str, str] | None:
+    """Separa ``kind:resto`` cuando el prefijo es un tipo de evidencia."""
+    prefix, sep, rest = ref.partition(":")
+    if sep and prefix.lower() in EVIDENCE_KINDS and rest.strip():
+        return prefix.lower(), rest.strip()
+    return None
+
+
+def _validate_evidence_ref(kind: str, ref: str) -> None:
+    """Rechaza tipos embebidos y shas guardados como ``file``.
+
+    ``kind: file`` con un sha o con ``commit:`` es el error que dejó memorias
+    stale en producción: el tipo correcto es ``commit`` y el ref va sin prefijo.
+    La reparación de filas antiguas sigue en ``repair``.
+    """
+    embedded = _embedded_kind(ref)
+    if embedded is not None:
+        real, clean_ref = embedded
+        raise ValidationError(
+            f"Evidencia {kind}:{ref} lleva el tipo embebido en la referencia; "
+            f"usa kind={real!r} y ref={clean_ref!r}."
+        )
+    if kind == "file" and re.fullmatch(r"[0-9a-f]{7,40}", ref):
+        raise ValidationError(
+            f"Evidencia file con ref {ref!r}: parece un sha de commit; "
+            f"usa kind='commit' con ref={ref!r} o la ruta del fichero."
+        )
 
 
 def clean_evidence(evidence: Iterable[Any] | None) -> list[dict[str, str]]:
@@ -268,6 +407,7 @@ def clean_evidence(evidence: Iterable[Any] | None) -> list[dict[str, str]]:
                 f"Tipo de evidencia inválido: {evidence_kind!r}. "
                 f"Valores permitidos: {', '.join(EVIDENCE_KINDS)}"
             )
+        _validate_evidence_ref(evidence_kind, reference)
         if evidence_kind == "ticket":
             reference = reference.upper()
             if not TICKET_CODE_RE.fullmatch(reference):
@@ -312,6 +452,38 @@ def clean_files(
     return list(out.values())
 
 
+def validated_evidence(
+    conn: sqlite3.Connection,
+    evidence: Iterable[dict[str, str]] | None,
+    root: str | Path | None = None,
+) -> list[dict[str, str]]:
+    """Devuelve solo las evidencias comprobables que siguen vigentes.
+
+    ``ticket`` exige un ticket cerrado (verificado o confirmado), ``commit`` un
+    objeto Git resoluble y ``file`` una ruta existente. ``url`` y ``session`` no
+    se pueden validar offline, así que nunca cuentan.
+    """
+    out: list[dict[str, str]] = []
+    for item in evidence or []:
+        kind = str(item.get("kind") or "")
+        ref = str(item.get("ref") or "").strip()
+        if not ref:
+            continue
+        valid = False
+        if kind == "ticket":
+            row = conn.execute(
+                "SELECT status FROM tickets WHERE code = ?", (ref.upper(),)
+            ).fetchone()
+            valid = row is not None and row["status"] in ("verificado", "confirmado")
+        elif kind == "commit":
+            valid = resolve_commit(ref, root) is not None
+        elif kind == "file":
+            valid = Path(ref).expanduser().exists()
+        if valid:
+            out.append({"kind": kind, "ref": ref})
+    return out
+
+
 def decide_status(
     *,
     kind: str,
@@ -320,6 +492,8 @@ def decide_status(
     confidence_value: float,
     text: str,
     policy: str,
+    validated_evidence: int = 0,
+    auto_approve: bool = True,
 ) -> str:
     """Política balanced: lo automático nace propuesto salvo evidencia sólida."""
     if policy == "manual":
@@ -327,6 +501,13 @@ def decide_status(
     if is_negative_rule(text):
         return "proposed"
     if source in ("user", "derived", "import"):
+        return "active"
+    if (
+        source == "agent"
+        and kind in ("fact", "convention", "pitfall")
+        and auto_approve
+        and validated_evidence >= 1
+    ):
         return "active"
     if (
         source == "agent"
@@ -361,12 +542,16 @@ def check_budget(
     scope: str,
     cfg: dict[str, Any],
 ) -> dict[str, Any]:
-    """Comprueba el presupuesto sobre el batch ya escrito."""
-    return budget_lib.enforce(
-        scope_entries(conn, scope),
-        limit_for(cfg, scope),
-        scope,
-    )
+    """Comprueba el presupuesto sobre el batch ya escrito.
+
+    Con ``enforce_budget`` desactivado solo devuelve el resumen: el brief
+    selecciona por prioridad y un exceso es un aviso, no un bloqueo.
+    """
+    entries = scope_entries(conn, scope)
+    limit = limit_for(cfg, scope)
+    if not cfg["enforce_budget"]:
+        return budget_lib.summary(entries, limit, scope)
+    return budget_lib.enforce(entries, limit, scope)
 
 
 def receipt(
@@ -381,6 +566,16 @@ def receipt(
         entries, limit_for(cfg, data["scope"]), data["scope"]
     )
     warnings: list[str] = []
+    budget = data["budget"]
+    budget_warning = None
+    if budget["used"] > budget["limit"]:
+        budget_warning = (
+            f"Presupuesto de memoria '{budget['scope']}' superado: "
+            f"{budget['used']}/{budget['limit']}; "
+            "el brief selecciona por prioridad"
+        )
+        warnings.append(budget_warning)
+    data["budget_warning"] = budget_warning
     if data["status"] == "proposed":
         warnings.append("Pendiente de aprobación humana antes de usarse en el brief")
     if data.get("superseded_by"):
@@ -470,11 +665,13 @@ __all__ = [
     "clean_kinds",
     "clean_project_paths",
     "clean_short",
+    "clean_tags",
     "clean_text",
     "clean_ticket_kinds",
     "config",
     "confidence",
     "decide_status",
+    "evidence_root",
     "insert_evidence",
     "insert_files",
     "limit_for",
@@ -485,4 +682,5 @@ __all__ = [
     "row_to_memory",
     "scope_entries",
     "ticket_id",
+    "validated_evidence",
 ]

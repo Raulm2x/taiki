@@ -12,9 +12,11 @@ Flujo:
    pull/rebase antes. ``--allow-ahead`` permite liberar con la rama por delante
    (y nunca por detrás): el release queda solo en local y hay que subirla
    después.
-2. Ejecuta los gates (``tests/run.py --verify``). Se puede inyectar otro
-   comando con ``TAIKI_RELEASE_VERIFY`` o ``--verify-cmd``; el defecto es el
-   gate real.
+2. Ejecuta los gates. El orden de resolución es ``--verify-cmd`` >
+   ``TAIKI_RELEASE_VERIFY`` > ``verify.command`` del workspace
+   (``.taiki/config.json``, cadena o array de cadenas) > el gate por defecto
+   ``tests/run.py --verify``. Una cadena con metacaracteres de shell se ejecuta
+   con ``shell=True`` de forma explícita; un array se ejecuta tal cual.
 3. Hace ``merge --squash`` de la integración sobre el ``main`` actual y crea
    **un único commit** con los tickets desde el tag anterior y bullets por tipo
    de commit. No se reescribe ``main``.
@@ -50,8 +52,9 @@ Sin ``--push`` no se toca la red: es el modo local determinista. ``--push`` y
 La versión sube según los commits: ``!`` o ``BREAKING CHANGE`` → major,
 ``feat`` → minor y el resto → patch; ``--bump`` fuerza el incremento. Un
 commit puede declarar su nivel con el trailer ``Release-Bump: patch|minor|
-major`` en el cuerpo (véase ``_declared_bump``): gana el mayor declarado y un
-``BREAKING CHANGE`` nunca se degrada. Si el rango no tiene commits publicables,
+major`` en el cuerpo (véase ``_declared_bump``): el mayor declarado puede
+subir el nivel por encima de lo que dictan los tipos, pero nunca degradarlo,
+y un ``BREAKING CHANGE`` nunca se degrada. Si el rango no tiene commits publicables,
 la release aborta con un error claro.
 
 Rollback: ``git revert <commit>`` del commit de release (y retira el tag si aún
@@ -386,16 +389,49 @@ def _explicit_bumps(commits: list[dict[str, str]]) -> list[dict[str, str]]:
 
 
 def _bump_for(commits: list[dict[str, str]]) -> str:
+    """Nivel de la release: los tipos mandan y el trailer solo puede subir.
+
+    ``BREAKING`` siempre gana. El nivel que dictan los tipos (``feat`` →
+    minor, resto → patch) es el suelo: el mayor trailer declarado sube por
+    encima de él si pide más, pero nunca degrada la release (T-0090.01).
+    """
     if any(_is_breaking(commit) for commit in commits):
         return "major"
+    by_type = (
+        "minor" if any(_commit_type(commit) == "feat" for commit in commits) else "patch"
+    )
     declared = [
         level for level in (_declared_bump(commit) for commit in commits) if level
     ]
     if declared:
-        return max(declared, key=_BUMP_RANK.__getitem__)
-    if any(_commit_type(commit) == "feat" for commit in commits):
-        return "minor"
-    return "patch"
+        return max([by_type, *declared], key=_BUMP_RANK.__getitem__)
+    return by_type
+
+
+def _labels(commits: list[dict[str, str]]) -> str:
+    return ", ".join(f"{commit['sha'][:12]} {commit['subject']}" for commit in commits)
+
+
+def _bump_reason(commits: list[dict[str, str]], level: str) -> str:
+    """Qué commit fijó el nivel: BREAKING, trailer que sube o los ``feat``.
+
+    Hace visible en el plan el caso raro (un trailer que cambia el nivel)
+    antes de publicar.
+    """
+    breaking = [commit for commit in commits if _is_breaking(commit)]
+    if breaking:
+        return "BREAKING en " + _labels(breaking)
+    by_type = (
+        "minor" if any(_commit_type(commit) == "feat" for commit in commits) else "patch"
+    )
+    if _BUMP_RANK[level] > _BUMP_RANK[by_type]:
+        raised = [commit for commit in commits if _declared_bump(commit) == level]
+        return f"trailer Release-Bump: {level} en " + _labels(raised)
+    if by_type == "minor":
+        return "feat en " + _labels(
+            [commit for commit in commits if _commit_type(commit) == "feat"]
+        )
+    return "sin feat ni trailer que suba"
 
 
 def _groups(commits: list[dict[str, str]]) -> dict[str, list[str]]:
@@ -551,13 +587,50 @@ def _write_version(root: Path, version: str) -> list[str]:
     return [path.relative_to(root).as_posix() for path, _ in planned]
 
 
-def _verify_command(explicit: str | list[str] | None) -> list[str]:
-    if isinstance(explicit, list):
-        return explicit
-    raw = explicit or env.get(VERIFY_ENV)
-    if raw:
-        return shlex.split(raw)
-    return list(DEFAULT_VERIFY)
+# Metacaracteres que obligan a interpretar la cadena con un shell. ``shlex``
+# no los entiende y el fallo original fue real: ``pnpm test && pnpm lint`` se
+# partía en ``["pnpm", "test", "&&", "pnpm", "lint"]`` y pnpm intentaba instalar
+# el paquete ``&&``.
+_SHELL_META = re.compile(r"[|;&<>`]|\$\(")
+
+
+def _verify_command(
+    explicit: str | list[str] | None, root: Path | None = None
+) -> tuple[str | list[str], bool]:
+    """Resuelve los gates y si hay que ejecutarlos con shell.
+
+    Orden: ``--verify-cmd`` > ``TAIKI_RELEASE_VERIFY`` > ``verify.command`` del
+    workspace (``.taiki/config.json``) > ``DEFAULT_VERIFY``. Un array se ejecuta
+    tal cual, sin ``shlex.split``. Una cadena con metacaracteres de shell
+    (``&&``, ``||``, ``|``, ``;``, ``$(``, backticks o redirecciones) se
+    ejecuta con ``shell=True`` de forma deliberada y documentada: la fuente es
+    el usuario que lanza la release y partirla con ``shlex`` convertía el
+    operador en un argumento. El default solo vale si el gate del proyecto
+    existe; si no, el error pide declararlo en ``verify.command``.
+    """
+    raw: str | list[str] | None = explicit
+    if not raw:
+        raw = env.get(VERIFY_ENV)
+    if not raw:
+        project = workspace.find_workspace(root) if root is not None else None
+        config = workspace.load_config(project) if project is not None else {}
+        raw = workspace.verify_command(config)
+    if isinstance(raw, (list, tuple)):
+        return [str(item) for item in raw], False
+    if raw and str(raw).strip():
+        text = str(raw).strip()
+        if _SHELL_META.search(text):
+            return text, True
+        return shlex.split(text), False
+    argv = list(DEFAULT_VERIFY)
+    if root is not None and not (Path(root) / "tests" / "run.py").is_file():
+        raise TicketError(
+            "No hay comando de verificación: declara 'verify.command' en "
+            ".taiki/config.json (cadena o array de cadenas), pasa --verify-cmd "
+            "o define TAIKI_RELEASE_VERIFY. El gate por defecto "
+            f"'tests/run.py --verify' no existe en {root}"
+        )
+    return argv, False
 
 
 def _reconcile(
@@ -792,6 +865,9 @@ def run(
     if not commits:
         raise TicketError(f"No hay commits nuevos desde {start_label}")
     level = bump or _bump_for(commits)
+    reason = (
+        f"forzado con --bump {bump}" if bump else _bump_reason(commits, level)
+    )
     current = _parse_version(previous) if previous else (0, 0, 0)
     version = ".".join(str(part) for part in _next_version(current, level))
     tag = f"v{version}"
@@ -811,6 +887,7 @@ def run(
         "range": start,
         "released_sha": released_sha,
         "bump": level,
+        "bump_reason": reason,
         "explicit_bumps": _explicit_bumps(commits),
         "tickets": tickets,
         "commits": len(commits),
@@ -838,9 +915,10 @@ def run(
             summary["pushed"].append(branch)
 
     if not no_verify:
-        command = _verify_command(verify_cmd)
+        command, use_shell = _verify_command(verify_cmd, base)
         result = subprocess.run(
             command,
+            shell=use_shell,
             cwd=str(base),
             capture_output=True,
             text=True,
@@ -981,6 +1059,7 @@ def cmd_release(args: argparse.Namespace) -> int:
     if result["dry_run"]:
         print(f"Release {result['tag']} ({result['integration']} → {result['main']})")
         print(result["message"])
+        print(f"Nivel {result['bump']}: {result.get('bump_reason')}")
         _print_explicit(result)
         if result.get("allow_ahead"):
             print(

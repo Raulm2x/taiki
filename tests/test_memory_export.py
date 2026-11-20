@@ -45,41 +45,32 @@ def _export(h: Harness) -> None:
     first = h.tmp / "snapshot.json"
     result = export_snapshot(conn, first, "json")
     document = json.loads(first.read_text(encoding="utf-8"))
-    h.eq(result["version"], 1, "el snapshot declara su versión")
     h.ok(
-        result["checksum"].startswith("sha256:")
+        result["version"] == 1
+        and result["checksum"].startswith("sha256:")
         and document["checksum"] == result["checksum"],
-        "el snapshot incluye checksum verificable",
+        "el snapshot declara versión e incluye checksum verificable",
     )
-    h.eq(
-        result["memories"],
-        2,
-        "el snapshot cuenta memorias y playbooks",
-    )
-    h.eq(result["playbooks"], 1, "el snapshot cuenta playbooks")
     h.ok(
-        document["format"] == "taiki-memory"
+        result["memories"] == 2
+        and result["playbooks"] == 1
+        and document["format"] == "taiki-memory"
         and any(
             item["code"] == codes["playbook"]["code"]
             and item["files"]
             and item["evidence"]
             for item in document["memories"]
         ),
-        "el snapshot incluye playbook, ficheros y evidencia",
+        "el snapshot cuenta memorias y playbooks e incluye ficheros y evidencia",
     )
 
     second = h.tmp / "snapshot-2.json"
     export_snapshot(conn, second, "json")
     again = json.loads(second.read_text(encoding="utf-8"))
-    h.eq(
-        document["memories"],
-        again["memories"],
-        "la exportación es determinista en el contenido",
-    )
-    h.eq(
-        document["checksum"],
-        again["checksum"],
-        "el checksum no cambia entre exportaciones",
+    h.ok(
+        document["memories"] == again["memories"]
+        and document["checksum"] == again["checksum"],
+        "la exportación es determinista en contenido y checksum",
     )
 
     markdown = h.tmp / "snapshot.md"
@@ -133,12 +124,10 @@ def _roundtrip(h: Harness) -> None:
     target = db.connect(h.tmp / "import-target.db")
     try:
         report = import_snapshot(target, snapshot, strategy="keep")
-        h.eq(
-            len(report["imported"]),
-            2,
-            "el roundtrip importa todas las memorias",
+        h.ok(
+            len(report["imported"]) == 2 and report["conflicts"] == [],
+            "el roundtrip importa todas las memorias sin conflictos",
         )
-        h.eq(report["conflicts"], [], "sin conflictos en una DB vacía")
         stored = {
             row["code"]: dict(row)
             for row in target.execute("SELECT * FROM memories")
@@ -147,11 +136,8 @@ def _roundtrip(h: Harness) -> None:
         h.ok(
             stored[codes["active"]["code"]]["content"] == "Contenido estable."
             and playbook["kind"] == "playbook"
-            and playbook["status"] == codes["playbook"]["status"],
-            "el roundtrip conserva contenido, tipo y estado",
-        )
-        h.ok(
-            target.execute(
+            and playbook["status"] == codes["playbook"]["status"]
+            and target.execute(
                 "SELECT 1 FROM memory_evidence WHERE memory_id = ?",
                 (playbook["id"],),
             ).fetchone()
@@ -161,7 +147,7 @@ def _roundtrip(h: Harness) -> None:
                 (playbook["id"],),
             ).fetchone()
             is not None,
-            "el roundtrip conserva evidencia y ficheros",
+            "el roundtrip conserva contenido, tipo, estado, evidencia y ficheros",
         )
         next_memory = add_memory(
             target,
@@ -322,17 +308,17 @@ def _rollback_snapshot(h: Harness) -> None:
         extra_status = conn.execute(
             "SELECT status FROM memories WHERE code = ?", (extra["code"],)
         ).fetchone()[0]
+        ledger = conn.execute(
+            "SELECT 1 FROM memory_ledger WHERE action = 'rollback' LIMIT 1"
+        ).fetchone()
         h.ok(
             result["mode"] == "snapshot"
             and restored == "Contenido original."
             and extra_status == "archived"
-            and extra["code"] in result["archived"],
-            "el rollback por snapshot restaura y archiva lo posterior",
+            and extra["code"] in result["archived"]
+            and ledger is not None,
+            "el rollback por snapshot restaura, archiva lo posterior y audita",
         )
-        ledger = conn.execute(
-            "SELECT 1 FROM memory_ledger WHERE action = 'rollback' LIMIT 1"
-        ).fetchone()
-        h.ok(ledger is not None, "el rollback por snapshot queda auditado")
     finally:
         conn.close()
 

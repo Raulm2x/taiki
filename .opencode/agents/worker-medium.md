@@ -2,7 +2,7 @@
 description: Implementa tareas normales de mantenimiento o funcionalidad
 mode: subagent
 model: opencode-go/deepseek-v4.1-flash
-steps: 24
+steps: 32
 permissions:
   - action: subagent
     resource: "*"
@@ -149,6 +149,42 @@ permissions:
     resource: "git -C * rev-parse*"
     effect: allow
   - action: shell
+    resource: "git -C * status*"
+    effect: allow
+  - action: shell
+    resource: "git merge-base *"
+    effect: allow
+  - action: shell
+    resource: "git -C * merge-base *"
+    effect: allow
+  - action: shell
+    resource: "git rev-list *"
+    effect: allow
+  - action: shell
+    resource: "git cat-file *"
+    effect: allow
+  - action: shell
+    resource: "git branch --contains *"
+    effect: allow
+  - action: shell
+    resource: "git for-each-ref *"
+    effect: allow
+  - action: shell
+    resource: "git -C * add *"
+    effect: allow
+  - action: shell
+    resource: "git -C * add -A*"
+    effect: deny
+  - action: shell
+    resource: "git -C * add .*"
+    effect: deny
+  - action: shell
+    resource: "git -C * add -u*"
+    effect: deny
+  - action: shell
+    resource: "git -C * add --all*"
+    effect: deny
+  - action: shell
     resource: "git add *"
     effect: allow
   - action: shell
@@ -161,7 +197,7 @@ permissions:
     resource: "git push*"
     effect: deny
   - action: shell
-    resource: "git merge*"
+    resource: "git merge *"
     effect: deny
   - action: shell
     resource: "taiki confirm*"
@@ -247,6 +283,105 @@ permissions:
   - action: shell
     resource: "sh *"
     effect: deny
+  - action: shell
+    resource: "bash -n *"
+    effect: allow
+  - action: shell
+    resource: "fish -n *"
+    effect: allow
+  - action: shell
+    resource: "desktop-file-validate *"
+    effect: allow
+  - action: shell
+    resource: "systemd-analyze verify *"
+    effect: allow
+  - action: shell
+    resource: "python3 tests/run.py*"
+    effect: allow
+  - action: shell
+    resource: "sort *"
+    effect: allow
+  - action: shell
+    resource: "cut *"
+    effect: allow
+  - action: shell
+    resource: "tr *"
+    effect: allow
+  - action: shell
+    resource: "column *"
+    effect: allow
+  - action: shell
+    resource: "jq *"
+    effect: allow
+  - action: shell
+    resource: "basename *"
+    effect: allow
+  - action: shell
+    resource: "dirname *"
+    effect: allow
+  - action: shell
+    resource: "realpath *"
+    effect: allow
+  - action: shell
+    resource: "readlink *"
+    effect: allow
+  - action: shell
+    resource: "du *"
+    effect: allow
+  - action: shell
+    resource: "df *"
+    effect: allow
+  - action: shell
+    resource: "date *"
+    effect: allow
+  - action: shell
+    resource: "command -v *"
+    effect: allow
+  - action: shell
+    resource: "which *"
+    effect: allow
+  - action: shell
+    resource: "ss *"
+    effect: allow
+  - action: shell
+    resource: "pacman -Q*"
+    effect: allow
+  - action: shell
+    resource: "systemctl --user status*"
+    effect: allow
+  - action: shell
+    resource: "systemctl --user list-timers*"
+    effect: allow
+  - action: shell
+    resource: "systemctl --user is-enabled*"
+    effect: allow
+  - action: shell
+    resource: "systemctl --user is-active*"
+    effect: allow
+  - action: shell
+    resource: "find * -exec*"
+    effect: deny
+  - action: shell
+    resource: "find * -delete*"
+    effect: deny
+  - action: shell
+    resource: "find * -ok*"
+    effect: deny
+  - action: shell
+    resource: "find * -fprintf*"
+    effect: deny
+  - action: shell
+    resource: "find * -fls*"
+    effect: deny
+  - action: shell
+    resource: "sort -o*"
+    effect: deny
+  - action: shell
+    resource: "sort * -o*"
+    effect: deny
+  - action: shell
+    resource: "*>*"
+    effect: deny
 ---
 
 Implementas **una** tarea de Taiki. No planificas la épica, no lanzas
@@ -263,6 +398,17 @@ subagentes, no confirmas y no mergeas.
    y committearías en el checkout principal y el worktree quedaría vacío. El
    MCP registra actor, `actor_type=agente` y `owner_session`. Si el ticket ya
    está reclamado por otra sesión, no lo fuerces: informa.
+
+### Modo live (isolation none/scope)
+
+Si el ticket declara `isolation` `none` o `scope`, no hay worktree: reclama con
+`claim` y `worktree=false` y **no llames a `session_move`**; la sesión sigue en
+el checkout vivo. Trabaja solo dentro de los `paths` del ticket y no commitees:
+el conductor commitea en el repo live con `taiki commit` o `--repo <ruta>`. Para
+revisar el staging usa `git -C <repo> status` y, si el conductor lo pide,
+`git -C <repo> add <ruta concreta>`; nunca `-A`, `.`, `-u` ni `--all`. No
+ejecutes `confirm`, `authorize` ni `review`.
+
 3. Implementa el cambio mínimo que cumple los criterios. Stagea rutas
    concretas (`git add <ruta>`), nunca `git add -A`.
 4. Publica checkpoints durante el trabajo (qué hiciste y qué falta) con la
@@ -281,6 +427,46 @@ subagentes, no confirmas y no mergeas.
 8. Informa al conductor: commit, comandos ejecutados, resultado y cualquier
    riesgo o trabajo independiente que hayas detectado. No crees tickets por tu
    cuenta salvo que el conductor lo pida.
+
+## Contrato del ticket
+
+Los `paths` del ticket son tu alcance, no una sugerencia:
+
+- Al reclamar, lee los `paths` del recibo del `claim`: no toques nada fuera
+  de ellos.
+- Si el cambio exige un fichero fuera de `paths` que está dentro del repo y no
+  solapa con otro ticket activo, no abandones ni pidas permiso: amplía el
+  ticket con la herramienta MCP `update` pasando el conjunto **completo** de
+  `paths` (los actuales más la nueva ruta; reemplaza el conjunto entero) y
+  sigue. Es lo que hizo T-0085.09. Si la ruta solapa con otro ticket activo,
+  publica `comment` con la ruta exacta y espera al conductor.
+- Antes de commitear, comprueba que cada fichero del índice está en `paths`
+  (`git status`): un `taiki commit` rechazado cuesta un turno entero.
+
+## Presupuesto de pasos
+
+Tu límite de pasos es un techo, no un objetivo, y nadie lo amplía en vuelo:
+
+- **Aviso al 80%**: si te queda ~20% de pasos, deja de explorar. Commitea lo
+  que compile, publica `checkpoint` y `complete`.
+- **Pasos finales reservados**: los últimos 3-4 son solo para `git add` +
+  `taiki commit` + `checkpoint` + `complete`; no edites en ellos.
+- **Exploración acotada**: usa `grep -n` para localizar y `read` con
+  `offset`/`limit`; máximo 2 lecturas por fichero. No leas módulos enteros
+  "para entender": el ticket dice qué tocar.
+- **Verificación acotada**: durante el trabajo corre
+  `python3 tests/run.py --only <modulo>`; `--verify` y la suite completa son
+  del conductor.
+- **Commit por bloques**: si el ticket toca más de 2 módulos, commitea cada
+  bloque que compile antes de seguir con el siguiente.
+
+## Memoria
+
+La memoria es autónoma: escribe con evidencia, corrige (`patch`/`supersede`) o
+niega (`feedback`) lo que ya no se sostenga. Las memorias de agente con
+evidencia validada se activan solas (`auto_approve_evidence`); al consultarlas
+valida su vigencia. No pidas aprobación de memoria: el usuario solo confirma
+tickets.
 
 ## Escalado al conductor
 

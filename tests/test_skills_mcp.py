@@ -112,7 +112,7 @@ def run(h: Harness) -> None:
             and first["hash"] == _entry("python-testing-patterns")["bundleHash"]
             and first["review"]["status"] == "approved"
             and first["securityCheck"]["status"] == "ok",
-            "cada sugerencia lleva source, hash, review y securityCheck",
+            "el contrato MCP incluye source/hash/review/securityCheck",
         )
         h.ok(
             result["root"]

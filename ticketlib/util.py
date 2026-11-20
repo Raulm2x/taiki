@@ -167,16 +167,29 @@ def find_git_root(path: Path | str | None = None) -> Path | None:
 
 
 def resolve_scope(
-    project: str | None, path: str | None
+    project: str | None,
+    path: str | None,
+    config: dict | None = None,
 ) -> tuple[str | None, str | None]:
-    """Completa proyecto y ruta resolviendo a la raíz Git si existe."""
+    """Completa proyecto y ruta resolviendo a la raíz Git si existe.
+
+    Si el ticket no fija ``--project`` y el workspace declara ``project`` en
+    ``.taiki/config.json``, esa etiqueta manda: un workspace de sistema
+    (``taiki-sys``) no debe etiquetar sus tickets con el nombre del repo Git
+    que lo contiene. Sin etiqueta configurada se mantiene la derivación por
+    raíz Git.
+    """
     base = Path(path).expanduser() if path else Path.cwd()
     if path is None:
         path = str(base)
     if project is None:
-        git_root = find_git_root(base)
-        if git_root is not None:
-            project = git_root.name or None
+        configured = str((config or {}).get("project") or "").strip() or None
+        if configured:
+            project = configured
         else:
-            project = base.name or None
+            git_root = find_git_root(base)
+            if git_root is not None:
+                project = git_root.name or None
+            else:
+                project = base.name or None
     return project, path

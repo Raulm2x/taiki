@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 
 from ticketlib.domain import ValidationError
 from ticketlib.skills.registry import (
@@ -82,11 +81,11 @@ def _rejects(h: Harness, cases: list, message: str) -> None:
 
 def _validation(h: Harness) -> None:
     valid = validate_registry(_registry())
-    h.eq(valid["skills"][SKILL]["files"], list(FILES), "el registro válido conserva ficheros")
-    h.eq(
-        valid["skills"][SKILL]["bundleHash"],
-        bundle_hash(valid["skills"][SKILL]["sha256"]),
-        "el bundleHash válido se conserva",
+    h.ok(
+        valid["skills"][SKILL]["files"] == list(FILES)
+        and valid["skills"][SKILL]["bundleHash"]
+        == bundle_hash(valid["skills"][SKILL]["sha256"]),
+        "el registro válido conserva ficheros y bundleHash",
     )
 
     camel = _registry()
@@ -158,8 +157,10 @@ def _local(h: Harness) -> None:
     path = h.tmp / "index.json"
     path.write_text(json.dumps(_registry()), encoding="utf-8")
     loaded = load_registry(path)
-    h.eq(loaded["version"], 1, "load_registry lee un JSON local")
-    h.eq(list(loaded["skills"]), [SKILL], "el JSON local expone sus skills")
+    h.ok(
+        loaded["version"] == 1 and list(loaded["skills"]) == [SKILL],
+        "load_registry lee un JSON local y expone sus skills",
+    )
     h.raises(
         ValidationError,
         lambda: load_registry(h.tmp / "no-existe.json"),
@@ -170,32 +171,23 @@ def _local(h: Harness) -> None:
 def _bundle(h: Harness) -> None:
     registry = _registry()
     bundle = fetch_bundle(SKILL, registry, fetch=_fetcher())
-    h.eq(
-        [item["path"] for item in bundle["files"]],
-        list(FILES),
-        "el bundle conserva el orden de ficheros del registro",
+    h.ok(
+        [item["path"] for item in bundle["files"]] == list(FILES)
+        and bundle["files"][0]["content"] == FILES["SKILL.md"]
+        and bundle["bundleHash"] == _entry()["bundleHash"],
+        "el bundle conserva orden, contenido y bundleHash del registro",
     )
-    h.eq(
-        bundle["files"][0]["content"],
-        FILES["SKILL.md"],
-        "el bundle devuelve el contenido descargado",
-    )
-    h.eq(bundle["bundleHash"], _entry()["bundleHash"], "el bundle verifica bundleHash")
     h.eq(
         [item["sha256"] for item in bundle["files"]],
         [_sha(FILES[path]) for path in FILES],
         "el bundle verifica el SHA-256 de cada fichero",
     )
-    h.eq(
-        bundle["urls"]["SKILL.md"],
-        f"{RAW_BASE_URL}/{SKILL}/SKILL.md",
-        "la URL de procedencia apunta al fichero raw",
-    )
-    h.ok(bundle["skill_url"].endswith("/SKILL.md"), "skill_url identifica SKILL.md")
-    h.eq(
-        skill_file_url(SKILL, "references/details.md"),
-        f"{RAW_BASE_URL}/{SKILL}/references/details.md",
-        "skill_file_url codifica rutas anidadas",
+    h.ok(
+        bundle["urls"]["SKILL.md"] == f"{RAW_BASE_URL}/{SKILL}/SKILL.md"
+        and bundle["skill_url"].endswith("/SKILL.md")
+        and skill_file_url(SKILL, "references/details.md")
+        == f"{RAW_BASE_URL}/{SKILL}/references/details.md",
+        "las URLs de procedencia apuntan a los ficheros raw",
     )
 
     tampered = dict(FILES)
@@ -248,9 +240,11 @@ def _cache(h: Harness) -> None:
         now=lambda: clock["now"],
         ttl_seconds=60,
     )
-    h.eq(list(first["skills"]), [SKILL], "load_registry descarga una URL")
-    cache_file = h.tmp / CACHE_RELATIVE / "registry.json"
-    h.ok(cache_file.is_file(), "la caché se escribe en .taiki/generated/skills/.cache")
+    h.ok(
+        list(first["skills"]) == [SKILL]
+        and (h.tmp / CACHE_RELATIVE / "registry.json").is_file(),
+        "load_registry descarga la URL y escribe la caché en .taiki/generated",
+    )
 
     clock["now"] += 10
     second = load_registry(
@@ -260,9 +254,10 @@ def _cache(h: Harness) -> None:
         now=lambda: clock["now"],
         ttl_seconds=60,
     )
-    h.eq(calls["fetch"], 1, "dentro del TTL se usa la caché sin red")
-    h.eq(second["version"], first["version"], "la caché devuelve el mismo registro")
-
+    h.ok(
+        calls["fetch"] == 1 and second["version"] == first["version"],
+        "dentro del TTL se usa la caché sin red y devuelve el mismo registro",
+    )
     clock["now"] += 100
     load_registry(
         REGISTRY_URL,
@@ -302,12 +297,11 @@ def _cache(h: Harness) -> None:
         now=lambda: 1.0,
     )
     h.ok(
-        (explicit / "registry.json").is_file(),
-        "cache_dir explícito tiene prioridad sobre root",
-    )
-    h.ok(
-        Path(explicit / "registry.json").read_text(encoding="utf-8").startswith("{"),
-        "la caché guarda el registro en JSON",
+        (explicit / "registry.json").is_file()
+        and explicit.joinpath("registry.json")
+        .read_text(encoding="utf-8")
+        .startswith("{"),
+        "cache_dir explícito tiene prioridad y guarda el registro en JSON",
     )
 
 

@@ -21,6 +21,25 @@ def _space(value: object) -> str:
     return path.parent.name if path.name == ".taiki" else path.name
 
 
+def _project_active_pid() -> int | None:
+    """PID activo según ``meta.mcp_pid`` de la DB del proyecto.
+
+    ``runtime.register`` deja el PID del último MCP en el proyecto, no en el
+    registro global que usa este comando: sin esta lectura la evidencia más
+    fiable no llegaría a ``servers.prune``. Si el proyecto no tiene DB
+    accesible, no se falla el comando: se sigue con el resto de evidencias.
+    """
+    try:
+        conn = db.connect()
+        try:
+            pid = db.meta_get(conn, "mcp_pid")
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - la limpieza no puede depender del proyecto
+        return None
+    return int(pid) if pid and pid.isdigit() else None
+
+
 def cmd_servers(args: argparse.Namespace) -> int:
     if args.apply and not args.prune:
         print("Error: --apply requiere --prune", file=sys.stderr)
@@ -28,21 +47,59 @@ def cmd_servers(args: argparse.Namespace) -> int:
     if args.duplicates and not args.prune:
         print("Error: --duplicates requiere --prune", file=sys.stderr)
         return 2
+    if args.force and not args.prune:
+        print("Error: --force requiere --prune", file=sys.stderr)
+        return 2
+    if args.force and not args.duplicates:
+        print("Error: --force requiere --duplicates", file=sys.stderr)
+        return 2
+    if args.dry_run and not args.reload:
+        print("Error: --dry-run requiere --reload", file=sys.stderr)
+        return 2
+    if args.no_wait and not args.reload:
+        print("Error: --no-wait requiere --reload", file=sys.stderr)
+        return 2
+    if args.reload and args.prune:
+        print(
+            "Error: --reload y --prune son operaciones distintas", file=sys.stderr
+        )
+        return 2
     conn = db.connect(workspace.registry_path())
     try:
         entries = servers.inventory(conn)
         plan = (
             servers.prune(
-                conn, apply=args.apply, duplicates=args.duplicates
+                conn,
+                apply=args.apply,
+                duplicates=args.duplicates,
+                force=args.force,
+                active_pid=(
+                    _project_active_pid()
+                    if args.duplicates
+                    else None
+                ),
             )
             if args.prune
+            else None
+        )
+        reload_plan = (
+            servers.reload_processes(
+                conn,
+                apply=not args.dry_run,
+                wait=not args.no_wait,
+                timeout=min(max(args.wait_timeout, 0.0), 60.0),
+            )
+            if args.reload
             else None
         )
     finally:
         conn.close()
 
     if args.json:
-        print(json.dumps({"servers": entries, "prune": plan}, ensure_ascii=False))
+        payload = {"servers": entries, "prune": plan}
+        if reload_plan is not None:
+            payload["reload"] = reload_plan
+        print(json.dumps(payload, ensure_ascii=False))
         return 0
 
     if not entries:
@@ -66,6 +123,13 @@ def cmd_servers(args: argparse.Namespace) -> int:
         print(f"\n{len(entries)} servidor(es) · {summary}")
 
     if plan is not None:
+        for item in plan.get("active") or []:
+            print(
+                f"Conservado por ser el activo: PID {item['pid']} "
+                f"(evidencia: {item['evidence']})"
+            )
+        for warning in plan.get("warnings") or []:
+            print(f"Aviso: {warning}")
         if not args.apply:
             targets = plan["orphans"] + plan["duplicates"] + plan["dead"]
             if targets:
@@ -102,4 +166,34 @@ def cmd_servers(args: argparse.Namespace) -> int:
                 and not plan["duplicates"]
             ):
                 print("Nada que limpiar.")
+
+    if reload_plan is not None:
+        statuses = reload_plan.get("statuses") or {}
+        if statuses:
+            counts = {
+                state: sum(1 for value in statuses.values() if value == state)
+                for state in servers.RELOAD_WAITED
+            }
+            print(
+                f"Recarga: señalados: {len(reload_plan['signalled'])} · "
+                f"recargados: {counts['recargado']} · "
+                f"pendientes: {counts['pendiente']} · "
+                f"sin respuesta: {counts['sin respuesta']} · "
+                f"omitidos: {len(reload_plan['skipped'])}"
+            )
+            for pid in reload_plan["signalled"]:
+                print(f"  PID {pid}: {statuses.get(pid, 'sin estado')}")
+        else:
+            print(
+                f"Recarga: señalados: {len(reload_plan['signalled'])} · "
+                f"omitidos: {len(reload_plan['skipped'])} · "
+                f"{reload_plan['reason']}"
+            )
+            if reload_plan["signalled"]:
+                print(
+                    "  PIDs: "
+                    + ", ".join(str(pid) for pid in reload_plan["signalled"])
+                    + (" (dry-run; usa --reload sin --dry-run para señalar)"
+                       if args.dry_run else "")
+                )
     return 0

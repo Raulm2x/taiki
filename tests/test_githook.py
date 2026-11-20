@@ -9,7 +9,8 @@ import os
 import sys
 from pathlib import Path
 from commands.git import cmd_hook_check_push
-from ticketlib import audit as audit_lib, githook, repo
+from commands.mcp import install_repo_hooks
+from ticketlib import audit as audit_lib, db, githook, repo
 from tests.seeds import git_repo, repo_with_hooks
 from tests.support import Harness
 
@@ -279,6 +280,29 @@ def run(h: Harness) -> None:
     )
     os.environ.pop("TICKETS_HOOK", None)
 
+    live_ticket = repo.create_ticket(
+        conn, title="Trabajo live", isolation="none"
+    )
+    repo.claim_ticket(conn, live_ticket["code"], agent="test")
+    live_ok = githook.check_commit_message(
+        conn, f"chore: x ({live_ticket['code']})", branch="main"
+    )
+    wt_ticket = repo.create_ticket(
+        conn, title="Solo worktree", isolation="worktree"
+    )
+    repo.claim_ticket(conn, wt_ticket["code"], agent="test")
+    wt_blocked = githook.check_commit_message(
+        conn, f"chore: x ({wt_ticket['code']})", branch="main"
+    )
+    h.ok(
+        live_ok["ok"]
+        and not wt_blocked["ok"]
+        and wt_blocked["reason"] == "protected-branch"
+        and "main" in wt_blocked["message"]
+        and "release" in wt_blocked["message"],
+        "commit-msg permite la rama live a none/scope y bloquea worktree",
+    )
+
     pending_audit = repo.create_ticket(conn, title="Cerrado sin resolución")
     conn.execute(
         "UPDATE tickets SET status = 'completado', resolution = '' "
@@ -325,4 +349,72 @@ def run(h: Harness) -> None:
         legacy_hook.read_text(encoding="utf-8").count("taiki auto-link"),
         migrated.count("taiki auto-link"),
         "reinstalar el hook migrado no duplica el bloque",
+    )
+
+    # ── Alias de renumber en el asunto y en la rama ────────────────────
+    renamed = repo.create_ticket(conn, title="Ticket renumerado")
+    repo.claim_ticket(conn, renamed["code"], agent="test")
+    old_code = renamed["code"]
+    first = repo.reorg_apply(
+        conn, "renumber", [old_code], allow_root=True
+    )["items"][0]["new_code"]
+    h.ok(
+        githook.check_commit_message(
+            conn, f"arreglo {old_code}", branch="develop"
+        )["ok"],
+        "el asunto con el código viejo valida contra el ticket actual",
+    )
+    h.ok(
+        githook.check_commit_message(
+            conn, f"arreglo {old_code}", branch=f"agent/{old_code}-legacy"
+        )["ok"],
+        "la rama creada antes del renumber no se bloquea por el alias",
+    )
+    final = repo.reorg_apply(
+        conn, "renumber", [first], allow_root=True
+    )["items"][0]["new_code"]
+    chained = githook.check_commit_message(
+        conn, f"arreglo {old_code}", branch="develop"
+    )
+    h.ok(
+        chained["ok"]
+        and any(final in warning for warning in chained["warnings"]),
+        "dos renumerados encadenados resuelven al código final",
+    )
+
+    db.record_renamed(conn, "T-9971", "T-9972", "2026-11-19T00:00:00")
+    conn.commit()
+    broken = githook.check_commit_message(
+        conn, "arreglo T-9971", branch="develop"
+    )
+    h.ok(
+        not broken["ok"]
+        and broken["reason"] == "unknown-code"
+        and "renumerado" in broken["message"]
+        and "no existe" in broken["message"],
+        "un alias cuyo destino no existe sigue bloqueando con explicación",
+    )
+
+    # ── mcp install instala los cuatro hooks ───────────────────────────
+    hooks_ws = git_repo(Path(tmp) / "hooks_ws")
+    with contextlib.redirect_stderr(io.StringIO()):
+        hooks_dir = install_repo_hooks(hooks_ws)
+    names = ("post-commit", "commit-msg", "pre-push", "pre-commit")
+    h.ok(
+        hooks_dir == hooks_ws.resolve() / ".git" / "hooks"
+        and all(
+            (hooks_dir / name).is_file()
+            and os.access(hooks_dir / name, os.X_OK)
+            for name in names
+        ),
+        "mcp install instala los cuatro hooks ejecutables",
+    )
+    plain = Path(tmp) / "sin_git"
+    plain.mkdir()
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        missing = install_repo_hooks(plain)
+    h.ok(
+        missing is None and "hooks" in err.getvalue(),
+        "sin repo Git avisa y no rompe la instalación de hooks",
     )

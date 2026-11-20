@@ -6,7 +6,7 @@ import fnmatch
 import re
 import shlex
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
 HOME = Path.home()
 EXEMPT_ROOTS = tuple(
@@ -113,6 +113,9 @@ _SAFE_GIT = {
     "shortlog",
     "config",
     "merge-base",
+    "rev-list",
+    "cat-file",
+    "for-each-ref",
 }
 
 # Prefijos que se descartan para encontrar el comando real.
@@ -823,3 +826,158 @@ def command_scope_problem(
             if not path_in_scope(target, scopes, base_path, cwd_path):
                 return f"la ruta {target!r}"
     return None
+
+
+# ── Allowlist de perfiles: lectura, veredicto y alternativa ────────────────
+
+# Alternativa permitida para una denegación conocida: el mensaje de rechazo
+# la sugiere en vez de dejar al agente adivinando la puerta correcta. Breve:
+# el guard no escribe párrafos (los mensajes caben en el límite de política).
+# Cada entrada lleva ``samples`` con un comando literal por cada sugerencia
+# entre backticks: el test adverso las evalúa con ``command_verdict`` contra
+# los perfiles worker, así ninguna alternativa vuelve a proponer una puerta
+# cerrada. Sin samples, el texto escala al conductor en vez de sugerir.
+_DENY_ALTERNATIVES: dict[str, dict[str, Any]] = {
+    "git add -A": {
+        "text": "usa `git add -- <rutas>` o un worktree",
+        "samples": ["git add -- src/a.py"],
+    },
+    "git commit -a": {
+        "text": (
+            "stagea con `git add -- <rutas>` y usa "
+            "`TAIKI_TICKET=<código> taiki commit`"
+        ),
+        "samples": [
+            "git add -- src/a.py",
+            'TAIKI_TICKET=T-0001 taiki commit -m "fix: x (T-0001)"',
+        ],
+    },
+    "git stash": {
+        "text": "commitea el WIP en tu rama; el stash es compartido",
+        "samples": ['TAIKI_TICKET=T-0001 taiki commit -m "wip (T-0001)"'],
+    },
+    "git reset": {
+        "text": "commitea el WIP antes de reordenar; el índice es compartido",
+        "samples": ['TAIKI_TICKET=T-0001 taiki commit -m "wip (T-0001)"'],
+    },
+    "git clean": {
+        "text": "pide al conductor autorizar el borrado por ticket",
+        "samples": [],
+    },
+    "git checkout -- .": {
+        "text": (
+            "revertir no es de worker: inspecciona con "
+            "`git show HEAD -- <ruta>` o escala al conductor"
+        ),
+        "samples": ["git show HEAD -- src/a.py"],
+    },
+    "git restore .": {
+        "text": (
+            "restaurar no es de worker: inspecciona con "
+            "`git show HEAD -- <ruta>` o escala al conductor"
+        ),
+        "samples": ["git show HEAD -- src/a.py"],
+    },
+}
+
+
+def deny_alternative(label: str | None) -> str | None:
+    """Texto de alternativa permitida para una etiqueta, o ``None``."""
+    entry = _DENY_ALTERNATIVES.get((label or "").strip())
+    return str(entry["text"]) if entry else None
+
+
+def deny_alternative_samples(label: str | None) -> list[str]:
+    """Muestras literales de la alternativa, para el test adverso."""
+    entry = _DENY_ALTERNATIVES.get((label or "").strip())
+    return list(entry["samples"]) if entry else []
+
+
+def deny_alternative_labels() -> list[str]:
+    """Etiquetas con alternativa documentada, para recorrer el mapa."""
+    return list(_DENY_ALTERNATIVES)
+
+
+def parse_permissions(text: str) -> list[dict[str, str]]:
+    """Reglas del bloque ``permissions:`` del frontmatter de un perfil."""
+    rules: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    inside = False
+    for line in text.splitlines():
+        if not inside:
+            inside = line.strip() == "permissions:"
+            continue
+        if not line.strip():
+            continue
+        if not line[0].isspace():
+            break  # otra clave del frontmatter o el cierre ``---``
+        item = line.strip()
+        if item.startswith("- "):
+            if current:
+                rules.append(current)
+            current = {}
+            item = item[2:].strip()
+        key, sep, value = item.partition(":")
+        if not sep:
+            continue
+        current[key.strip()] = value.strip().strip("'\"")
+    if current:
+        rules.append(current)
+    return rules
+
+
+def profile_rules(
+    agents_dir: str | Path, pattern: str = "worker*.md"
+) -> list[dict[str, Any]]:
+    """Reglas de los perfiles de agente, con su fichero como origen."""
+    folder = Path(agents_dir)
+    profiles: list[dict[str, Any]] = []
+    if not folder.is_dir():
+        return profiles
+    for path in sorted(folder.glob(pattern)):
+        try:
+            rules = parse_permissions(path.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        profiles.append({"name": path.stem, "origin": str(path), "rules": rules})
+    return profiles
+
+
+def rule_wins(rules: list[dict[str, str]], index: int) -> bool:
+    """¿Es esta la última regla que gana para su patrón?
+
+    Una regla posterior del mismo ``action`` cuyo patrón casa con el recurso
+    de esta la oculta: en la allowlist gana la última coincidencia.
+    """
+    rule = rules[index]
+    resource = str(rule.get("resource", ""))
+    return not any(
+        item.get("action") == rule.get("action")
+        and fnmatch.fnmatchcase(resource, str(item.get("resource", "")))
+        for item in rules[index + 1 :]
+    )
+
+
+def command_verdict(
+    command: str, rules: list[dict[str, str]]
+) -> dict[str, Any]:
+    """Veredicto de la allowlist de un perfil, evaluado por segmento.
+
+    Reutiliza el troceo del guard (``split_commands`` + heredocs) y evalúa
+    cada segmento contra las reglas ``shell``: gana la última que casa y un
+    segmento sin regla se deniega (los perfiles worker caen a deny).
+    """
+    segments: list[dict[str, Any]] = []
+    allowed = True
+    for segment in split_commands(_strip_heredocs(command or "")):
+        effect, resource = "deny", ""
+        for rule in rules:
+            if str(rule.get("action")) != "shell":
+                continue
+            pattern = str(rule.get("resource", ""))
+            if fnmatch.fnmatchcase(segment, pattern):
+                effect, resource = str(rule.get("effect")), pattern
+        if effect != "allow":
+            allowed = False
+        segments.append({"segment": segment, "effect": effect, "rule": resource})
+    return {"allowed": allowed, "segments": segments}

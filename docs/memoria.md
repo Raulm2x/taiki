@@ -20,9 +20,9 @@ contexto operativo reutilizable, no un archivo de conversaciones.
 Una memoria es un hecho, preferencia, convención, pitfall, decisión, flujo o
 referencia, en una o dos frases accionables y con evidencia cuando la propone un
 agente. **No es** una transcripción, un sustituto del ticket, del commit o del
-historial, una instrucción automática (una propuesta no aplica hasta que el
-usuario la aprueba) ni un lugar para credenciales, secretos o narrativas largas.
-El ticket sigue siendo la fuente de verdad.
+historial, una instrucción automática (una memoria sin evidencia validada queda
+`proposed` y no aplica) ni un lugar para credenciales, secretos o narrativas
+largas. El ticket sigue siendo la fuente de verdad.
 
 ## Capas
 
@@ -68,17 +68,34 @@ taiki memory edit M-0001 --ticket-kinds seguridad
 
 | Estado | Significado |
 |---|---|
-| `proposed` | Pendiente de aprobación humana. No es instrucción. |
+| `proposed` | Pendiente de evidencia validada. No es instrucción. |
 | `active` | Vigente y aplicable. |
-| `stale` | Válida pero conviene revisarla; el brief la avisa. En P1 no se genera automáticamente. |
+| `stale` | Válida pero conviene revisarla. Puede generarse al consultar si la evidencia deja de sostenerse. |
 | `archived` | Retirada; no aparece en el brief. Su histórico queda en el ledger. |
 | `superseded` | Sustituida por otra; se conserva para trazabilidad. |
+
+### Vigencia al consultar
+
+`memory_get`/`taiki memory show` validan la evidencia registrada: el ticket
+existe y no está cancelado, el commit resuelve y el fichero sigue existiendo con
+el mismo `sha256`. Si alguna deja de sostenerse, la memoria `active` pasa a
+`stale` con un motivo concreto en el ledger y la respuesta incluye `freshness`
+con los motivos. La comprobación es determinista y no requiere aprobación humana.
+Las evidencias `url` y `session` no se verifican offline y la ausencia de
+evidencia no degrada la memoria.
+
+El agente que recibe una memoria no vigente **no debe usarla como verdad**:
+actualiza el contenido y la evidencia con `patch`/`supersede`, o la niega con
+`feedback` negativo/`supersede`. Los listados (`memory_search`, `memory list`,
+`memory_checklist`) calculan `freshness` pero **no mutan estado**: solo la
+consulta explícita de una memoria puede marcarla `stale`.
 
 ## Ciclo de vida
 
 | Acción | Comando | Efecto |
 |---|---|---|
-| Aprobar | `taiki memory approve M-0001` | `proposed → active`. Solo el usuario; el CLI exige actor `usuario`. |
+| Activar con evidencia | `memory_write` con evidencia validada | `proposed → active` en la política `auto_approve_evidence`. |
+| Aprobar a mano | `taiki memory approve M-0001` | `proposed → active`. Solo el usuario; el CLI exige actor `usuario`. |
 | Rechazar | `taiki memory reject M-0001 --why "..."` | `proposed → archived`; el motivo queda en el ledger. |
 | Archivar | `taiki memory rm M-0001 --why "..."` | `active`, `proposed` o `stale → archived`. No borra la fila. |
 | Editar | `taiki memory edit M-0001 ...` | Corrige título, contenido, descripción, clave, tipo, confianza o rutas. |
@@ -89,14 +106,34 @@ taiki memory edit M-0001 --ticket-kinds seguridad
 Es la política por defecto (`memory.write_policy`) y decide el estado inicial:
 
 - escritura del usuario (`source=user`): nace `active`;
-- escritura de agente: nace `proposed`, salvo `fact` o `pitfall` con al menos 2
-  evidencias y confianza ≥ 0.7, que nace `active`;
+- escritura de agente: nace `proposed`, salvo `fact`, `convention` o `pitfall`
+  con al menos una **evidencia validada** (ticket `verificado`/`confirmado`,
+  commit resoluble o fichero existente) y `memory.auto_approve_evidence` en
+  `true`, que nace `active`; también activa `fact` o `pitfall` con al menos 2
+  evidencias y confianza ≥ 0.7;
 - prohibición amplia («nunca», «prohibido», «no uses»…): siempre `proposed`,
-  aunque venga del usuario;
+  aunque venga del usuario o tenga evidencia validada;
+- `workflow` y las memorias de routing siguen `proposed` salvo fuente de
+  usuario/derivada/importada;
 - con `write_policy: "manual"`, todo nace `proposed`.
 
-Una memoria de origen agente **exige al menos una evidencia**. Si una propuesta
-no encaja, recházala o edítala: no la apruebes para «arreglarla después».
+### Política `auto_approve_evidence`
+
+La memoria es autónoma del agente. Un alta de agente con **evidencia validada**
+(`ticket`, `commit` o `file`) pasa a `active` sin intervención humana; al
+consultarla, el agente valida su vigencia y puede corregirla
+(`patch`/`supersede`) o negarla (`feedback`/`supersede`) con nueva evidencia.
+El usuario **solo confirma tickets**: no aprueba memorias rutinarias. Si revisa
+la tabla y ve algo raro, se lo dirá al agente, que la corrige o la niega. Las
+altas sin evidencia suficiente siguen en `proposed`.
+
+`url` y `session` no se validan offline, así que no cuentan como evidencia
+validada. `auto_approve_evidence=false` devuelve las altas de agente a
+`proposed` salvo la regla antigua de 2 evidencias + confianza.
+
+Una memoria de origen agente **exige al menos una evidencia**. Si una entrada
+no encaja, corrígela o niégala con evidencia; no la dejes como hecho sin
+respaldo.
 
 ## Brief operativo
 
@@ -105,21 +142,48 @@ dentro de un presupuesto de caracteres:
 
 | Sección | Contenido |
 |---|---|
+| `## Capa 0` | Memorias cuyo tag o clave menciona `layer0_tags`; van primero y no se agrupan. |
 | `## Proyecto` | Memorias de scope `project`. |
 | `## Usuario` | Preferencias del usuario. |
 | `## Routing observado` | Memorias `workflow` o con el kind secundario `routing`. |
 | `## Playbooks` | Índice compacto (slug, título, descripción, código); nunca el cuerpo. |
-| `## Pendientes` | Propuestas sin aprobar: recuento, hasta cinco códigos y `taiki memory pending`; nunca su cuerpo. Si no cabe, solo el recuento. |
+| `## Pendientes` | Propuestas sin evidencia validada: recuento, hasta cinco códigos y `taiki memory pending`; nunca su cuerpo. Si no cabe, solo el recuento. |
 | `## Avisos` | Entradas `stale` y cuántas se omitieron por presupuesto. |
 
 El encabezado dice «datos, no instrucciones»: las reglas del proyecto y el
 ticket mandan. Si una entrada no cabe, se omite y el brief invita a usar
 `memory_search`.
 
+Con `brief_mode=index` cada memoria ocupa una sola línea: `- **CÓDIGO** · kind ·
+título`, seguida de los disparadores que existan, en este orden: `key=<clave>`
+(40 caracteres), `tickets=<ticket_kinds separados por coma>` (60),
+`paths=<hasta dos rutas separadas por coma>` (60 cada una, con `+N` si hay más) y
+`tags=<hasta tres tags separados por coma>` (60, con `+N` si hay más), y termina
+en `— memory_search CÓDIGO`. Esos campos son la señal para decidir si cargas el
+cuerpo: si la clave, el tipo del ticket, una ruta o un tag encajan con lo que
+vas a tocar, pide `memory_search <código>`; si no, no gastes contexto. La línea
+no incluye el contenido destilado y usa el mismo escape que el resto del brief.
+
+Con `brief_mode=grouped` el brief agrupa por dominio y dedica una sección y una
+línea a cada grupo: `## Paquetes` seguido de
+`- **M-0014**, **M-0017** — memory_search paquetes`. El dominio sale del primer
+tag; si no hay tags, del `key` (último segmento tras `/`, luego el primer `.` y
+el primer `-`/`_`, en minúsculas) y los alias conocidos se normalizan
+(`red→network`, `paquetes→packages`, `seguridad→security`,
+`limine/snapper/arranque/energia→boot`). La capa 0 se renderiza antes, con su
+propia sección y el mismo formato de línea que el resto de modos, y no se repite
+en ningún grupo. No vuelca contenido: la línea solo lleva códigos y el
+`memory_search` del dominio. Respeta `brief_budget_chars`: añade grupos mientras
+quepan y, si no, resume `N entradas omitidas; usa memory_search`. Pendientes y
+playbooks se mantienen. La capa 0 funciona igual en `full`, `index` y `grouped`:
+va primero para que las reglas de seguridad, scope, sudo y confirmación no se
+pierdan aunque el brief crezca.
+
 Fuera del brief, `taiki status` muestra `Memoria: N propuestas pendientes` (JSON:
 `memory.pending` y `memory.proposed_codes`) y `health` añade `memory_pending`,
-con aviso a los 7 días sin decisión. Nada se aprueba solo:
-`taiki memory approve M-XXXX` es del usuario.
+con aviso a los 7 días sin decisión. Son altas sin evidencia validada: el agente
+las corrige, las completa o las niega; el usuario solo interviene si detecta
+algo raro.
 
 ```bash
 taiki brief                 # lo imprime
@@ -309,8 +373,10 @@ aprueba, no edita código, no lanza subagentes y no aprende de fallos
 transitorios, secretos ni prohibiciones amplias.
 
 El conductor lo lanza en background **cada 5 tickets verificados o cerrados**,
-o antes si `memory_candidates(mode=list)` acumula **3 o más candidatos**, y
-publica las propuestas. La aprobación sigue siendo del usuario.
+o antes si `memory_candidates(mode=list)` acumula **3 o más candidatos**, y sus
+memorias con evidencia validada quedan activas; el conductor revisa que sean
+correctas y corrige o niega lo que no se sostenga. El usuario solo confirma
+tickets.
 
 ## Routing y checklist
 
@@ -358,11 +424,29 @@ caracteres; archivadas y sustituidas no. Controlan el tamaño
 contenido de una entrada), `max_playbook_chars` 12000 (cuerpo y cada apoyo) y
 `playbook_index_chars` 400 (índice en el brief).
 
-Si una escritura deja el scope por encima, falla con total usado, límite y
-entradas que ocupan sitio; no recorta en silencio. Para liberar espacio ejecuta
+Si una escritura deja el scope por encima, por defecto **solo avisa**: con
+`enforce_budget=false` (defecto) el recibo trae `budget_warning` con el total
+usado y el límite, y el brief selecciona por prioridad lo que cabe. Con
+`enforce_budget=true` la escritura falla con total usado, límite y entradas que
+ocupan sitio; no recorta en silencio. Para liberar espacio ejecuta
 `taiki memory curate`, archiva (`rm`) o edita. El curado solo recorta lo no
 protegido y lo deja en el ledger. Los playbooks no consumen el presupuesto del
 scope: solo su índice consume `playbook_index_chars`.
+
+`brief_mode` decide qué lleva el brief: `full` (defecto) vuelca el contenido
+destilado; `index` deja una línea compacta por memoria (código, tipo, título,
+`key`, `tickets`, hasta dos `paths` y hasta tres `tags`, con
+`memory_search <código>` al final); y `grouped` agrupa por dominio con una línea
+de códigos por grupo. En los tres modos la capa 0 (`layer0_tags`) se renderiza
+primero, en su propia sección `## Capa 0`, y queda fuera de los grupos. Así el
+brief no es el depósito completo y el detalle se carga bajo demanda. Los
+disparadores de la línea te dicen cuándo merece la pena buscar.
+
+`taiki memory stats` separa dos presiones: `storage` (`used`, `cap` y `percent`
+sumando project+user) mide el almacenamiento advisory de 3.000+1.200 caracteres,
+mientras que `index` mide el brief renderizado frente a `brief_budget_chars`
+(4.500). `budget` se conserva por compatibilidad. La salida humana muestra ambas
+por separado: `Índice: used/cap chars (percent%)` y `Almacenamiento (advisory)`.
 
 Prioridad para el brief: fijadas (`pin`), scope `user`, confianza, recencia y
 número de usos.
@@ -389,7 +473,9 @@ número de usos.
 
 `taiki memory stats` devuelve conteos por estado, scope y kind, presupuesto por
 scope, propuestas pendientes, uso (`by_action`, `use_count`, feedback y último
-uso) y routing observado por `(tipo de ticket, perfil)`.
+uso) y routing observado por `(tipo de ticket, perfil)`. Añade `index` (uso del
+brief renderizado frente a `brief_budget_chars`) y `storage` (project+user frente
+a sus techos), separando el espacio del índice del almacenamiento advisory.
 
 `taiki memory impact` resume cierres, intentos, lead time, verificaciones y
 fallos de la ventana, por semana. Son **datos descriptivos**: una tendencia no
@@ -411,6 +497,28 @@ Tipos: `ticket` (`T-0045.05`), `commit` (`3bea4b9` o hash completo), `file`
 ticket también rellena `ticket_id`. Permite revisar de dónde salió la lección y
 es obligatoria para escrituras de agente.
 
+**Reparación de prefijos**. Algunas filas antiguas guardan el tipo dentro de
+`ref` (`file:/ruta`, `ticket:T-0012`, `commit:880faa1`, `session:ses_…`); la
+vigencia las leía como ficheros y las marcaba no vigentes.
+`taiki memory repair-evidence` separa el prefijo en `kind` y `ref`, sin tocar el
+código ni el contenido de la memoria. Por defecto es **dry-run**: muestra los
+cambios y no escribe. Con `--apply` copia la DB a `backups/` junto a
+`taiki.db` antes de escribir; las referencias inválidas también se normalizan y
+`freshness` las marcará `stale` con el motivo real (fichero, ticket o commit
+inexistente). Es idempotente: una segunda pasada no encuentra prefijos. Cada memoria reparada deja un asiento `repair-evidence` en el ledger
+con el estado anterior y posterior, y `--root` fija la raíz con la que se
+resuelven rutas y commits.
+
+Los commits se buscan en la raíz, en cada `--repo PATH` (repetible) y en el
+repo de dotfiles (`dotfiles.repo`/`dotfiles.live`), así que una memoria de
+`taiki-sys` puede citar un commit que solo existe en `~/.config`. Una ref
+`commit` admite `ruta@sha` (por ejemplo `~/dotfiles@3bea4b9`) para resolver el
+hash en ese repositorio concreto. Con `--retire-missing --apply` las refs `file` (prefijadas o bare) a rutas inexistentes cuyo directorio padre se puede leer se eliminan de
+la tabla en vez de normalizarse y el asiento del ledger anota `retired`. Si el
+padre no es legible (por ejemplo `/etc/sudoers.d` para un usuario sin
+permisos) la ref se conserva y se normaliza: nunca se retira a ciegas. Sin
+`--apply` la simulación lista las retirables y no escribe.
+
 ## Seguridad
 
 Antes de guardar se escanean títulos, contenidos, evidencias y motivos:
@@ -426,8 +534,11 @@ Antes de guardar se escanean títulos, contenidos, evidencias y motivos:
   `assets/` o `templates/`; nada de absolutos, `..` ni enlaces que salgan del
   proyecto.
 
-Toda propuesta pasa por aprobación humana: un agente no puede aprobar ni
-rechazar; el CLI exige actor `usuario`.
+Toda memoria de agente pasa por la política de escritura: con evidencia
+validada se activa sola (`auto_approve_evidence`); sin evidencia suficiente
+queda `proposed`. El agente corrige o niega lo que ya no se sostenga con nueva
+evidencia; la aprobación manual (`taiki memory approve`) es solo del usuario y
+el CLI exige actor `usuario`.
 
 ## Ledger, export/import y rollback
 
@@ -481,6 +592,8 @@ taiki memory add --scope project --kind convention \
 
 taiki memory list --kind pitfall --status active
 taiki memory show M-0001
+taiki memory search "gate exige ruff"   # lectura bajo demanda, sin brief
+taiki memory search template --scope project --kind convention --limit 5 --json
 taiki memory pending --diff            # diff frente a la sustituida
 taiki memory approve M-0002            # solo el usuario
 taiki memory reject M-0003 --why "Es un fallo transitorio"
@@ -490,6 +603,9 @@ taiki memory unpin M-0001
 taiki memory rm M-0001 --why "Ya no aplica"   # archiva
 
 taiki memory curate --dry-run
+taiki memory repair-evidence            # simula la normalización de refs
+taiki memory repair-evidence --apply    # escribe y deja backup de la DB
+taiki memory repair-evidence --repo ~/dotfiles --retire-missing --apply
 taiki memory stats --json
 taiki memory impact --days 30 --json
 taiki memory export .taiki/generated/memoria.json
@@ -519,7 +635,7 @@ Recursos: `taiki://brief` (Markdown), `taiki://memory/{code}` (JSON),
 `taiki://playbook/{slug}` (JSON) y `taiki://memory/candidates` (JSON).
 Prompts: `taiki:brief` aplica el brief al empezar; `taiki:playbook` carga un
 procedimiento y recuerda sus pitfalls; `taiki:curate` guía la revisión de
-candidatos sin aprobar ni editar. Catálogo en
+candidatos sin aprobación manual ni edición de código. Catálogo en
 [MCP](mcp.md#herramientas-mcp) y [recursos y
 prompts](mcp.md#recursos-y-prompts-mcp).
 
@@ -542,6 +658,8 @@ al arrancar para no ignorar erratas.
     "project_budget_chars": 3000,
     "user_budget_chars": 1200,
     "brief_budget_chars": 4500,
+    "brief_mode": "full",
+    "enforce_budget": false,
     "max_entry_chars": 600,
     "max_playbook_chars": 12000,
     "playbook_index_chars": 400,
@@ -554,6 +672,7 @@ al arrancar para no ignorar erratas.
     "candidate_similarity": 0.8,
     "instructions_sync": true,
     "skills_sync": true,
+    "auto_approve_evidence": true,
     "user_scope": "project",
     "auto_curate": {
       "enabled": false,
@@ -567,8 +686,13 @@ al arrancar para no ignorar erratas.
 ```
 
 `enabled` apaga la memoria sin borrar datos; `write_policy` es `balanced`
-(defecto) o `manual`; `user_scope` fija el scope de las preferencias (`project`)
+(defecto) o `manual`; `auto_approve_evidence` (defecto `true`) activa las altas
+de agente cuya evidencia se puede comprobar; `user_scope` fija el scope de las
+preferencias (`project`)
 y `skills_sync=false` evita exportar playbooks al sincronizar OpenCode.
+`brief_mode` es `full` (contenido en el brief), `index` (solo código, tipo y
+título) o `grouped` (una línea de códigos por dominio) y `enforce_budget=false`
+convierte el exceso de presupuesto en aviso en vez de bloquear la escritura.
 `archive_after_days >= stale_after_days` y `0` es un umbral inmediato, no un
 interruptor. Resto de claves, en [Presupuesto](#presupuesto), [Umbrales](#umbrales) y
 [Auto-curado](#auto-curado-y-review_command-opt-in).
@@ -586,9 +710,13 @@ interruptor. Resto de claves, en [Presupuesto](#presupuesto), [Umbrales](#umbral
    paths=[...])` y completa con `memory_search` de pitfalls.
 6. Cada 5 tickets verificados/cerrados o con 3+ candidatos, revisa
    `taiki memory candidates` y lanza el curator con `taiki memory review
-   --write` (o `memory_candidates(mode=review)`); propone como máximo 5
-   memorias y no aprueba ni edita código.
-7. El usuario revisa con `taiki memory pending --diff` y aprueba o rechaza.
+   --write` (o `memory_candidates(mode=review)`); escribe como máximo 5
+   memorias con evidencia, que quedan activas solas, y no aprueba a mano ni
+   edita código.
+7. Escribe la lección con evidencia y, si ya no se sostiene, corrígela con
+   `patch`/`supersede` o niégala con `feedback`; con evidencia validada queda
+   activa sola. No pidas aprobación de memoria: el usuario solo confirma
+   tickets.
 8. Refresca el brief con `taiki brief --write` si quieres actualizar el
    artefacto inyectado.
 9. Mantén la memoria con `taiki memory curate` (o el auto-curado opt-in) y
@@ -608,3 +736,12 @@ la entrada en `instructions`.
 El resto de dudas (editar, archivar, quién aprueba, qué merece una lección) se
 responden en [Ciclo de vida](#ciclo-de-vida), [Candidatos y
 revisión](#candidatos-y-revisión) y [Flujo recomendado](#flujo-recomendado).
+
+## Tags y capa 0
+
+- `tags` es una lista de dominios cortos (`security`, `scope`, `boot`…) que se
+  muestra en el índice (`tags=...`) y sirve para agrupar por familia.
+- `memory.layer0_tags` (default `security, seguridad, scope, sudo, confirm`)
+  marca la capa 0: esas memorias van siempre primero (`## Capa 0`) y no se
+  pierden aunque el índice crezca.
+- `taiki memory add … --tags security scope` y `memory edit --tags …`.

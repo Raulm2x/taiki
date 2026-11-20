@@ -31,8 +31,14 @@ taiki new -t "Cambio grande" --isolation worktree # .worktrees/ (defecto)
 taiki new -t "Subtarea" --parent T-0014  # crea T-0014.01, T-0014.02…
 taiki attach T-0014 T-0008 T-0009   # agrupa tickets existentes bajo una épica
 taiki detach T-0008                  # la devuelve a la raíz
+taiki move T-0024 T-0025 --parent T-0014 --keep-code  # como attach: conserva códigos
+taiki move T-0024 T-0025 --parent T-0014 --renumber --apply  # pasa a T-0014.01, .02…
+taiki promote T-0024                # tarea → épica (dry-run)
+taiki demote T-0014 --children-to root --apply  # épica → tarea; reparte sus tareas
 taiki renumber                      # simula pasar T-0023… a T-0022.01, .02…
+taiki renumber T-0024 --adopted --apply  # incluye los adoptados con attach
 taiki renumber --apply              # renombra los códigos planos
+taiki purge T-0099 --apply --force  # borra cancelados con backup previo
 taiki repair-gaps                   # simula cubrir T-XXXX que nunca existieron
 taiki repair-gaps --apply           # los cubre con tickets genéricos cancelados
 taiki claim T-0001
@@ -46,7 +52,7 @@ taiki worktree list
 taiki worktree merge T-0001 --delete  # solo si T-0001 está confirmado
 taiki worktree remove T-0001 --delete-branch
 taiki commit -m "..."          # commitea solo las rutas del ticket activo
-taiki commit --repo ~/dotfiles --ticket T-0001 -m "..."  # otro repo; enlace external
+taiki commit --repo ~/.config --ticket T-0001 -m "..."  # otro repo; enlace external
 taiki complete T-0001 -r "Qué se hizo y cómo se verificó" --commit abc1234
 taiki authorize T-0001 --why "Instalar el paquete x"   # solo usuario
 taiki review T-0001 --why "Revisado el cambio"         # opcional, solo usuario
@@ -88,6 +94,14 @@ taiki tui                      # TUI con toggles para confirmar
 `memory`, `remember`, `brief` y `skills`.
 En `list` y `show`, `--compact` y `--json-summary` implican `--json`: no hay
 combinaciones que se ignoren en silencio.
+
+El resumen de `list --json-summary` es lean: `code`, `title`, `status`,
+`priority`, `kind`, `project`, `assigned_to`, `parent_id`, `updated_at` y, si
+aplican, `paths`, `tags`, `progress`, `risk`, `requires_review`, `isolation`.
+Además expone `iterations` (el contador de intentos de trabajo: 1 al empezar,
+uno más por cada reapertura) y `attempts`, un alias explícito con el mismo
+valor, para auditar esfuerzo sin hacer un `show` por ticket. El mismo resumen
+devuelve el MCP en `list` (paridad de campos CLI/MCP).
 
 ### Memoria y brief
 
@@ -276,17 +290,33 @@ taiki new -t "Actualizar la unidad del sistema" -k mantenimiento \
 taiki authorize T-0043 --why "systemctl daemon-reload y enable"  # solo usuario
 taiki sys snapshot T-0043 --packages
 
-# dotfiles: el commit va al repo de dotfiles y se enlaza como external
-taiki new -t "Ajustar Hyprland" --isolation scope --paths ~/dotfiles/hypr/
-taiki commit --repo ~/dotfiles --ticket T-0044 -m "fix: hypr (T-0044)"
+# dotfiles: paths absolutos del ticket; el commit los traduce al repo live
+taiki new -t "Ajustar Hyprland" --isolation scope --paths ~/.config/hypr/
+taiki commit --repo ~/.config --ticket T-0044 -m "fix: hypr (T-0044)"
 ```
 
 - **`none`** no se paraleliza: `schedule` lo manda a `serial`.
 - **`scope`** exige `paths`; sin ellos el guard no permite escribir
   (fail-closed). Los `resources` (`systemd:user/<unit>`, `systemd:system/<unit>`,
   `package:<nombre>`) también delimitan el alcance.
+- **Rama live**: el `commit-msg` permite committear en
+  `isolation.live_branch` (por defecto `main`) cuando todos los tickets del
+  asunto son `none`/`scope`; en el workspace de sistema
+  (`~/.local/share/taiki-sys`) es el caso normal. Un ticket `worktree` sigue
+  bloqueado en `main`: su trabajo va en `agent/T-XXXX-*` y en `main` solo entra
+  una release.
 - **`worktree`** mantiene el flujo clásico: `claim --worktree`,
   `session_move`, commit en `agent/T-XXXX-*` y merge tras confirmar.
+- **En `scope`/`none` el worker no crea worktree ni mueve la sesión**: reclama
+  con `worktree=false` y trabaja en el checkout vivo; solo inspecciona y stagea
+  rutas concretas (`git -C <repo> status`, `git -C <repo> add <ruta>`). El
+  commit lo hace el conductor en el repo live con `taiki commit --repo <ruta>`.
+- **Dotfiles**: si un path del ticket cae en `.gitignore`, `git add` lo salta
+  en silencio y `taiki commit --repo` no tiene nada que commitear; el comando
+  avisa con la ruta y propone `git add -f <ruta>` o una excepción `!ruta/`
+  (taiki no stagea por ti). El `project` del ticket es la etiqueta del
+  workspace (`.taiki/config.json`), no el nombre del repo Git que lo contiene;
+  `--project` la fuerza por ticket.
 - `risk` (`low`/`medium`/`high`) se deriva de paths y resources; las rutas
   sensibles marcan `requires_review` como aviso, no como bloqueo.
 - La reversión se registra con
@@ -294,6 +324,9 @@ taiki commit --repo ~/dotfiles --ticket T-0044 -m "fix: hypr (T-0044)"
   `taiki reject --revert --why …` (solo usuario) ejecuta `git revert` si la
   reversión es `git-revert`; con `copy` o sistema solo imprime el comando
   manual. Los tickets `worktree` se rechazan de la forma normal.
+- **Verificación**: código → suite/gates; documentación y dotfiles → contenido,
+  alcance del commit y `git show`; sistema → `verify.command` cuando aplique.
+  Detalle en [operación](operacion.md#verificación-por-tipo).
 
 ### Épicas y tareas
 
@@ -313,7 +346,8 @@ tareas colgando de él. Así la lista no crece con cada paso.
 - **Siguiente**: `next` nunca devuelve una épica, solo trabajo accionable.
 - **Códigos planos**: si un proceso antiguo creó tareas con código normal
   (`T-0023` bajo `T-0022`), `taiki renumber --apply` los pasa a `.01`, `.02`…
-  `taiki audit` los lista. Los adoptados con `attach` nunca se tocan.
+  `taiki audit` los lista. Los adoptados con `attach` se conservan por defecto;
+  solo se renumeran si se pide con `--adopted`.
 
 ```
 T-0014       Jerarquía de tickets          [2/3]
@@ -321,6 +355,32 @@ T-0014       Jerarquía de tickets          [2/3]
     .02       TUI con árbol                 completado
     .03       MCP, docs y migración         en_progreso
 ```
+
+#### Reorganizar la jerarquía
+
+`move`, `promote`, `demote`, `renumber` y `purge` simulan por defecto: sin
+`--apply` solo muestran el plan. `move` exige `--parent` y elige el código con
+`--renumber` o `--keep-code` (defecto, equivalente a `attach`); `demote` exige
+`--children-to <epic|root>` y admite `--parent` y `--renumber`; `renumber`
+acepta códigos concretos y `--adopted`, y con `--allow-root` también renumera
+raíces publicadas (con commits enlazados). Solo hay un nivel épica→tarea, sin
+ciclos ni padres archivados. La aplicación es atómica y `purge --apply --force`
+copia antes la base a `.taiki/backups/`. El contador solo baja al liberar el
+final de la secuencia de raíces; `repair-gaps` cubre los huecos con tickets
+cancelados para no reutilizar números.
+
+Caso real (taiki-sys, 2026-11-05): T-0023 nació como tarea y pasó a épica con
+T-0024..T-0027 colgadas con código plano. Para dejarlas como `T-0023.01`…`04`:
+
+```bash
+taiki move T-0024 T-0025 T-0026 T-0027 --parent T-0023 --renumber --apply
+```
+
+Sin `--renumber` (o con `--keep-code`) el movimiento conserva los códigos, como
+`taiki attach T-0023 T-0024 …`. `promote T-0023` la desvincula de su padre para
+que pueda tener tareas; `demote T-0023 --children-to root` reparte las tareas y
+la convierte en tarea. Los enlaces `depende`/`relacionado`, las evidencias de
+memoria y el índice FTS se reapuntan al código nuevo.
 
 ### Numeración sin huecos
 

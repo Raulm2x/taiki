@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from ticketlib import db, repo
+import subprocess
+
+from ticketlib import db, domain, repo
 from ticketlib.domain import ValidationError
 from ticketlib.memory import (
     BudgetError,
@@ -21,11 +23,25 @@ from ticketlib.memory import (
 )
 from ticketlib.memory import ledger as memory_ledger
 from ticketlib.memory.budget import select_for_budget
+from ticketlib.memory.core import evidence_freshness
+from ticketlib.memory.repair import apply_repair, plan_repair
+from tests.seeds import git_repo
 from tests.support import Harness
 
 
+def _rejects(h: Harness, cases: list, message: str) -> None:
+    """Agrupa casos de rechazo en una sola comprobación de presupuesto."""
+    rejected = 0
+    for case in cases:
+        try:
+            case()
+        except ValidationError:
+            rejected += 1
+    h.eq(rejected, len(cases), message)
+
+
 def _migration(h: Harness) -> None:
-    """Una DB v4 conserva tickets y comentarios al migrar a v6."""
+    """Una DB v4 conserva tickets y comentarios al migrar a v7."""
     path = h.tmp / "v4.db"
     old = db.connect(path)
     try:
@@ -42,20 +58,18 @@ def _migration(h: Harness) -> None:
         ):
             old.execute(f"DROP TABLE IF EXISTS {table}")
         old.execute("PRAGMA user_version = 4")
-        h.eq(db.schema_version(old), 4, "la DB de prueba arranca en v4")
+        assert db.schema_version(old) == 4
         db.migrate(old)
-        h.eq(db.schema_version(old), 7, "la migración sube a v7")
-        h.eq(
-            repo.get_ticket(old, ticket["code"])["title"],
-            "Sobrevive a la migración",
-            "el ticket se conserva tras migrar",
-        )
         h.ok(
-            old.execute(
+            db.schema_version(old) == domain.SCHEMA_VERSION
+            and repo.get_ticket(old, ticket["code"])["title"]
+            == "Sobrevive a la migración"
+            and old.execute(
                 "SELECT 1 FROM comments WHERE ticket_id = ?", (ticket["id"],)
             ).fetchone()
             is not None,
-            "el comentario se conserva tras migrar",
+            f"v4→v{domain.SCHEMA_VERSION} migra memorias y conserva tickets "
+            "y comentarios",
         )
         migrated = add_memory(
             old,
@@ -64,13 +78,13 @@ def _migration(h: Harness) -> None:
             key="migrada",
             source="user",
         )
-        h.eq(migrated["code"], "M-0001", "la DB migrada numera memorias")
         h.ok(
-            old.execute(
+            migrated["code"] == "M-0001"
+            and old.execute(
                 "SELECT 1 FROM memories_fts WHERE memories_fts MATCH 'trigger'"
             ).fetchone()
             is not None,
-            "el FTS de memorias funciona tras la migración",
+            "la DB migrada numera memorias y el FTS funciona",
         )
     finally:
         old.close()
@@ -92,11 +106,12 @@ def _ticket_kinds(h: Harness) -> None:
         old.execute("PRAGMA user_version = 5")
         db.migrate(old)
         h.ok(
-            db.schema_version(old) == 7
+            db.schema_version(old) == domain.SCHEMA_VERSION
             and "ticket_kinds"
             in {row["name"] for row in old.execute("PRAGMA table_info(memories)")}
             and get_memory(old, seeded["code"])["ticket_kinds"] == [],
-            "v5→v6 añade ticket_kinds y las memorias antiguas quedan generales",
+            f"v5→v{domain.SCHEMA_VERSION} añade ticket_kinds y las memorias "
+            "antiguas quedan generales",
         )
     finally:
         old.close()
@@ -123,26 +138,22 @@ def _ticket_kinds(h: Harness) -> None:
         title="Riesgo zeta general",
         content="El riesgo zeta aplica a cualquier ticket.",
         kind="pitfall",
+        tags=["security"],
         source="user",
     )
     h.ok(
         bug["ticket_kinds"] == ["bug", "funcionalidad"]
         and docs["ticket_kinds"] == ["documentacion"]
-        and general["ticket_kinds"] == [],
-        "add_memory persiste ticket_kinds sin duplicados y vacío es general",
-    )
-    h.eq(
-        {item["code"] for item in list_memories(conn, ticket_kinds=["bug"])},
-        {bug["code"], general["code"]},
-        "list_memories incluye las generales y excluye otras etiquetas",
-    )
-    h.eq(
-        {
+        and general["ticket_kinds"] == []
+        and general["tags"] == ["security"]
+        and {item["code"] for item in list_memories(conn, ticket_kinds=["bug"])}
+        == {bug["code"], general["code"]}
+        and {
             item["code"]
             for item in list_memories(conn, ticket_kinds=["bug", "documentacion"])
-        },
-        {bug["code"], docs["code"], general["code"]},
-        "list_memories une varios tipos de ticket",
+        }
+        == {bug["code"], docs["code"], general["code"]},
+        "add_memory persiste ticket_kinds sin duplicados y list los combina",
     )
     h.eq(
         {
@@ -154,39 +165,31 @@ def _ticket_kinds(h: Harness) -> None:
         {bug["code"], general["code"]},
         "search_memories filtra por ticket_kinds con la misma compatibilidad",
     )
-    patched = patch_memory(conn, bug["code"], ticket_kinds=["seguridad"])
-    h.eq(
-        patched["ticket_kinds"],
-        ["seguridad"],
-        "patch_memory reemplaza las etiquetas de ticket",
-    )
-    h.eq(
-        {item["code"] for item in list_memories(conn, ticket_kinds=["bug"])},
-        {general["code"]},
-        "una memoria reetiquetada deja de casar con el tipo anterior",
+    patched = patch_memory(
+        conn, bug["code"], ticket_kinds=["seguridad"], tags=["security"]
     )
     cleared = patch_memory(conn, bug["code"], ticket_kinds=[])
     h.ok(
-        cleared["ticket_kinds"] == []
+        patched["ticket_kinds"] == ["seguridad"]
+        and patched["tags"] == ["security"]
+        and cleared["ticket_kinds"] == []
         and bug["code"]
         in {item["code"] for item in list_memories(conn, ticket_kinds=["bug"])},
-        "patch_memory con lista vacía devuelve la memoria a general",
+        "patch_memory reemplaza las etiquetas y una lista vacía vuelve a general",
     )
-    h.raises(
-        ValidationError,
-        lambda: add_memory(
-            conn,
-            title="Tipo inválido",
-            content="No debe guardarse.",
-            ticket_kinds=["inventado"],
-            source="user",
-        ),
-        "un tipo de ticket inválido se rechaza al crear",
-    )
-    h.raises(
-        ValidationError,
-        lambda: list_memories(conn, ticket_kinds=["inventado"]),
-        "un tipo de ticket inválido se rechaza al filtrar",
+    _rejects(
+        h,
+        [
+            lambda: add_memory(
+                conn,
+                title="Tipo inválido",
+                content="No debe guardarse.",
+                ticket_kinds=["inventado"],
+                source="user",
+            ),
+            lambda: list_memories(conn, ticket_kinds=["inventado"]),
+        ],
+        "un tipo de ticket inválido se rechaza al crear y al filtrar",
     )
     conn.close()
 
@@ -202,10 +205,13 @@ def _crud(h: Harness) -> None:
         source="user",
         actor="tester",
     )
-    h.eq(first["code"], "M-0001", "el primer código es M-0001")
-    h.eq(first["status"], "active", "source=user nace activa")
-    h.eq(first["source"], "user", "la procedencia se guarda")
-    h.eq(first["budget"]["limit"], 3000, "el presupuesto por defecto es 3000")
+    h.ok(
+        first["code"] == "M-0001"
+        and first["status"] == "active"
+        and first["source"] == "user"
+        and first["budget"]["limit"] == 3000,
+        "la primera memoria es M-0001 activa de usuario con presupuesto 3000",
+    )
 
     user_memory = add_memory(
         conn,
@@ -215,20 +221,16 @@ def _crud(h: Harness) -> None:
         scope="user",
         source="user",
     )
-    h.eq(user_memory["scope"], "user", "se pueden crear memorias de usuario")
-    h.eq(
-        len(list_memories(conn, scope="user")),
-        1,
-        "list_memories filtra por scope",
-    )
-    h.eq(
-        list_memories(conn, scope="project")[0]["code"],
-        first["code"],
-        "list_memories filtra el scope project",
+    h.ok(
+        user_memory["scope"] == "user"
+        and len(list_memories(conn, scope="user")) == 1
+        and list_memories(conn, scope="project")[0]["code"] == first["code"],
+        "list_memories filtra por scope user y project",
     )
 
-    h.ok(
-        get_memory(conn, "M-1")["code"] == first["code"],
+    h.eq(
+        get_memory(conn, "M-1")["code"],
+        first["code"],
         "get_memory normaliza M-1 a M-0001",
     )
     h.raises(
@@ -238,10 +240,6 @@ def _crud(h: Harness) -> None:
     )
 
     found = search_memories(conn, "develop", record_usage=False)
-    h.ok(
-        any(item["code"] == first["code"] for item in found),
-        "la búsqueda FTS encuentra por contenido",
-    )
     accented = add_memory(
         conn,
         title="Configuración de ramas",
@@ -251,20 +249,20 @@ def _crud(h: Harness) -> None:
         source="user",
     )
     h.ok(
-        any(
+        any(item["code"] == first["code"] for item in found)
+        and any(
             item["code"] == accented["code"]
             for item in search_memories(conn, "configuracion", record_usage=False)
         ),
-        "la búsqueda FTS ignora acentos",
+        "la búsqueda FTS encuentra por contenido e ignora acentos",
     )
-    usage = search_memories(conn, "ramas", session_id="ses_test")
-    h.ok(usage, "search_memories devuelve resultados")
     h.ok(
-        conn.execute(
+        bool(search_memories(conn, "ramas", session_id="ses_test"))
+        and conn.execute(
             "SELECT 1 FROM memory_usage WHERE action = 'search' LIMIT 1"
         ).fetchone()
         is not None,
-        "la búsqueda registra uso",
+        "search_memories devuelve resultados y registra uso",
     )
 
     patched = patch_memory(
@@ -288,6 +286,21 @@ def _crud(h: Harness) -> None:
 
 def _policy(h: Harness) -> None:
     conn = h.conn
+    closed = repo.create_ticket(conn, title="Ticket confirmado para memoria")
+    for target in ("pendiente", "en_progreso"):
+        repo.transition(conn, closed["code"], target)
+    repo.transition(conn, closed["code"], "completado", resolution="hecho")
+    repo.transition(
+        conn,
+        closed["code"],
+        "confirmado",
+        actor="usuario",
+        actor_type="usuario",
+    )
+    open_ticket = repo.create_ticket(conn, title="Ticket pendiente para memoria")
+    repo.transition(conn, open_ticket["code"], "pendiente")
+    existing_file = h.tmp / "evidencia.txt"
+    existing_file.write_text("evidencia", encoding="utf-8")
     h.raises(
         ValidationError,
         lambda: add_memory(
@@ -312,8 +325,10 @@ def _policy(h: Harness) -> None:
             {"kind": "commit", "ref": "abc1234"},
         ],
     )
-    h.eq(solid["status"], "active", "agent con 2 evidencias y confianza alta activa")
-    h.eq(solid["ticket_id"], "T-0045", "la evidencia de ticket rellena ticket_id")
+    h.ok(
+        solid["status"] == "active" and solid["ticket_id"] == "T-0045",
+        "agent con 2 evidencias activa y rellena ticket_id",
+    )
 
     weak = add_memory(
         conn,
@@ -323,9 +338,69 @@ def _policy(h: Harness) -> None:
         key="fts-tokenizer",
         source="agent",
         confidence=0.9,
-        evidence=[{"kind": "file", "ref": "ticketlib/db.py"}],
+        evidence=[{"kind": "file", "ref": str(h.tmp / "no-existe.py")}],
     )
-    h.eq(weak["status"], "proposed", "agent con una evidencia queda propuesta")
+    missing_commit = add_memory(
+        conn,
+        title="Commit fantasma",
+        content="Un commit que no existe no valida la evidencia.",
+        kind="fact",
+        key="commit-fantasma",
+        source="agent",
+        evidence=[{"kind": "commit", "ref": "deadbeef"}],
+    )
+    open_case = add_memory(
+        conn,
+        title="Ticket abierto",
+        content="Un ticket sin cerrar no valida la evidencia.",
+        kind="fact",
+        key="ticket-abierto",
+        source="agent",
+        evidence=[{"kind": "ticket", "ref": open_ticket["code"]}],
+    )
+    closed_case = add_memory(
+        conn,
+        title="Ticket confirmado",
+        content="Un ticket confirmado valida la evidencia del agente.",
+        kind="fact",
+        key="ticket-confirmado",
+        source="agent",
+        evidence=[{"kind": "ticket", "ref": closed["code"]}],
+    )
+    no_auto = add_memory(
+        conn,
+        title="Auto-aprobación desactivada",
+        content="Con la política desactivada la evidencia no basta.",
+        kind="fact",
+        key="auto-aprobacion-off",
+        source="agent",
+        evidence=[{"kind": "file", "ref": str(existing_file)}],
+        config={"memory": {"auto_approve_evidence": False}},
+    )
+    negative_valid = add_memory(
+        conn,
+        title="Regla negativa con evidencia",
+        content="Nunca uses force push directo a main.",
+        kind="convention",
+        key="negativa-valida",
+        source="agent",
+        evidence=[
+            {"kind": "ticket", "ref": closed["code"]},
+            {"kind": "file", "ref": str(existing_file)},
+        ],
+    )
+    h.eq(
+        [
+            weak["status"],
+            missing_commit["status"],
+            open_case["status"],
+            closed_case["status"],
+            no_auto["status"],
+            negative_valid["status"],
+        ],
+        ["proposed", "proposed", "proposed", "active", "proposed", "proposed"],
+        "solo la evidencia validada activa; inexistente, abierta o desactivada propone",
+    )
 
     negative = add_memory(
         conn,
@@ -340,8 +415,6 @@ def _policy(h: Harness) -> None:
             {"kind": "session", "ref": "ses_123"},
         ],
     )
-    h.eq(negative["status"], "proposed", "una regla negativa siempre queda propuesta")
-
     negative_user = add_memory(
         conn,
         title="Preferencia negativa",
@@ -350,10 +423,10 @@ def _policy(h: Harness) -> None:
         key="force-push-usuario",
         source="user",
     )
-    h.eq(
-        negative_user["status"],
-        "proposed",
-        "una regla negativa de usuario también queda propuesta",
+    h.ok(
+        negative["status"] == "proposed"
+        and negative_user["status"] == "proposed",
+        "una regla negativa de agente o de usuario siempre queda propuesta",
     )
 
     derived = add_memory(
@@ -375,51 +448,113 @@ def _policy(h: Harness) -> None:
     )
 
     rejected = reject_memory(conn, negative["code"], actor="usuario")
-    h.eq(rejected["status"], "archived", "reject_memory archiva la propuesta")
     h.ok(
-        list_memories(conn, status="archived")[0]["code"] == negative["code"],
-        "las archivadas se listan explícitamente",
+        rejected["status"] == "archived"
+        and list_memories(conn, status="archived")[0]["code"] == negative["code"],
+        "reject_memory archiva y las archivadas se listan explícitamente",
     )
 
     pinned = pin_memory(conn, solid["code"])
-    h.ok(pinned["pinned"], "pin_memory fija la memoria")
     archived = archive_memory(conn, solid["code"])
-    h.eq(archived["status"], "archived", "archive_memory archiva")
     restored = restore_memory(conn, solid["code"])
-    h.eq(restored["status"], "active", "restore_memory reactiva")
+    h.ok(
+        pinned["pinned"]
+        and archived["status"] == "archived"
+        and restored["status"] == "active",
+        "pin, archive y restore cambian el estado esperado",
+    )
     unpinned = pin_memory(conn, solid["code"], pinned=False)
     h.ok(not unpinned["pinned"], "pin_memory puede desfijar")
 
-    feedback = feedback_memory(conn, solid["code"], helpful=True, note="útil")
-    h.eq(feedback["helpful_count"], 1, "feedback actualiza helpful_count")
-    feedback = feedback_memory(conn, solid["code"], helpful=False)
-    h.eq(feedback["unhelpful_count"], 1, "feedback actualiza unhelpful_count")
+    helpful = feedback_memory(conn, solid["code"], helpful=True, note="útil")
+    unhelpful = feedback_memory(conn, solid["code"], helpful=False)
+
+    cancelled = repo.create_ticket(conn, title="Evidencia cancelada")
+    repo.transition(conn, cancelled["code"], "cancelado")
+    vigente = repo.create_ticket(conn, title="Evidencia vigente")
+    (h.tmp / "references").mkdir(exist_ok=True)
+    changed = h.tmp / "references" / "vigencia.md"
+    changed.write_text("v1", encoding="utf-8")
+    intact = h.tmp / "references" / "vigente.md"
+    intact.write_text("estable", encoding="utf-8")
+    file_memory = add_memory(
+        conn,
+        title="Fichero cambiado",
+        content="El fichero de referencia define el contrato.",
+        key="evidencia-fichero",
+        source="user",
+        evidence=[{"kind": "file", "ref": "references/vigencia.md"}],
+        files=[{"path": "references/vigencia.md", "content": "v1"}],
+    )
+    changed.write_text("v2", encoding="utf-8")
+    cancelled_memory = add_memory(
+        conn,
+        title="Ticket cancelado",
+        content="La evidencia apunta a un ticket cancelado.",
+        key="evidencia-cancelada",
+        source="user",
+        evidence=[{"kind": "ticket", "ref": cancelled["code"]}],
+    )
+    uncheckable = add_memory(
+        conn,
+        title="Evidencia remota",
+        content="Solo hay url y sesión.",
+        key="evidencia-remota",
+        source="user",
+        evidence=[
+            {"kind": "url", "ref": "https://example.test/x"},
+            {"kind": "session", "ref": "ses_123"},
+        ],
+    )
+    fresh = add_memory(
+        conn,
+        title="Evidencia vigente",
+        content="Ticket y fichero intactos.",
+        key="evidencia-vigente",
+        source="user",
+        evidence=[
+            {"kind": "ticket", "ref": vigente["code"]},
+            {"kind": "file", "ref": "references/vigente.md"},
+        ],
+        files=[{"path": "references/vigente.md", "content": "estable"}],
+    )
+    h.ok(
+        helpful["helpful_count"] == 1
+        and unhelpful["unhelpful_count"] == 1
+        and get_memory(conn, cancelled_memory["code"])["freshness"]["ok"] is False
+        and get_memory(conn, cancelled_memory["code"])["status"] == "stale"
+        and get_memory(conn, file_memory["code"])["freshness"]["ok"] is False
+        and get_memory(conn, solid["code"])["status"] == "stale"
+        and get_memory(conn, fresh["code"])["freshness"]["ok"] is True
+        and get_memory(conn, fresh["code"])["status"] == "active"
+        and get_memory(conn, uncheckable["code"])["freshness"]
+        == {"ok": True, "checked": 0, "reasons": [], "stale": []},
+        "feedback actualiza contadores y la evidencia no vigente pasa a stale",
+    )
 
 
 def _status_explicit(h: Harness) -> None:
     conn = h.conn
-    h.raises(
-        ValidationError,
-        lambda: add_memory(
-            conn,
-            title="Estado forzado",
-            content="No debería saltarse la política.",
-            source="agent",
-            status="active",
-            evidence=[{"kind": "ticket", "ref": "T-0045"}],
-        ),
-        "agent no puede forzar un estado explícito",
-    )
-    h.raises(
-        ValidationError,
-        lambda: add_memory(
-            conn,
-            title="Superseded directa",
-            content="No se crea una superseded a mano.",
-            source="import",
-            status="superseded",
-        ),
-        "no se puede crear directamente superseded",
+    _rejects(
+        h,
+        [
+            lambda: add_memory(
+                conn,
+                title="Estado forzado",
+                content="No debería saltarse la política.",
+                source="agent",
+                status="active",
+                evidence=[{"kind": "ticket", "ref": "T-0045"}],
+            ),
+            lambda: add_memory(
+                conn,
+                title="Superseded directa",
+                content="No se crea una superseded a mano.",
+                source="import",
+                status="superseded",
+            ),
+        ],
+        "no se puede forzar active ni crear superseded directamente",
     )
     archived = add_memory(
         conn,
@@ -428,14 +563,14 @@ def _status_explicit(h: Harness) -> None:
         source="import",
         status="archived",
     )
-    h.eq(archived["status"], "archived", "import puede crear una archivada")
-    h.ok(archived["archived_at"], "la archivada explícita fija archived_at")
     h.ok(
-        not any(
+        archived["status"] == "archived"
+        and bool(archived["archived_at"])
+        and not any(
             item["code"] == archived["code"]
             for item in list_memories(conn, include_inactive=False)
         ),
-        "la archivada explícita no aparece por defecto",
+        "import puede crear una archivada con archived_at fuera del listado",
     )
 
 
@@ -456,10 +591,10 @@ def _fingerprint(h: Harness) -> None:
         source="user",
     )
     h.ok(
-        cjk_one["fingerprint"] != cjk_two["fingerprint"],
-        "dos textos CJK distintos no colapsan a la misma huella",
+        cjk_one["fingerprint"] != cjk_two["fingerprint"]
+        and cjk_one["code"] != cjk_two["code"],
+        "dos textos CJK distintos no colapsan en huella ni código",
     )
-    h.ok(cjk_one["code"] != cjk_two["code"], "los dos CJK se guardan")
     emoji_one = add_memory(
         conn,
         title="🚀",
@@ -475,12 +610,9 @@ def _fingerprint(h: Harness) -> None:
         source="user",
     )
     h.ok(
-        emoji_one["fingerprint"].startswith("sha256:"),
-        "un texto solo de símbolos usa hash estable",
-    )
-    h.ok(
-        emoji_one["fingerprint"] != emoji_two["fingerprint"],
-        "dos emojis distintos no colisionan",
+        emoji_one["fingerprint"].startswith("sha256:")
+        and emoji_one["fingerprint"] != emoji_two["fingerprint"],
+        "un texto de símbolos usa hash estable y no colisiona",
     )
 
 
@@ -500,15 +632,10 @@ def _dedupe(h: Harness) -> None:
         key="test-command",
         source="user",
     )
-    h.eq(
-        get_memory(conn, old["code"])["status"],
-        "superseded",
-        "misma key activa se marca superseded",
-    )
-    h.eq(
-        get_memory(conn, old["code"])["superseded_by"],
-        new["code"],
-        "la anterior enlaza a la sustituta",
+    h.ok(
+        get_memory(conn, old["code"])["status"] == "superseded"
+        and get_memory(conn, old["code"])["superseded_by"] == new["code"],
+        "misma key activa se marca superseded y enlaza a la sustituta",
     )
     h.eq(
         get_memory(conn, new["code"])["supersedes_id"],
@@ -534,7 +661,7 @@ def _dedupe(h: Harness) -> None:
         source="user",
     )
     superseded = supersede_memory(conn, third["code"], new["code"])
-    h.eq(superseded["status"], "superseded", "supersede_memory marca la anterior")
+    h.ok(superseded["status"] == "superseded", "supersede_memory marca la anterior")
     h.raises(
         ValidationError,
         lambda: supersede_memory(conn, third["code"], new["code"]),
@@ -545,7 +672,7 @@ def _dedupe(h: Harness) -> None:
 def _budget(h: Harness) -> None:
     conn = db.connect(h.tmp / "budget.db")
     try:
-        config = {"project_budget_chars": 100}
+        config = {"project_budget_chars": 100, "enforce_budget": True}
         first = add_memory(
             conn,
             title="Entrada grande",
@@ -565,11 +692,11 @@ def _budget(h: Harness) -> None:
                 config=config,
             )
         except BudgetError as exc:
-            h.ok(exc.chars_to_free == 10, "el error calcula los caracteres a liberar")
-            h.ok(bool(exc.current_entries), "el error lista las entradas actuales")
             h.ok(
-                "Libera al menos 10" in str(exc),
-                "el mensaje indica cuánto liberar",
+                exc.chars_to_free == 10
+                and bool(exc.current_entries)
+                and "Libera al menos 10" in str(exc),
+                "el error calcula caracteres, lista entradas y explica el recorte",
             )
         else:
             raise AssertionError("el presupuesto debía bloquear la entrada extra")
@@ -582,16 +709,11 @@ def _budget(h: Harness) -> None:
             source="user",
             config=config,
         )
-        h.eq(
-            replacement["status"],
-            "active",
-            "un batch que libera y añade a la vez pasa",
-        )
-        h.eq(replacement["budget"]["used"], 90, "el presupuesto usa solo la vigente")
-        h.eq(
-            get_memory(conn, first["code"])["status"],
-            "superseded",
-            "la entrada liberada queda superseded",
+        h.ok(
+            replacement["status"] == "active"
+            and replacement["budget"]["used"] == 90
+            and get_memory(conn, first["code"])["status"] == "superseded",
+            "un batch que libera y añade a la vez pasa y usa solo la vigente",
         )
 
         memories = [
@@ -637,16 +759,41 @@ def _budget(h: Harness) -> None:
             },
         ]
         selected, dropped, used = select_for_budget(memories, 25)
-        h.eq(
-            [item["code"] for item in selected],
-            ["M-0003", "M-0002"],
-            "la prioridad es pinned > user > confianza",
+        h.ok(
+            [item["code"] for item in selected] == ["M-0003", "M-0002"]
+            and used == 20
+            and [item["code"] for item in dropped] == ["M-0001", "M-0004"],
+            "la prioridad es pinned > user > confianza y respeta el presupuesto",
         )
-        h.eq(used, 20, "la selección respeta el presupuesto")
-        h.eq(
-            [item["code"] for item in dropped],
-            ["M-0001", "M-0004"],
-            "las entradas que no caben quedan descartadas",
+
+        relaxed = {"project_budget_chars": 10, "enforce_budget": False}
+        receipt = add_memory(
+            conn,
+            title="Exceso permitido",
+            content="D" * 5,
+            key="exceso",
+            source="user",
+            config=relaxed,
+        )
+        try:
+            add_memory(
+                conn,
+                title="Exceso estricto",
+                content="E" * 5,
+                key="exceso-estricto",
+                source="user",
+                config={"project_budget_chars": 10, "enforce_budget": True},
+            )
+        except BudgetError:
+            strict_raises = True
+        else:
+            strict_raises = False
+        h.ok(
+            receipt["budget"]["used"] > receipt["budget"]["limit"]
+            and bool(receipt["budget_warning"])
+            and "el brief selecciona por prioridad" in str(receipt["budget_warning"])
+            and strict_raises,
+            "enforce_budget=false deja el exceso como aviso; true lanza BudgetError",
         )
     finally:
         conn.close()
@@ -655,7 +802,7 @@ def _budget(h: Harness) -> None:
 def _rollback_budget(h: Harness) -> None:
     conn = db.connect(h.tmp / "rollback-budget.db")
     try:
-        cfg = {"project_budget_chars": 100}
+        cfg = {"project_budget_chars": 100, "enforce_budget": True}
         first = add_memory(
             conn,
             title="A",
@@ -697,15 +844,10 @@ def _rollback_budget(h: Harness) -> None:
             lambda: memory_ledger.rollback(conn, int(row["id"]), config=cfg),
             "el rollback que excede el presupuesto se rechaza",
         )
-        h.eq(
-            get_memory(conn, first["code"])["content"],
-            "A" * 10,
-            "el rollback rechazado no cambia la memoria",
-        )
-        h.eq(
-            conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0],
-            3,
-            "el rollback rechazado no duplica ni borra memorias",
+        h.ok(
+            get_memory(conn, first["code"])["content"] == "A" * 10
+            and conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0] == 3,
+            "el rollback rechazado no cambia ni duplica memorias",
         )
     finally:
         conn.close()
@@ -740,19 +882,12 @@ def _supersede_rollback(h: Harness) -> None:
     ).fetchone()
     h.ok(row is not None, "supersede deja asiento de la memoria antigua")
     result = memory_ledger.rollback(conn, int(row["id"]))
-    h.ok(result["restored"], "el rollback de supersede restaura")
-    h.eq(
-        get_memory(conn, old["code"])["status"],
-        "active",
-        "el rollback devuelve la antigua a active",
-    )
     h.ok(
-        not get_memory(conn, old["code"])["superseded_by"],
-        "el rollback limpia superseded_by de la antigua",
-    )
-    h.ok(
-        not get_memory(conn, new["code"])["supersedes_id"],
-        "el rollback limpia supersedes_id de la nueva",
+        result["restored"]
+        and get_memory(conn, old["code"])["status"] == "active"
+        and not get_memory(conn, old["code"])["superseded_by"]
+        and not get_memory(conn, new["code"])["supersedes_id"],
+        "el rollback de supersede restaura y limpia ambos enlaces",
     )
 
 
@@ -772,20 +907,17 @@ def _ledger(h: Harness) -> None:
         content="Contenido cambiado para el ledger.",
         actor="tester",
     )
-    h.eq(get_memory(conn, memory["code"])["title"], "Estado cambiado", "el patch se aplica")
     h.ok(
-        any(
+        get_memory(conn, memory["code"])["title"] == "Estado cambiado"
+        and any(
             item["code"] == memory["code"]
             for item in search_memories(conn, "cambiado", record_usage=False)
-        ),
-        "el patch reindexa el FTS con el título nuevo",
-    )
-    h.ok(
-        not any(
+        )
+        and not any(
             item["code"] == memory["code"]
             for item in search_memories(conn, "original", record_usage=False)
         ),
-        "el patch elimina el título viejo del FTS",
+        "el patch se aplica y reindexa el FTS con el título nuevo",
     )
     row = conn.execute(
         "SELECT id FROM memory_ledger WHERE memory_id = ? AND action = 'update' "
@@ -794,25 +926,21 @@ def _ledger(h: Harness) -> None:
     ).fetchone()
     h.ok(row is not None, "el patch deja asiento en el ledger")
     result = memory_ledger.rollback(conn, int(row["id"]), actor="tester")
-    h.ok(result["restored"], "el rollback restaura un estado anterior")
-    h.eq(
-        get_memory(conn, memory["code"])["title"],
-        "Estado original",
-        "el rollback recupera el título original",
+    h.ok(
+        result["restored"]
+        and get_memory(conn, memory["code"])["title"] == "Estado original",
+        "el rollback restaura el título original",
     )
     h.ok(
         any(
             item["code"] == memory["code"]
             for item in search_memories(conn, "original", record_usage=False)
-        ),
-        "el rollback reindexa el título restaurado en FTS",
-    )
-    h.ok(
-        not any(
+        )
+        and not any(
             item["code"] == memory["code"]
             for item in search_memories(conn, "cambiado", record_usage=False)
         ),
-        "el rollback quita el título revertido del FTS",
+        "el rollback reindexa el título restaurado y quita el revertido",
     )
     h.ok(
         conn.execute(
@@ -835,13 +963,13 @@ def _ledger(h: Harness) -> None:
         "ORDER BY id DESC LIMIT 1",
         (created["id"],),
     ).fetchone()
-    h.ok(create_row is not None, "la creación deja asiento")
     h.ok(
-        any(
+        create_row is not None
+        and any(
             item["code"] == created["code"]
             for item in search_memories(conn, "deshara", record_usage=False)
         ),
-        "la memoria creada aparece en FTS antes del rollback",
+        "la creación deja asiento y aparece en FTS antes del rollback",
     )
     undone = memory_ledger.rollback(conn, int(create_row["id"]))
     h.ok(not undone["restored"], "el rollback de una creación no restaura fila")
@@ -859,6 +987,139 @@ def _ledger(h: Harness) -> None:
     )
 
 
+def _repair_evidence(h: Harness) -> None:
+    """Normaliza ``kind:<ref>``: plan, dry-run, aplicación, ledger y frescura."""
+    conn = h.conn
+    memory = add_memory(
+        conn,
+        title="Evidencia con prefijo embebido",
+        content="Las refs guardan el tipo dentro de ref y no son vigentes.",
+        key="prefijo-embebido",
+        source="user",
+    )
+    other = add_memory(
+        conn,
+        title="Evidencia en otro repositorio",
+        content="El commit vive en un repo adicional y no en el workspace.",
+        key="prefijo-embebido-otro",
+        source="user",
+    )
+    ticket = repo.create_ticket(conn, title="Evidencia de la reparación")
+    local = h.tmp / "evidencia.md"
+    local.write_text("vigente\n", encoding="utf-8")
+
+    def empty_commit(path, message="base"):
+        subprocess.run(
+            ["git", "-C", str(path), "commit", "-q", "--allow-empty", "-m", message],
+            check=True,
+        )
+        return subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    git = git_repo(h.tmp)
+    sha = empty_commit(git)
+    otro = git_repo(h.tmp / "otro")
+    otro_sha = empty_commit(otro, "otro")
+    folder = h.tmp / "retirable"
+    folder.mkdir()
+    missing = folder / "borrado.md"
+    bare = folder / "bare.md"
+    with db.tx(conn):
+        # Otra memoria del módulo cita un fichero desaparecido; se retira aquí
+        # para que el escenario mida solo sus propias filas.
+        conn.execute(
+            "DELETE FROM memory_evidence WHERE kind = 'file' AND ref = ?",
+            (str(h.tmp / "no-existe.py"),),
+        )
+    rows = [
+        (memory["id"], "file", f"file:{local}"),
+        (memory["id"], "ticket", f"ticket:{ticket['code']}"),
+        (memory["id"], "commit", f"commit:{sha}"),
+        (memory["id"], "file", "file:/no/existe"),
+        (memory["id"], "file", f"file:{missing}"),
+        (memory["id"], "file", str(bare)),
+        (other["id"], "commit", f"commit:{otro_sha}"),
+        (other["id"], "commit", f"commit:{otro}@{otro_sha}"),
+    ]
+    with db.tx(conn):
+        for memory_id, kind, ref in rows:
+            conn.execute(
+                "INSERT INTO memory_evidence(memory_id, kind, ref, created_at) "
+                "VALUES (?, ?, ?, datetime('now'))",
+                (memory_id, kind, ref),
+            )
+    prefix_left = (
+        "SELECT COUNT(*) AS n FROM memory_evidence "
+        "WHERE memory_id = ? AND ref LIKE '%:%'"
+    )
+    plan = plan_repair(conn, h.tmp)
+    plan_repos = plan_repair(conn, h.tmp, repos=[otro])
+    fresh = evidence_freshness(
+        conn,
+        [
+            {"kind": "commit", "ref": otro_sha},
+            {"kind": "commit", "ref": f"{otro}@{otro_sha}"},
+        ],
+        root=h.tmp,
+        repos=[otro],
+    )
+    untouched = conn.execute(prefix_left, (memory["id"],)).fetchone()["n"]
+    applied = apply_repair(
+        conn, h.tmp, repos=[otro], retire_missing=True, actor="tester"
+    )
+    remaining = [
+        str(row["ref"])
+        for row in conn.execute(
+            "SELECT ref FROM memory_evidence WHERE memory_id IN (?, ?) AND ref LIKE '%:%'",
+            (memory["id"], other["id"]),
+        ).fetchall()
+    ]
+    missing_left = conn.execute(
+        "SELECT 1 FROM memory_evidence WHERE ref = ?", (str(missing),)
+    ).fetchone()
+    bare_left = conn.execute(
+        "SELECT 1 FROM memory_evidence WHERE ref = ?", (str(bare),)
+    ).fetchone()
+    with db.tx(conn):
+        conn.execute(
+            "DELETE FROM memory_evidence WHERE memory_id = ? AND ref = ?",
+            (memory["id"], "/no/existe"),
+        )
+    after = get_memory(conn, memory["code"], record_usage=False, mark=False)
+    h.ok(
+        len(plan["changes"]) == 7
+        and plan["valid"] == 4
+        and plan["invalid"] == 3
+        and plan["retireable"] == 2
+        and plan_repos["valid"] == 5
+        and plan_repos["invalid"] == 2
+        and fresh["ok"]
+        and untouched == 5
+        and applied["applied"] == 7
+        and applied["retired"] == 2
+        and len(applied["ledger"]) == 2
+        and remaining == []
+        and missing_left is None
+        and bare_left is None
+        and any(item["ref"] == str(bare) for item in plan["retire"])
+        and conn.execute(prefix_left, (memory["id"],)).fetchone()["n"] == 0
+        and after["freshness"]["ok"]
+        and after["code"] == memory["code"]
+        and conn.execute(
+            "SELECT 1 FROM memory_ledger WHERE memory_id = ? "
+            "AND action = 'repair-evidence'",
+            (memory["id"],),
+        ).fetchone()
+        is not None,
+        "repair-evidence valida repos/@sha, no escribe en dry-run, retira refs "
+        "muertas con --retire-missing, deja ledger y frescura sin tocar el código",
+    )
+
+
 def run(h: Harness) -> None:
     _migration(h)
     _ticket_kinds(h)
@@ -871,3 +1132,4 @@ def run(h: Harness) -> None:
     _rollback_budget(h)
     _supersede_rollback(h)
     _ledger(h)
+    _repair_evidence(h)

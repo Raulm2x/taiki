@@ -206,8 +206,6 @@ def _handle_mouse(state: TuiState, layout) -> None:
             )
     elif column in ("title", "code") and epic:
         state.toggle_expanded(ticket["code"])
-    elif column == "agent":
-        actions_ui.open_session(state, ticket)
 
 
 def _filter_menu(win, state: TuiState, refresh) -> None:
